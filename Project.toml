@@ -3,6 +3,11 @@ uuid = "fe97a429-95ef-4217-8b60-c146bfee6ddd"
 authors = ["Albin Severinson <albin@severinson.org> and contributors"]
 version = "0.1.0"
 
+[deps]
+CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+PyPlot = "d330b81b-6aea-500a-939a-2ce795aea3ee"
+
 [compat]
 julia = "1"
 

@@ -1,0 +1,8 @@
+#!/bin/sh -l
+#SBATCH --job-name=rtt2.jl
+#SBATCH --output=rtt2.out
+#SBATCH --nodes=10
+#SBATCH --time=60:00
+date
+export JULIA_DEPOT_PATH="/shared/.julia/"
+/opt/amazon/openmpi/bin/mpirun -n "$SLURM_NTASKS" julia ./rtt2.jl 1000000 "./bcast/$(date).csv"
