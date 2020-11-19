@@ -1,5 +1,5 @@
 using CodedComputing
-using MPI, JLD, LinearAlgebra
+using MPI, HDF5, LinearAlgebra
 using Test
 
 @testset "CodedComputing.jl" begin
@@ -19,19 +19,20 @@ end
 
     # generate input dataset
     X = randn(n, m)
-    path, _ = mktemp()
-    path = tempname()
-    jldopen(path, "w", compress=true) do file
+    inputfile = tempname()
+    outputfile = tempname()
+    h5open(inputfile, "w") do file
         file[inputdataset] = X
     end
 
     # run the kernel
-    mpiexec(cmd -> run(`$cmd -n $nworkers julia --project $kernel $path --niterations $niterations --benchmarkfile $path`))
+    mpiexec(cmd -> run(`$cmd -n $nworkers julia --project $kernel $inputfile $outputfile --niterations $niterations`))
     V_correct = pca(X, k)
     V = similar(V_correct)
 
     # test that the output was generated correctly
-    jldopen(path, "r") do file
+    @test isfile(outputfile)
+    h5open(outputfile, "r") do file
         @test outputdataset in names(file)
         @test size(file[outputdataset]) == (m, k)
         V .= file[outputdataset][:, :]
@@ -49,7 +50,7 @@ end
     end
 
     # print benchmark data (if available)
-    jldopen(path, "r") do file
+    h5open(outputfile, "r") do file
         for name in ["ts_compute", "ts_update"]
             if name in names(file)
                 println(name*":")
