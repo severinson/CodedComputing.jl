@@ -6,14 +6,12 @@ using Test
     # Write your tests here.
 end
 
-# mpitestexec(n::Integer, file::String) = mpiexec(cmd -> run(`$cmd -n $n --mca btl ^openib julia --project $file`))
-
 @testset "Principal component analysis" begin
 
     # setup
     kernel = "../src/pca/pca.jl"
     nworkers = 3
-    niterations = 100
+    niterations = 200
     inputdataset = "X"
     outputdataset = "V"    
     n, m = 20, 10
@@ -28,8 +26,7 @@ end
     end
 
     # run the kernel
-    # mpiexec(cmd -> run(`$cmd -n $nworkers --mca btl ^openib julia --project $kernel $path $inputdataset $path $outputdataset $k $niterations`))
-    mpiexec(cmd -> run(`$cmd -n $nworkers --mca btl ^openib julia --project $kernel $path --niterations $niterations --benchmarkfile $path`))
+    mpiexec(cmd -> run(`$cmd -n $nworkers julia --project $kernel $path --niterations $niterations --benchmarkfile $path`))
     V_correct = pca(X, k)
     V = similar(V_correct)
 
