@@ -2,10 +2,6 @@ using CodedComputing, MPI, MPIStragglers
 using HDF5, LinearAlgebra
 using ArgParse
 
-# TODO:
-# check for type instability
-# implementation using Bcast/Gather
-
 MPI.Init()
 const comm = MPI.COMM_WORLD
 const root = 0
@@ -68,6 +64,9 @@ function parse_commandline(isroot::Bool)
             help = "Output dataset name"
             default = "V"
             arg_type = String
+        "--nwait"
+            help = "Number of workers to wait for in each iteration (defaults to all workers)"
+            arg_type = Int            
     end
 
     # optionally add implementation-specific arguments
@@ -160,16 +159,14 @@ function root_main()
     # setup
     parsed_args = parse_commandline(isroot)
     nsamples, dimension = problem_size(parsed_args["inputfile"], parsed_args["inputdataset"])
-    if isnothing(parsed_args["ncomponents"]) # default to computing all principal components
-        ncomponents = dimension
-    else
-        ncomponents::Int = parsed_args["ncomponents"]
-    end
-    ncomponents <= dimension || throw(DimensionMismatch("ncomponents is $ncomponents, but the dimension is $dimension"))
-    niterations::Int = parsed_args["niterations"]
-    niterations > 0 || throw(DomainError(niterations, "The number of iterations must be non-negative"))
     nworkers = MPI.Comm_size(comm) - 1
     0 < nworkers <= nsamples || throw(DomainError(nworkers, "The number of workers must be in [1, nsamples]"))
+    ncomponents::Int = isnothing(parsed_args["ncomponents"]) ? dimension : parsed_args["ncomponents"]
+    ncomponents <= dimension || throw(DimensionMismatch("ncomponents is $ncomponents, but the dimension is $dimension"))
+    nwait::Int = isnothing(parsed_args["nwait"]) ? nworkers : parsed_args["nwait"]
+    0 < nwait <= nworkers || throw(DomainError(nwait, "nwait must be in [1, nworkers]"))
+    niterations::Int = parsed_args["niterations"]
+    niterations > 0 || throw(DomainError(niterations, "The number of iterations must be non-negative"))
 
     # worker pool and communication buffers
     pool = StragglerPool(nworkers)
@@ -191,7 +188,7 @@ function root_main()
     ts_update = zeros(niterations)
     for epoch in 1:niterations
         ts_compute[epoch] = @elapsed begin
-            epochs = kmap!(sendbuf, recvbuf, isendbuf, irecvbuf, nworkers, epoch, pool, comm; tag=data_tag)        
+            epochs = kmap!(sendbuf, recvbuf, isendbuf, irecvbuf, nwait, epoch, pool, comm; tag=data_tag)
         end
         ts_update[epoch] = @elapsed begin
             update_gradient!(∇, Vs, epochs .== epoch)

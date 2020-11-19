@@ -10,25 +10,27 @@ end
 
     # setup
     kernel = "../src/pca/pca.jl"
-    nworkers = 3
+    nworkers = 2
     niterations = 200
     inputdataset = "X"
-    outputdataset = "V"    
+    outputdataset = "V"
     n, m = 20, 10
     k = m    
 
     # generate input dataset
     X = randn(n, m)
     inputfile = tempname()
-    outputfile = tempname()
     h5open(inputfile, "w") do file
         file[inputdataset] = X
     end
 
-    # run the kernel
-    mpiexec(cmd -> run(`$cmd -n $nworkers julia --project $kernel $inputfile $outputfile --niterations $niterations`))
+    # correct solution (computed via LinearAlgebra.svd)
     V_correct = pca(X, k)
     V = similar(V_correct)
+
+    ### exact
+    outputfile = tempname()
+    mpiexec(cmd -> run(`$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile --niterations $niterations`))
 
     # test that the output was generated correctly
     @test isfile(outputfile)
@@ -49,14 +51,29 @@ end
         )
     end
 
-    # print benchmark data (if available)
+    ### ignoring the slowest worker
+    outputfile = tempname()
+    mpiexec(cmd -> run(`$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile --niterations $niterations --nwait $(nworkers-1)`))
+
+    # test that the output was generated correctly
+    @test isfile(outputfile)
     h5open(outputfile, "r") do file
-        for name in ["ts_compute", "ts_update"]
-            if name in names(file)
-                println(name*":")
-                println(file[name][:])
-                println()
-            end
-        end
+        @test outputdataset in names(file)
+        @test size(file[outputdataset]) == (m, k)
+        V .= file[outputdataset][:, :]
     end
+
+    # test that the columns are orthogonal
+    @test V'*V ≈ I    
+
+    # # print benchmark data (if available)
+    # h5open(outputfile, "r") do file
+    #     for name in ["ts_compute", "ts_update"]
+    #         if name in names(file)
+    #             println(name*":")
+    #             println(file[name][:])
+    #             println()
+    #         end
+    #     end
+    # end
 end
