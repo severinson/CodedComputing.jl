@@ -9,7 +9,7 @@ DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 PyPlot = "d330b81b-6aea-500a-939a-2ce795aea3ee"
 
 [compat]
-DataFrames = "0.22"
+DataFrames = "0.21"
 CSV = "0.8"
 PyPlot = "2.9"
 julia = "1"
