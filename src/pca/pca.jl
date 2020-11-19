@@ -1,11 +1,11 @@
 function problem_size(filename::String, dataset::String)
-    jldopen(filename, "r") do file
+    h5open(filename, "r") do file
         return size(file[dataset])
     end
 end
 
 function read_localdata(filename::String, dataset::String, i::Integer, npartitions::Integer)
-    jldopen(filename, "r") do file
+    h5open(filename, "r") do file
         n, m = size(file[dataset])
         il = round(Int, (i - 1)/npartitions*n + 1)
         iu = round(Int, i/npartitions*n)

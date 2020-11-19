@@ -1,5 +1,5 @@
 using CodedComputing, MPI, MPIStragglers
-using JLD, LinearAlgebra
+using HDF5, LinearAlgebra
 using ArgParse
 
 # TODO:
@@ -44,13 +44,14 @@ function parse_commandline(isroot::Bool)
     # command-line arguments common to all pca implementations
     @add_arg_table s begin
         "inputfile"
-            help = "HDF5/JLD file containing the input data set"
+            help = "HDF5 file containing the input data set"
             required = true
             arg_type = String
-            range_tester = isfile
+            range_tester = ishdf5
         "outputfile"
-            help = "HFD5/JLD file to write the output to (defaults to same as inputfile)"
+            help = "HFD5 file to write the output to (defaults to same as inputfile)"
             arg_type = String
+            range_tester = (x) -> isnothing(x) || !isfile(x) || ishdf5(x)
         "--niterations"
             help = "Number of iterations to run the algorithm for"
             default = 10
@@ -67,7 +68,7 @@ function parse_commandline(isroot::Bool)
             default = "V"
             arg_type = String
         "--benchmarkfile"
-            help = "HDF5/JLD file to write benchmark data to"
+            help = "HDF5 file to write benchmark data to"
             arg_type = String
     end
 
@@ -203,46 +204,74 @@ function root_main()
     shutdown(pool)
 
     # write the computed principal components to disk
-    outputfile::String = parsed_args["outputfile"] 
-    outputdataset::String = parsed_args["outputdataset"]
-    if isfile(outputfile)
-        mode = "r+"
-    else
-        mode = "w"
-    end
-    jldopen(outputfile, mode, compress=true) do file
-        if outputdataset in names(file)
-            delete!(file, outputdataset)
-        end
-        file[outputdataset] = sendbuf # aliased to V, writing a view results in a crash
-    end   
+    # outputfile::String = parsed_args["outputfile"] 
+    # outputdataset::String = parsed_args["outputdataset"]
+    try_write(sendbuf, parsed_args["outputfile"], parsed_args["outputdataset"])
+    # if isfile(outputfile)
+    #     mode = "r+"
+    # else
+    #     mode = "w"
+    # end
+    # jldopen(outputfile, mode, compress=true) do file
+    #     if outputdataset in names(file)
+    #         delete!(file, outputdataset)
+    #     end
+    #     file[outputdataset] = sendbuf # aliased to V, writing a view results in a crash
+    # end   
     
     # write benchmark data to disk (if a benchmark file was provided)
     if !isnothing(parsed_args["benchmarkfile"])
-        benchmarkfile::String = parsed_args["benchmarkfile"]
-        if isfile(benchmarkfile)
-            mode = "r+"
-        else
-            mode = "w"
-        end        
-        jldopen(benchmarkfile, mode, compress=true) do file    
-            if "ts_compute" in names(file)
-                delete!(file, "ts_compute")
-            end
-            file["ts_compute"] = ts_compute
-            if "ts_update" in names(file)
-                delete!(file, "ts_update")
-            end
-            file["ts_update"] = ts_update    
-        end
+        try_write(ts_compute, parsed_args["benchmarkfile"], "ts_compute")    
+        try_write(ts_update, parsed_args["benchmarkfile"], "ts_update")    
+        # benchmarkfile::String = parsed_args["benchmarkfile"]
+        # if isfile(benchmarkfile)
+        #     mode = "r+"
+        # else
+        #     mode = "w"
+        # end        
+        # jldopen(benchmarkfile, mode, compress=true) do file    
+        #     if "ts_compute" in names(file)
+        #         delete!(file, "ts_compute")
+        #     end
+        #     file["ts_compute"] = ts_compute
+        #     if "ts_update" in names(file)
+        #         delete!(file, "ts_update")
+        #     end
+        #     file["ts_update"] = ts_update    
+        # end
     end
     
     return
 end
 
+function try_write(data::Array, filename::String, dataset::String; replace=true, rethrow_exception=false)    
+    try
+        h5open(filename, "cw") do file
+            if dataset in names(file)
+                if replace
+                    delete!(file, dataset)
+                    file[dataset] = data
+                end
+            else
+                file[dataset] = data
+            end
+        end
+    catch e
+        print(Base.stderr, "Writing to $(filename):$dataset failed with exception $e\n")
+        stacktrace(catch_backtrace())
+        if rethrow_exception
+            rethrow()
+        end
+    end
+end
+
 if isroot
     root_main()
+    # MPI.Barrier(comm)
+    # root_main()
 else
     worker_main()
+    # MPI.Barrier(comm)
+    # worker_main()
 end
 MPI.Barrier(comm)
