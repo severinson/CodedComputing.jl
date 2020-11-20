@@ -14,6 +14,7 @@ MPIStragglers = "71dbed6d-20b0-48c6-bb22-c3e423edce76"
 PyPlot = "d330b81b-6aea-500a-939a-2ce795aea3ee"
 
 [compat]
+ArgParse = "1.1"
 CSV = "0.8"
 DataFrames = "0.21"
 HDF5 = "0.14"
