@@ -16,6 +16,7 @@ PyPlot = "d330b81b-6aea-500a-939a-2ce795aea3ee"
 [compat]
 CSV = "0.8"
 DataFrames = "0.21"
+HDF5 = "0.14"
 PyPlot = "2.9"
 julia = "1"
 
