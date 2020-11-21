@@ -16,9 +16,9 @@ PyPlot = "d330b81b-6aea-500a-939a-2ce795aea3ee"
 [compat]
 ArgParse = "1.1"
 CSV = "0.8"
-DataFrames = "0.21"
-MPI = "0.16"
+DataFrames = "0.21, 0.22"
 HDF5 = "0.14"
+MPI = "0.16"
 PyPlot = "2.9"
 julia = "1"
 
