@@ -69,7 +69,6 @@ function parse_commandline(isroot::Bool)
             arg_type = Int
         "--saveiterates"
             help = "Save all intermediate iterates to the output file"
-            default = false
             action = :store_true
     end
 
@@ -80,9 +79,6 @@ function parse_commandline(isroot::Bool)
 
     # common parsing
     parsed_args = parse_args(s)
-    if isnothing(parsed_args["outputfile"])
-        parsed_args["outputfile"] = parsed_args["inputfile"]        
-    end
 
     # optional implementation-specific parsing
     if @isdefined update_parsed_args!
@@ -167,12 +163,14 @@ function root_main()
     0 < nworkers <= nsamples || throw(DomainError(nworkers, "The number of workers must be in [1, nsamples]"))
     parsed_args["nworkers"] = nworkers
     ncomponents::Int = isnothing(parsed_args["ncomponents"]) ? dimension : parsed_args["ncomponents"]
+    parsed_args["ncomponents"] = ncomponents
     ncomponents <= dimension || throw(DimensionMismatch("ncomponents is $ncomponents, but the dimension is $dimension"))
     nwait::Int = isnothing(parsed_args["nwait"]) ? nworkers : parsed_args["nwait"]
-    0 < nwait <= nworkers || throw(DomainError(nwait, "nwait must be in [1, nworkers]"))
+    parsed_args["nwait"] = nwait
+    0 < nwait <= nworkers || throw(DomainError(nwait, "nwait must be in [1, nworkers]"))    
     niterations::Int = parsed_args["niterations"]
     niterations > 0 || throw(DomainError(niterations, "The number of iterations must be non-negative"))
-    saveiterates::Bool = parse_args["saveiterates"]
+    saveiterates::Bool = parsed_args["saveiterates"]
 
     # worker pool and communication buffers
     pool = StragglerPool(nworkers)
@@ -213,34 +211,31 @@ function root_main()
     end
 
     shutdown(pool)
-    try
-        h5open(parsed_args["outputfile"], "w") do fid
+    # try
+    h5open(parsed_args["outputfile"], "w") do fid
 
-            # write parameters to the output file
-            for (key, val) in parsed_args
-                fid["parameters/$key"] = val
-            end
-
-            # write the computed principal components
-            # sendbuf is aliased to V (writing a view results in a crash)
-            fid[parsed_args["outputdataset"]] = sendbuf
-
-            # optionally save all iterates
-            if saveiterates
-                fid["iterates"] = iterates
-            end
-
-            # write benchmark data
-            fid["benchmark/ts_compute"] = ts_compute
-            fid["benchmark/ts_update"] = ts_update
+        # write parameters to the output file
+        for (key, val) in parsed_args
+            fid["parameters/$key"] = val
         end
-    catch e
-        print(Base.stderr, "Writing output failed with exception $e\n")
-        stacktrace(catch_backtrace())
-        if rethrow_exception
-            rethrow()
+
+        # write the computed principal components
+        # sendbuf is aliased to V (writing a view results in a crash)
+        fid[parsed_args["outputdataset"]] = sendbuf
+
+        # optionally save all iterates
+        if saveiterates
+            fid["iterates"] = iterates
         end
-    end    
+
+        # write benchmark data
+        fid["benchmark/ts_compute"] = ts_compute
+        fid["benchmark/ts_update"] = ts_update
+    end
+    # catch e
+    #     print(Base.stderr, "Writing output to $(parsed_args["outputfile"]) failed with exception $e\n")
+    #     stacktrace(catch_backtrace())
+    # end
     return
 end
 
