@@ -66,7 +66,11 @@ function parse_commandline(isroot::Bool)
             arg_type = String
         "--nwait"
             help = "Number of workers to wait for in each iteration (defaults to all workers)"
-            arg_type = Int            
+            arg_type = Int
+        "--saveiterates"
+            help = "Save all intermediate iterates to the output file"
+            default = false
+            action = :store_true
     end
 
     # optionally add implementation-specific arguments
@@ -168,6 +172,7 @@ function root_main()
     0 < nwait <= nworkers || throw(DomainError(nwait, "nwait must be in [1, nworkers]"))
     niterations::Int = parsed_args["niterations"]
     niterations > 0 || throw(DomainError(niterations, "The number of iterations must be non-negative"))
+    saveiterates::Bool = parse_args["saveiterates"]
 
     # worker pool and communication buffers
     pool = StragglerPool(nworkers)
@@ -180,6 +185,13 @@ function root_main()
     V = view(sendbuf, :, :)
     V .= randn(dimension, ncomponents)
     ∇ = similar(V)
+
+    # optionally store all intermediate iterates
+    if saveiterates
+        iterates = zeros(dimension, ncomponents, niterations)
+    else
+        iterates = zeros(dimension, ncomponents, 0)
+    end
 
     # results computed by the workers
     Vs = [view(recvbuf, :, (i-1)*ncomponents+1:i*ncomponents) for i in 1:nworkers]
@@ -195,6 +207,9 @@ function root_main()
             update_gradient!(∇, Vs, epochs .== epoch)
             update_iterate!(V, ∇)
         end
+        if saveiterates
+            iterates[:, :, epoch] .= V
+        end
     end
 
     shutdown(pool)
@@ -209,6 +224,11 @@ function root_main()
             # write the computed principal components
             # sendbuf is aliased to V (writing a view results in a crash)
             fid[parsed_args["outputdataset"]] = sendbuf
+
+            # optionally save all iterates
+            if saveiterates
+                fid["iterates"] = iterates
+            end
 
             # write benchmark data
             fid["benchmark/ts_compute"] = ts_compute
