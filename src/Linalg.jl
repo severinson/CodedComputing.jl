@@ -1,6 +1,6 @@
 # Linear algebra functions not in the standard library.
 
-export orthogonal, orthogonal!, pca
+export orthogonal, orthogonal!, pca, explained_variance
 
 """Return the angle between a and b"""
 function Base.angle(a::AbstractVector, b::AbstractVector)
@@ -33,3 +33,29 @@ end
 
 """Orthogonalize and normalize the columns of A."""
 orthogonal(A::AbstractMatrix) = orthogonal!(copy(A))
+
+"""
+    explained_variance(X, V)
+
+Return the fraction of variance explained by the principal components
+in V, defined as tr(V'X'XV) / tr(X'X).
+
+"""
+function explained_variance(X, V)
+    n, d = size(X)
+    _, k = size(V)
+    XV = X*V
+    num = 0.0
+    @inbounds for i in 1:k
+        for j in 1:n
+            num += Float64(XV[j, i])^2
+        end
+    end
+    den = 0.0
+    @inbounds for i in 1:d
+        for j in 1:n
+            den += Float64(X[j, i])^2
+        end
+    end
+    min(num / den, 1.0-eps(Float64))
+end
