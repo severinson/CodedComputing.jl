@@ -43,12 +43,12 @@ function parse_commandline(isroot::Bool)
             help = "HDF5 file containing the input data set"
             required = true
             arg_type = String
-            range_tester = ishdf5
+            range_tester = HDF5.ishdf5
         "outputfile"
             help = "HFD5 file to write the output to"
             required = true
             arg_type = String
-            range_tester = (x) -> !isfile(x) || ishdf5(x)
+            range_tester = (x) -> !isfile(x) || HDF5.ishdf5(x)
         "--niterations"
             help = "Number of iterations to run the algorithm for"
             default = 10
@@ -161,6 +161,7 @@ function root_main()
     nsamples, dimension = problem_size(parsed_args["inputfile"], parsed_args["inputdataset"])
     nworkers = MPI.Comm_size(comm) - 1
     0 < nworkers <= nsamples || throw(DomainError(nworkers, "The number of workers must be in [1, nsamples]"))
+    parsed_args["nworkers"] = nworkers
     ncomponents::Int = isnothing(parsed_args["ncomponents"]) ? dimension : parsed_args["ncomponents"]
     ncomponents <= dimension || throw(DimensionMismatch("ncomponents is $ncomponents, but the dimension is $dimension"))
     nwait::Int = isnothing(parsed_args["nwait"]) ? nworkers : parsed_args["nwait"]
@@ -199,7 +200,17 @@ function root_main()
     shutdown(pool)
     try
         h5open(parsed_args["outputfile"], "w") do fid
-            fid[parsed_args["outputdataset"]] = sendbuf # aliased to V, writing a view results in a crash
+
+            # write parameters to the output file
+            for (key, val) in parsed_args
+                fid["parameters/$key"] = val
+            end
+
+            # write the computed principal components
+            # sendbuf is aliased to V (writing a view results in a crash)
+            fid[parsed_args["outputdataset"]] = sendbuf
+
+            # write benchmark data
             fid["benchmark/ts_compute"] = ts_compute
             fid["benchmark/ts_update"] = ts_update
         end
