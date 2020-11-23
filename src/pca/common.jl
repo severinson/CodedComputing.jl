@@ -191,6 +191,9 @@ function root_main()
         iterates = zeros(dimension, ncomponents, 0)
     end
 
+    # store which workers responded in each iteration
+    responded = zeros(Bool, nworkers, niterations)
+
     # results computed by the workers
     Vs = [view(recvbuf, :, (i-1)*ncomponents+1:i*ncomponents) for i in 1:nworkers]
 
@@ -201,8 +204,9 @@ function root_main()
         ts_compute[epoch] = @elapsed begin
             epochs = kmap!(sendbuf, recvbuf, isendbuf, irecvbuf, nwait, epoch, pool, comm; tag=data_tag)
         end
+        responded[:, epoch] .= epochs .== epoch
         ts_update[epoch] = @elapsed begin
-            update_gradient!(∇, Vs, epochs .== epoch)
+            update_gradient!(∇, Vs, responded[:, epoch])
             update_iterate!(V, ∇)
         end
         if saveiterates
@@ -228,8 +232,9 @@ function root_main()
         end
 
         # write benchmark data
-        fid["benchmark/ts_compute"] = ts_compute
-        fid["benchmark/ts_update"] = ts_update
+        fid["benchmark/t_compute"] = ts_compute
+        fid["benchmark/t_update"] = ts_update
+        fid["benchmark/responded"] = responded
     end
     return
 end
