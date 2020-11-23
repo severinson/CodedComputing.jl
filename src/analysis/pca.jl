@@ -1,15 +1,20 @@
 using HDF5, DataFrames, CSV, Glob
 using CodedComputing
 
-function aggregate_benchmark_data(;dir="/shared/201121/", inputfile="input.h5", prefix="output", dfname="df.csv")
-    t_compute_all = zeros(Union{Float64,Missing}, 0)
-    t_update_all = zeros(Union{Float64,Missing}, 0)
-    nworkers_all = zeros(Union{Int,Missing}, 0)
-    nwait_all = zeros(Union{Int,Missing}, 0)
-    iteration_all = zeros(Union{Int,Missing}, 0)
+
+"""
+
+Read all output files from a given directory and write summary statistics (e.g., iteration time 
+and convergence) to a DataFrame.
+"""
+function aggregate_benchmark_data(;dir="/shared/201121_2/", inputfile="input.h5", prefix="output", dfname="df.csv")
+    t_compute_all = zeros(Float64, 0)
+    t_update_all = zeros(Float64, 0)
+    nworkers_all = zeros(Int, 0)
+    nwait_all = zeros(Int, 0)
+    iteration_all = zeros(Int, 0)
     explained_variance_all = zeros(Union{Float64,Missing}, 0)
     X = h5read(dir*inputfile, "X")
-
     for filename in glob("$(prefix)*.h5", dir)
         println(filename)
         if !HDF5.ishdf5(filename)
@@ -26,7 +31,6 @@ function aggregate_benchmark_data(;dir="/shared/201121/", inputfile="input.h5", 
             append!(nwait_all, repeat([nwait], n))
             append!(iteration_all, 1:n)
             if "iterates" in names(fid)
-                println([explained_variance(X, fid["iterates"][:, :, i]) for i in 1:n])
                 append!(
                     explained_variance_all, 
                     [explained_variance(X, fid["iterates"][:, :, i]) for i in 1:n],
