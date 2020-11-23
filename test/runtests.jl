@@ -35,7 +35,7 @@ end
     # test that the output was generated correctly
     @test isfile(outputfile)
     h5open(outputfile, "r") do file
-        @test outputdataset in names(file)
+        @test outputdataset in keys(file)
         @test size(file[outputdataset]) == (m, k)
         V .= file[outputdataset][:, :]
     end
@@ -58,7 +58,7 @@ end
     # test that the output was generated correctly
     @test isfile(outputfile)
     h5open(outputfile, "r") do file
-        @test outputdataset in names(file)
+        @test outputdataset in keys(file)
         @test size(file[outputdataset]) == (m, k)
         V .= file[outputdataset][:, :]
     end
@@ -69,7 +69,7 @@ end
     # # print benchmark data (if available)
     # h5open(outputfile, "r") do file
     #     for name in ["ts_compute", "ts_update"]
-    #         if name in names(file)
+    #         if name in keys(file)
     #             println(name*":")
     #             println(file[name][:])
     #             println()
