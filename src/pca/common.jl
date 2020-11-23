@@ -211,7 +211,6 @@ function root_main()
     end
 
     shutdown(pool)
-    # try
     h5open(parsed_args["outputfile"], "w") do fid
 
         # write parameters to the output file
@@ -232,10 +231,6 @@ function root_main()
         fid["benchmark/ts_compute"] = ts_compute
         fid["benchmark/ts_update"] = ts_update
     end
-    # catch e
-    #     print(Base.stderr, "Writing output to $(parsed_args["outputfile"]) failed with exception $e\n")
-    #     stacktrace(catch_backtrace())
-    # end
     return
 end
 
