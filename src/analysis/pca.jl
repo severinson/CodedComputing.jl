@@ -101,3 +101,28 @@ function pca_test_matrix2(n::Integer, m::Integer, dimension::Integer)
     P = G*G' # projection matrix
     randn(n, m)*P .+ randn(n, m) .* σ
 end
+
+"""
+
+Convert a DataFrame containing MovieLens ratings into a ratings matrix, where rows correspond to
+users, columns to movies, and the `[i, j]`-th entry is the rating given by user `i` to movie `j`.
+"""
+function movielens_rating_matrix(df::DataFrame)
+    movieIds = unique(df.movieId)
+    userIds = unique(df.userId)
+    nmovies = length(movieIds)
+    nusers = length(userIds)
+    movie_perm = collect(1:maximum(df.movieId))
+    user_perm = collect(1:maximum(df.userId))
+    movie_perm[movieIds] .= 1:nmovies
+    user_perm[userIds] .= 1:nusers
+    Is = user_perm[df.userId]
+    Js = movie_perm[df.movieId]
+    Vs = Int8.(df.rating .* 2)
+    sparse(Is, Js, Vs, nusers, nmovies)    
+end
+
+function movielens_rating_matrix(filename="MovieLens/ml-25m/ratings.csv")
+    df = DataFrame(CSV.File(filename, normalizenames=true))
+    movielens_rating_matrix(df)
+end
