@@ -1,20 +1,23 @@
 using HDF5, DataFrames, CSV, Glob
 using CodedComputing
 
-
 """
 
 Read all output files from a given directory and write summary statistics (e.g., iteration time 
 and convergence) to a DataFrame.
 """
-function aggregate_benchmark_data(;dir="/shared/201121_2/", inputfile="input.h5", prefix="output", dfname="df.csv")
+function aggregate_benchmark_data(;dir="/shared/201123/2/", inputfile="/shared/201123/input.h5", prefix="output", dfname="df.csv")
     t_compute_all = zeros(Float64, 0)
     t_update_all = zeros(Float64, 0)
     nworkers_all = zeros(Int, 0)
     nwait_all = zeros(Int, 0)
     iteration_all = zeros(Int, 0)
+    jobid_all = zeros(Int, 0)
+    jobid = 1
+    responded_all = zeros(Bool, 0, 0)
+
     explained_variance_all = zeros(Union{Float64,Missing}, 0)
-    X = h5read(dir*inputfile, "X")
+    X = h5read(inputfile, "X")
     for filename in glob("$(prefix)*.h5", dir)
         println(filename)
         if !HDF5.ishdf5(filename)
@@ -23,20 +26,32 @@ function aggregate_benchmark_data(;dir="/shared/201121_2/", inputfile="input.h5"
         h5open(filename) do fid
             nwait = fid["parameters/nwait"][]
             nworkers = fid["parameters/nworkers"][]
-            n = length(fid["benchmark"]["ts_compute"])
-            @assert n == length(fid["benchmark/ts_update"])
-            append!(t_compute_all, fid["benchmark/ts_compute"][:])
-            append!(t_update_all, fid["benchmark/ts_update"][:])
+            n = length(fid["benchmark"]["t_compute"])
+            @assert n == length(fid["benchmark/t_update"])
+            append!(t_compute_all, fid["benchmark/t_compute"][:])
+            append!(t_update_all, fid["benchmark/t_update"][:])
             append!(nworkers_all, repeat([nworkers], n))
             append!(nwait_all, repeat([nwait], n))
             append!(iteration_all, 1:n)
-            if "iterates" in names(fid)
+            append!(jobid_all, repeat([jobid], n))
+            jobid += 1
+            if "iterates" in keys(fid)
                 append!(
                     explained_variance_all, 
                     [explained_variance(X, fid["iterates"][:, :, i]) for i in 1:n],
                 )
             else
                 append!(explained_variance_all, repeat([missing], n))
+            end
+            responded_all = vcat(responded_all, zeros(Bool, n, size(responded_all, 2)))
+            if "responded" in keys(fid["benchmark"])
+                if nworkers > size(responded_all, 2)
+                    responded_all = hcat(
+                        responded_all, 
+                        zeros(Bool, size(responded_all, 1), nworkers-size(responded_all, 2))
+                        )
+                end                
+                responded_all[end-n+1:end, 1:nworkers] .= fid["benchmark/responded"][:, :]'
             end
         end
     end
@@ -47,7 +62,11 @@ function aggregate_benchmark_data(;dir="/shared/201121_2/", inputfile="input.h5"
         t_compute=t_compute_all, 
         t_update=t_update_all,
         explained_variance=explained_variance_all,
+        jobid=jobid_all,
         )
+    for i in 1:size(responded_all, 2)
+        df["worker_$(i)_responded"] = responded_all[:, i]
+    end
     CSV.write(dir*dfname, df)
     df
 end
