@@ -1,10 +1,6 @@
 using CodedComputing
-using MPI, HDF5, LinearAlgebra
+using MPI, HDF5, LinearAlgebra, SparseArrays
 using Test
-
-@testset "CodedComputing.jl" begin
-    # Write your tests here.
-end
 
 @testset "Principal component analysis" begin
 
@@ -64,16 +60,16 @@ end
     end
 
     # test that the columns are orthogonal
-    @test V'*V ≈ I    
+    @test V'*V ≈ I
+end
 
-    # # print benchmark data (if available)
-    # h5open(outputfile, "r") do file
-    #     for name in ["ts_compute", "ts_update"]
-    #         if name in keys(file)
-    #             println(name*":")
-    #             println(file[name][:])
-    #             println()
-    #         end
-    #     end
-    # end
+@testset "HDF5Sparse.jl" begin
+    m, n, p = 10, 5, 0.1
+    M = sprand(Float32, m, n, p)
+    filename = tempname()
+    name = "M"
+    h5writecsc(filename, name, M)
+    M_hat = h5readcsc(filename, name)
+    @test typeof(M_hat) == typeof(M)
+    @test M_hat ≈ M
 end
