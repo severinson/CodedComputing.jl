@@ -1,6 +1,6 @@
 # Linear algebra functions not in the standard library.
 
-export orthogonal, orthogonal!, pca, explained_variance
+export orthogonal, orthogonal!, pca, explained_variance, projection_distance
 
 """Return the angle between a and b"""
 function Base.angle(a::AbstractVector, b::AbstractVector)
@@ -23,7 +23,9 @@ function orthogonal!(A::AbstractMatrix)
     for i in 1:n
         for j in 1:i-1
             l = dot(view(A, :, j), view(A, :, i))
-            view(A, :, i) .-= l.*view(A, :, j)
+            for k in 1:size(A, 1)
+                A[k, i] -= l*A[k, j]
+            end
         end
         view(A, :, i) ./= norm(view(A, :, i))
         replace!(view(A, :, i), NaN=>zero(eltype(A)))
@@ -58,4 +60,18 @@ function explained_variance(X, V)
         end
     end
     min(num / den, 1.0-eps(Float64))
+end
+
+projection_distance(X, V) = sqrt(norm(X .- (X*V)*V')) / reduce(*, size(X))
+
+function projection_distance(X::SparseMatrixCSC, V)
+    rv = 0.0
+    L = X*V
+    R = V'    
+    Is, Js, Vs = findnz(X)
+    for (i, j, v) in zip(Is, Js, Vs)
+        rv += (Float64(v) - dot(view(L, i, :), view(R, :, j)))^2
+    end
+    rv = sqrt(rv)
+    rv /= length(V)
 end
