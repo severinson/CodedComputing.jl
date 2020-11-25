@@ -68,7 +68,7 @@ end
 
     # setup
     Random.seed!(123)
-    kernel = "../src/pca/pca_sparse.jl"
+    kernel = "../src/pca/pcacsc.jl"
     nworkers = 2
     niterations = 200
     inputdataset = "X"
