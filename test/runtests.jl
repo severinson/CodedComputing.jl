@@ -1,10 +1,11 @@
 using CodedComputing
-using MPI, HDF5, LinearAlgebra, SparseArrays
+using Random, MPI, HDF5, LinearAlgebra, SparseArrays
 using Test
 
-@testset "Principal component analysis" begin
+@testset "pca.jl" begin
 
     # setup
+    Random.seed!(123)
     kernel = "../src/pca/pca.jl"
     nworkers = 2
     niterations = 200
@@ -26,10 +27,10 @@ using Test
 
     ### exact
     outputfile = tempname()
-    mpiexec(cmd -> run(`$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile --niterations $niterations`))
+    mpiexec(cmd -> run(`$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile --niterations $niterations --ncomponents $k`))
 
     # test that the output was generated correctly
-    @test isfile(outputfile)
+    @test HDF5.ishdf5(outputfile)
     h5open(outputfile, "r") do file
         @test outputdataset in keys(file)
         @test size(file[outputdataset]) == (m, k)
@@ -63,7 +64,51 @@ using Test
     @test V'*V ≈ I
 end
 
+@testset "pcacsc.jl" begin
+
+    # setup
+    Random.seed!(123)
+    kernel = "../src/pca/pca_sparse.jl"
+    nworkers = 2
+    niterations = 200
+    inputdataset = "X"
+    outputdataset = "V"
+    n, m = 20, 10
+    k = m
+    p = 0.9 # matrix density
+
+    # generate input dataset
+    X = sprand(n, m, p)
+    inputfile = tempname()
+    h5writecsc(inputfile, inputdataset, X)
+
+    # correct solution (computed via LinearAlgebra.svd)
+    V_correct = pca(Matrix(X), k)
+    V = similar(V_correct)
+
+    ### exact
+    outputfile = tempname()
+    mpiexec(cmd -> run(`$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile --niterations $niterations --ncomponents $k`))
+
+    # test that the output was generated correctly
+    @test HDF5.ishdf5(outputfile)
+    h5open(outputfile, "r") do file
+        @test outputdataset in keys(file)
+        @test size(file[outputdataset]) == (m, k)
+        V .= file[outputdataset][:, :]
+    end
+
+    # compare the computed principal components with those obtained from the built-in svd
+    for i in 1:k
+        @test isapprox(
+            CodedComputing.minangle(view(V, :, i), view(V_correct, :, i)),
+            0, atol=1e-2
+        )
+    end
+end
+
 @testset "HDF5Sparse.jl" begin
+    Random.seed!(123)
     m, n, p = 10, 5, 0.1
     M = sprand(Float32, m, n, p)
     filename = tempname()
