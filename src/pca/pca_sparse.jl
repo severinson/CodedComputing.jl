@@ -1,19 +1,22 @@
 function problem_size(filename::String, dataset::String)
-    print("getting problem size")
-    h5open(filename, "r") do fid        
-        return fid[dataset]["m"][], fid[dataset]["n"][]
+    HDF5.ishdf5(filename) || throw(ArgumentError("$filename isn't an HDF5 file"))
+    h5open(filename, "r") do fid
+        flag, msg = isvalidh5csc(fid, dataset)
+        if !flag
+            throw(ArgumentError(msg))
+        end
+        g = fid[dataset]
+        return g["m"][], g["n"][]
     end
 end
 
 function read_localdata(filename::String, dataset::String, i::Integer, npartitions::Integer)
-    print("reading local data\n")
-    m, n = problem_size(filename, dataset)
-    print("foo $((m, n))\n")
-    il = round(Int, (i - 1)/npartitions*m + 1)
-    iu = round(Int, i/npartitions*m)    
+    HDF5.ishdf5(filename) || throw(ArgumentError("$filename isn't an HDF5 file"))
     X = h5readcsc(filename, dataset)
+    m = size(X, 1)
+    il = round(Int, (i - 1)/npartitions*m + 1)
+    iu = round(Int, i/npartitions*m)
     Xw = X[il:iu, :]
-    print("bar $(size(Xw))\n")
     Xw
 end
 
