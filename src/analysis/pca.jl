@@ -6,7 +6,7 @@ using CodedComputing
 Read all output files from a given directory and write summary statistics (e.g., iteration time 
 and convergence) to a DataFrame.
 """
-function aggregate_benchmark_data(;dir="/shared/201123/2/", inputfile="/shared/201123/input.h5", prefix="output", dfname="df.csv")
+function aggregate_benchmark_data(;dir="/shared/201124/1/", inputfile="/shared/201124/ratings.h5", inputname="M", prefix="output", dfname="df.csv")
     t_compute_all = zeros(Float64, 0)
     t_update_all = zeros(Float64, 0)
     nworkers_all = zeros(Int, 0)
@@ -15,9 +15,20 @@ function aggregate_benchmark_data(;dir="/shared/201123/2/", inputfile="/shared/2
     jobid_all = zeros(Int, 0)
     jobid = 1
     responded_all = zeros(Bool, 0, 0)
+    mse_all = zeros(Union{Float64,Missing}, 0)
 
-    explained_variance_all = zeros(Union{Float64,Missing}, 0)
-    X = h5read(inputfile, "X")
+    # read input matrix to measure convergence
+    iscsc = false
+    h5open(inputfile) do fid
+        iscsc, _ = isvalidh5csc(fid, inputname)
+    end
+    if iscsc
+        X = h5readcsc(inputfile, inputname)
+    else
+        X = h5read(inputfile, inputname)
+    end
+
+    # process output files
     for filename in glob("$(prefix)*.h5", dir)
         println(filename)
         if !HDF5.ishdf5(filename)
@@ -37,11 +48,11 @@ function aggregate_benchmark_data(;dir="/shared/201123/2/", inputfile="/shared/2
             jobid += 1
             if "iterates" in keys(fid)
                 append!(
-                    explained_variance_all, 
-                    [explained_variance(X, fid["iterates"][:, :, i]) for i in 1:n],
+                    mse_all, 
+                    [projection_distance(X, fid["iterates"][:, :, i]) for i in 1:n],
                 )
             else
-                append!(explained_variance_all, repeat([missing], n))
+                append!(mse_all, repeat([missing], n))
             end
             responded_all = vcat(responded_all, zeros(Bool, n, size(responded_all, 2)))
             if "responded" in keys(fid["benchmark"])
@@ -61,7 +72,7 @@ function aggregate_benchmark_data(;dir="/shared/201123/2/", inputfile="/shared/2
         nwait=nwait_all, 
         t_compute=t_compute_all, 
         t_update=t_update_all,
-        explained_variance=explained_variance_all,
+        mse=mse_all,
         jobid=jobid_all,
         )
     for i in 1:size(responded_all, 2)
@@ -122,7 +133,7 @@ function movielens_rating_matrix(df::DataFrame)
     sparse(Is, Js, Vs, nusers, nmovies)    
 end
 
-function movielens_rating_matrix(filename="MovieLens/ml-25m/ratings.csv")
+function movielens_rating_matrix(filename="/shared/MovieLens/ml-25m/ratings.csv")
     df = DataFrame(CSV.File(filename, normalizenames=true))
     movielens_rating_matrix(df)
 end
