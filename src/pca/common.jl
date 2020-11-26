@@ -202,11 +202,11 @@ function root_main()
     ts_update = zeros(niterations)
     for epoch in 1:niterations
         ts_compute[epoch] = @elapsed begin
-            epochs = kmap!(sendbuf, recvbuf, isendbuf, irecvbuf, nwait, epoch, pool, comm; tag=data_tag)
+            repochs = kmap!(sendbuf, recvbuf, isendbuf, irecvbuf, nwait, epoch, pool, comm; tag=data_tag)
         end
-        responded[:, epoch] .= epochs .== epoch
+        responded[:, epoch] .= repochs .== epoch
         ts_update[epoch] = @elapsed begin
-            update_gradient!(∇, Vs, responded[:, epoch])
+            update_gradient!(∇, Vs, epoch, repochs)
             update_iterate!(V, ∇)
         end
         if saveiterates

@@ -24,17 +24,17 @@ function worker_task!(V, Xw, state=nothing)
     W
 end
 
-function update_gradient!(∇, Vs, bs::AbstractVector{<:Bool}, state=nothing)
-    length(Vs) == length(bs) || throw(DimensionMismatch("Vs has dimension $(length(Vs)), but bs has dimension $(length(bs))"))
+function update_gradient!(∇, Vs, epoch::Integer, repochs::Vector{<:Integer}, state=nothing)
+    length(Vs) == length(repochs) || throw(DimensionMismatch("Vs has dimension $(length(Vs)), but repochs has dimension $(length(repochs))"))
     ∇ .= 0
     nresults = 0
-    for (b, V) in zip(bs, Vs)
-        if b
+    for (V, repoch) in zip(Vs, repochs)        
+        if repoch == epoch
             ∇ .+= V
             nresults += 1
         end
     end
-    ∇ .*= length(Vs) / nresults    
+    ∇ .*= length(Vs) / nresults
     state
 end
 
