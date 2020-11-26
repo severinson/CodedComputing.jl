@@ -54,10 +54,11 @@ using Test
 
     # test that the output was generated correctly
     @test isfile(outputfile)
-    h5open(outputfile, "r") do file
-        @test outputdataset in keys(file)
-        @test size(file[outputdataset]) == (m, k)
-        V .= file[outputdataset][:, :]
+    h5open(outputfile, "r") do fid
+        @test outputdataset in keys(fid)
+        @test size(fid[outputdataset]) == (m, k)
+        V .= fid[outputdataset][:, :]
+        @test length(fid["benchmark/t_compute"]) == niterations
     end
 
     # test that the columns are orthogonal
@@ -92,10 +93,11 @@ end
 
     # test that the output was generated correctly
     @test HDF5.ishdf5(outputfile)
-    h5open(outputfile, "r") do file
-        @test outputdataset in keys(file)
-        @test size(file[outputdataset]) == (m, k)
-        V .= file[outputdataset][:, :]
+    h5open(outputfile, "r") do fid
+        @test outputdataset in keys(fid)
+        @test size(fid[outputdataset]) == (m, k)
+        V .= fid[outputdataset][:, :]
+        @test length(fid["benchmark/t_compute"]) == niterations
     end
 
     # compare the computed principal components with those obtained from the built-in svd
