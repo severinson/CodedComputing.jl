@@ -195,19 +195,35 @@ function root_main()
     responded = zeros(Bool, nworkers, niterations)
 
     # results computed by the workers
-    Vs = [view(recvbuf, :, (i-1)*ncomponents+1:i*ncomponents) for i in 1:nworkers]
+    Vs = [view(recvbuf, :, (i-1)*ncomponents+1:i*ncomponents) for i in 1:nworkers]    
 
-    # main loop
+    # to record iteration time
     ts_compute = zeros(niterations)
     ts_update = zeros(niterations)
-    for epoch in 1:niterations
+
+    # first iteration (initializes state)
+    epoch = 1
+    ts_compute[epoch] = @elapsed begin
+        repochs = kmap!(sendbuf, recvbuf, isendbuf, irecvbuf, nwait, epoch, pool, comm; tag=data_tag)
+    end
+    responded[:, epoch] .= repochs .== epoch
+    ts_update[epoch] = @elapsed begin
+        gradient_state = update_gradient!(∇, Vs, epoch, repochs)
+        iterate_state = update_iterate!(V, ∇)
+    end
+    if saveiterates
+        iterates[:, :, epoch] .= V
+    end
+
+    # remaining iterations
+    for epoch in 2:niterations
         ts_compute[epoch] = @elapsed begin
             repochs = kmap!(sendbuf, recvbuf, isendbuf, irecvbuf, nwait, epoch, pool, comm; tag=data_tag)
         end
         responded[:, epoch] .= repochs .== epoch
         ts_update[epoch] = @elapsed begin
-            update_gradient!(∇, Vs, epoch, repochs)
-            update_iterate!(V, ∇)
+            update_gradient!(∇, Vs, epoch, repochs, gradient_state)
+            update_iterate!(V, ∇, iterate_state)
         end
         if saveiterates
             iterates[:, :, epoch] .= V
