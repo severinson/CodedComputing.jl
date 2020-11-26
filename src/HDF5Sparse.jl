@@ -1,3 +1,4 @@
+using SparseArrays
 export h5writecsc, h5readcsc, isvalidh5csc
 
 function h5writecsc(filename, name::AbstractString, data::SparseMatrixCSC)
