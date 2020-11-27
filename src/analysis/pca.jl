@@ -6,7 +6,7 @@ using CodedComputing
 Read all output files from a given directory and write summary statistics (e.g., iteration time 
 and convergence) to a DataFrame.
 """
-function aggregate_benchmark_data(;dir="/shared/201124/1/", inputfile="/shared/201124/ratings.h5", inputname="M", prefix="output", dfname="df.csv")
+function aggregate_benchmark_data(;dir="/shared/201124/3/", inputfile="/shared/201124/ratings.h5", inputname="M", prefix="output", dfname="df.csv")
     t_compute_all = zeros(Float64, 0)
     t_update_all = zeros(Float64, 0)
     nworkers_all = zeros(Int, 0)
@@ -15,7 +15,8 @@ function aggregate_benchmark_data(;dir="/shared/201124/1/", inputfile="/shared/2
     jobid_all = zeros(Int, 0)
     jobid = 1
     responded_all = zeros(Bool, 0, 0)
-    mse_all = zeros(Union{Float64,Missing}, 0)
+    algorithm_all = Vector{String}(undef, 0)
+    mse_all = zeros(Union{Float64,Missing}, 0)    
 
     # read input matrix to measure convergence
     iscsc = false
@@ -45,6 +46,7 @@ function aggregate_benchmark_data(;dir="/shared/201124/1/", inputfile="/shared/2
             append!(nwait_all, repeat([nwait], n))
             append!(iteration_all, 1:n)
             append!(jobid_all, repeat([jobid], n))
+            append!(algorithm_all, repeat([fid["parameters/algorithm"][]], n))
             jobid += 1
             if "iterates" in keys(fid)
                 append!(
@@ -74,6 +76,7 @@ function aggregate_benchmark_data(;dir="/shared/201124/1/", inputfile="/shared/2
         t_update=t_update_all,
         mse=mse_all,
         jobid=jobid_all,
+        algorithm=algorithm_all,
         )
     for i in 1:size(responded_all, 2)
         df["worker_$(i)_responded"] = responded_all[:, i]
