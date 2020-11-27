@@ -1,3 +1,7 @@
+function update_parsed_args!(s, parsed_args)
+    parsed_args["algorithm"] = "pca.jl"    
+end
+
 function problem_size(filename::String, dataset::String)
     h5open(filename, "r") do file
         return size(file[dataset])

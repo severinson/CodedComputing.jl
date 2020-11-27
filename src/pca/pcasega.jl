@@ -1,3 +1,7 @@
+function update_parsed_args!(s, parsed_args)
+    parsed_args["algorithm"] = "pcasega.jl"
+end
+
 function problem_size(filename::String, dataset::String)
     HDF5.ishdf5(filename) || throw(ArgumentError("$filename isn't an HDF5 file"))
     h5open(filename, "r") do fid
