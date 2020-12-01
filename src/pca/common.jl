@@ -19,7 +19,7 @@ the function body for details. Returns a dictionary containing the parsed argume
 function parse_commandline(isroot::Bool)
 
     # setup error handling so that only the root node prints error messages
-    s = ArgParseSettings("Principal component analysis MPI kernel")
+    s = ArgParseSettings("Principal component analysis MPI kernel", autofix_names=true)
     function root_handler(settings::ArgParseSettings, err, err_code::Integer=1)
         println(Base.stderr, err.text)
         println(Base.stderr, usage_string(settings))
@@ -78,7 +78,7 @@ function parse_commandline(isroot::Bool)
     end
 
     # common parsing
-    parsed_args = parse_args(s)
+    parsed_args = parse_args(s, as_symbols=true)
 
     # optional implementation-specific parsing
     if @isdefined update_parsed_args!
@@ -92,7 +92,7 @@ end
 
 Main loop run by each worker.
 """
-function worker_loop(localdata, dimension::Integer, ncomponents::Integer)
+function worker_loop(localdata, dimension::Integer, ncomponents::Integer; kwargs)
     
     # control channel, to tell the workers when to exit
     crreq = MPI.Irecv!(zeros(1), root, control_tag, comm)
@@ -107,7 +107,7 @@ function worker_loop(localdata, dimension::Integer, ncomponents::Integer)
     if index == 1 # exit message on control channel
         return
     end            
-    state = worker_task!(Vrecv, localdata)
+    state = worker_task!(Vrecv, localdata; kwargs...)
     Vsend .= Vrecv
     MPI.Isend(Vsend, root, data_tag, comm)
 
@@ -118,7 +118,7 @@ function worker_loop(localdata, dimension::Integer, ncomponents::Integer)
         if index == 1 # exit message on control channel
             break
         end        
-        worker_task!(Vrecv, localdata, state)
+        worker_task!(Vrecv, localdata; kwargs..., state=state)
         Vsend .= Vrecv
         MPI.Isend(Vsend, root, data_tag, comm)
     end
@@ -128,20 +128,19 @@ end
 function worker_main()
     nworkers = MPI.Comm_size(comm) - 1
     parsed_args = parse_commandline(isroot)
-    nsamples, dimension = problem_size(parsed_args["inputfile"], parsed_args["inputdataset"])
+    nsamples, dimension = problem_size(parsed_args[:inputfile], parsed_args[:inputdataset])
     try        
         # read input data for this worker
-        localdata = read_localdata(parsed_args["inputfile"], parsed_args["inputdataset"], rank, nworkers)
+        localdata = read_localdata(parsed_args[:inputfile], parsed_args[:inputdataset], rank, nworkers; parsed_args...)
 
         # default to computing all principal components
-        if isnothing(parsed_args["ncomponents"])
-            ncomponents = dimension
-        else
-            ncomponents::Int = parsed_args["ncomponents"]
+        if isnothing(parsed_args[:ncomponents])
+            parsed_args[:ncomponents] = dimension
         end
+        ncomponents::Int = parsed_args[:ncomponents]
 
         # run the algorithm
-        worker_loop(localdata, dimension, ncomponents)
+        worker_loop(localdata, dimension, ncomponents; kwargs=parsed_args)
     catch e
         print(Base.stderr, "rank $rank exiting due to $e")
         exit(0) # only the root exits with non-zero status in case of error
@@ -158,19 +157,19 @@ function root_main()
 
     # setup
     parsed_args = parse_commandline(isroot)
-    nsamples, dimension = problem_size(parsed_args["inputfile"], parsed_args["inputdataset"])
+    nsamples, dimension = problem_size(parsed_args[:inputfile], parsed_args[:inputdataset])
     nworkers = MPI.Comm_size(comm) - 1
     0 < nworkers <= nsamples || throw(DomainError(nworkers, "The number of workers must be in [1, nsamples]"))
-    parsed_args["nworkers"] = nworkers
-    ncomponents::Int = isnothing(parsed_args["ncomponents"]) ? dimension : parsed_args["ncomponents"]
-    parsed_args["ncomponents"] = ncomponents
+    parsed_args[:nworkers] = nworkers
+    ncomponents::Int = isnothing(parsed_args[:ncomponents]) ? dimension : parsed_args[:ncomponents]
+    parsed_args[:ncomponents] = ncomponents
     ncomponents <= dimension || throw(DimensionMismatch("ncomponents is $ncomponents, but the dimension is $dimension"))
-    nwait::Int = isnothing(parsed_args["nwait"]) ? nworkers : parsed_args["nwait"]
-    parsed_args["nwait"] = nwait
+    nwait::Int = isnothing(parsed_args[:nwait]) ? nworkers : parsed_args[:nwait]
+    parsed_args[:nwait] = nwait
     0 < nwait <= nworkers || throw(DomainError(nwait, "nwait must be in [1, nworkers]"))    
-    niterations::Int = parsed_args["niterations"]
+    niterations::Int = parsed_args[:niterations]
     niterations > 0 || throw(DomainError(niterations, "The number of iterations must be non-negative"))
-    saveiterates::Bool = parsed_args["saveiterates"]
+    saveiterates::Bool = parsed_args[:saveiterates]
 
     # worker pool and communication buffers
     pool = StragglerPool(nworkers)
@@ -208,8 +207,8 @@ function root_main()
     end
     responded[:, epoch] .= repochs .== epoch
     ts_update[epoch] = @elapsed begin
-        gradient_state = update_gradient!(∇, Vs, epoch, repochs)
-        iterate_state = update_iterate!(V, ∇)
+        gradient_state = update_gradient!(∇, Vs, epoch, repochs; parsed_args...)
+        iterate_state = update_iterate!(V, ∇; parsed_args...)
     end
     if saveiterates
         iterates[:, :, epoch] .= V
@@ -222,8 +221,8 @@ function root_main()
         end
         responded[:, epoch] .= repochs .== epoch
         ts_update[epoch] = @elapsed begin
-            update_gradient!(∇, Vs, epoch, repochs, gradient_state)
-            update_iterate!(V, ∇, iterate_state)
+            update_gradient!(∇, Vs, epoch, repochs; state=gradient_state, parsed_args...)
+            update_iterate!(V, ∇; state=iterate_state, parsed_args...)
         end
         if saveiterates
             iterates[:, :, epoch] .= V
@@ -231,7 +230,7 @@ function root_main()
     end
 
     shutdown(pool)
-    h5open(parsed_args["outputfile"], "w") do fid
+    h5open(parsed_args[:outputfile], "w") do fid
 
         # write parameters to the output file
         for (key, val) in parsed_args
@@ -240,7 +239,7 @@ function root_main()
 
         # write the computed principal components
         # sendbuf is aliased to V (writing a view results in a crash)
-        fid[parsed_args["outputdataset"]] = sendbuf
+        fid[parsed_args[:outputdataset]] = sendbuf
 
         # optionally save all iterates
         if saveiterates

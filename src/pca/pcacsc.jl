@@ -1,5 +1,5 @@
 function update_parsed_args!(s, parsed_args)
-    parsed_args["algorithm"] = "pcacsc.jl"    
+    parsed_args[:algorithm] = "pcacsc.jl"    
 end
 
 function problem_size(filename::String, dataset::String)
@@ -14,7 +14,7 @@ function problem_size(filename::String, dataset::String)
     end
 end
 
-function read_localdata(filename::String, dataset::String, i::Integer, npartitions::Integer)
+function read_localdata(filename::String, dataset::String, i::Integer, npartitions::Integer; kwargs...)
     HDF5.ishdf5(filename) || throw(ArgumentError("$filename isn't an HDF5 file"))
     X = h5readcsc(filename, dataset)
     m = size(X, 1)
@@ -24,7 +24,7 @@ function read_localdata(filename::String, dataset::String, i::Integer, npartitio
     Xw
 end
 
-function worker_task!(V, Xw, state=nothing)
+function worker_task!(V, Xw; state=nothing, kwargs...)
     if isnothing(state)
         W = Matrix{eltype(V)}(undef, size(Xw, 1), size(V, 2))
     else
@@ -35,7 +35,7 @@ function worker_task!(V, Xw, state=nothing)
     W
 end
 
-function update_gradient!(∇, Vs, epoch::Integer, repochs::Vector{<:Integer}, state=nothing)
+function update_gradient!(∇, Vs, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, kwargs...)
     length(Vs) == length(repochs) || throw(DimensionMismatch("Vs has dimension $(length(Vs)), but repochs has dimension $(length(repochs))"))
     ∇ .= 0
     nresults = 0
@@ -49,7 +49,7 @@ function update_gradient!(∇, Vs, epoch::Integer, repochs::Vector{<:Integer}, s
     state
 end
 
-function update_iterate!(V, ∇, state=nothing)
+function update_iterate!(V, ∇; state=nothing, kwargs...)
     V .= ∇
     orthogonal!(V)
     state

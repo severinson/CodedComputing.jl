@@ -2,6 +2,14 @@ using CodedComputing
 using Random, MPI, HDF5, LinearAlgebra, SparseArrays
 using Test
 
+@testset "Linalg.jl" begin
+    Random.seed!(123)
+    n, m = 100, 10
+    V = randn(n, m)
+    orthogonal!(V)
+    @test V'*V ≈ I
+end
+
 @testset "pca.jl" begin
 
     # setup
@@ -53,7 +61,7 @@ using Test
     mpiexec(cmd -> run(`$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile --niterations $niterations --nwait $(nworkers-1)`))
 
     # test that the output was generated correctly
-    @test isfile(outputfile)
+    @test HDF5.ishdf5(outputfile)
     h5open(outputfile, "r") do fid
         @test outputdataset in keys(fid)
         @test size(fid[outputdataset]) == (m, k)
@@ -63,6 +71,25 @@ using Test
 
     # test that the columns are orthogonal
     @test V'*V ≈ I
+
+    ## using mini batches
+    outputfile = tempname()
+    nminibatches = 2
+    stepsize = 1/nminibatches
+    mpiexec(cmd -> run(`$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile --niterations $niterations --nwait $(nworkers-1) --nminibatches $nminibatches --stepsize $stepsize`))
+
+    # test that the output was generated correctly
+    @test HDF5.ishdf5(outputfile)
+    h5open(outputfile, "r") do fid
+        @test outputdataset in keys(fid)
+        @test size(fid[outputdataset]) == (m, k)
+        V .= fid[outputdataset][:, :]
+        @test length(fid["benchmark/t_compute"]) == niterations
+    end
+
+    # test that the columns are orthogonal
+    @test V'*V ≈ I
+
 end
 
 @testset "pcacsc.jl" begin
@@ -99,6 +126,9 @@ end
         V .= fid[outputdataset][:, :]
         @test length(fid["benchmark/t_compute"]) == niterations
     end
+
+    # test that the columns are orthogonal
+    @test V'*V ≈ I
 
     # compare the computed principal components with those obtained from the built-in svd
     for i in 1:k
@@ -143,6 +173,9 @@ end
         V .= fid[outputdataset][:, :]
         @test length(fid["benchmark/t_compute"]) == niterations
     end
+
+    # test that the columns are orthogonal
+    @test V'*V ≈ I
 
     # compare the computed principal components with those obtained from the built-in svd
     for i in 1:k
