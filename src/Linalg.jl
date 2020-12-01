@@ -27,7 +27,10 @@ function orthogonal!(A::AbstractMatrix)
                 A[k, i] -= l*A[k, j]
             end
         end
-        view(A, :, i) ./= norm(view(A, :, i))
+        g = norm(view(A, :, i))
+        if g > sqrt(eps(eltype(A)) * size(A, 1))
+            view(A, :, i) ./= g
+        end
         replace!(view(A, :, i), NaN=>zero(eltype(A)))
     end
     return A
