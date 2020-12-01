@@ -32,7 +32,12 @@ function problem_size(filename::String, dataset::String)
     end
 end
 
-function read_localdata(filename::String, dataset::String, i::Integer, npartitions::Integer; kwargs...)
+function read_localdata(filename::String, dataset::String, i::Integer; nworkers::Integer, nreplicas::Integer, kwargs...)
+    0 < nworkers || throw(DomainError(nworkers, "nworkers must be positive"))
+    0 < nreplicas || throw(DomainError(nreplicas, "nreplicas must be positive"))
+    0 < i <= nworkers || throw(DomainError(i, "i must be in [1, nworkers]"))
+    mod(nworkers, nreplicas) == 0 || throw(ArgumentError("nworkers must be divisible by nreplicas"))
+    npartitions = div(nworkers, nreplicas)
     h5open(filename, "r") do fid
         dataset in keys(fid) || throw(ArgumentError("$dataset is not in $fid"))
         flag, _ = isvalidh5csc(fid, dataset)
@@ -73,17 +78,33 @@ function worker_task!(V, Xw; state=nothing, pfraction=1, kwargs...)
     W, p
 end
 
-function update_gradient!(∇, Vs, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, pfraction=1, kwargs...)
+function update_gradient!(∇, Vs, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, nreplicas=1, pfraction=1, kwargs...)
     length(Vs) == length(repochs) || throw(DimensionMismatch("Vs has dimension $(length(Vs)), but repochs has dimension $(length(repochs))"))
+    0 < pfraction <= 1 || throw(DomainError(pfraction, "pfraction must be in (0, 1]"))
+    0 < nreplicas || throw(DomainError(nreplicas, "nreplicas must be positive"))
+    nworkers = length(Vs)    
+    mod(nworkers, nreplicas) == 0 || throw(ArgumentError("nworkers must be divisible by nreplicas"))
+    npartitions = div(nworkers, nreplicas)
     ∇ .= 0
     nresults = 0
-    for (V, repoch) in zip(Vs, repochs)        
-        if repoch == epoch
-            ∇ .+= V
-            nresults += 1
+
+    # add at most 1 replica of each partition to the overall gradient
+    # the partitions are arranged sequentially, so if there are 2 partitions and 3 replicas, then
+    # Vs is of length 6, and its elements correspond to partitions [1, 1, 1, 2, 2, 2]
+    for partition in 1:npartitions
+        for replica in 1:nreplicas
+            i = (partition-1)*nreplicas + replica
+            if repochs[i] == epoch
+                ∇ .+= Vs[i]
+                nresults += 1
+                break
+            end
         end
     end
-    ∇ .*= length(Vs) / nresults / pfraction
+
+    # scale the (stochastic) gradient to make it unbiased estimate of the true gradient
+    ∇ .*= nworkers / nresults / pfraction
+
     state
 end
 

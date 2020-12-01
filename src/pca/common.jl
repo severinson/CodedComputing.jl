@@ -53,9 +53,20 @@ function parse_commandline(isroot::Bool)
             help = "Number of iterations to run the algorithm for"
             default = 10
             arg_type = Int            
+            range_tester = (x) -> x >= 1            
         "--ncomponents"
             help = "Number of principal components to compute (defaults to computing all principal components)"           
             arg_type = Int            
+            range_tester = (x) -> x >= 1
+        "--nreplicas"
+            help = "Number of replicas of each data partition"
+            default = 1
+            arg_type = Int
+            range_tester = (x) -> x >= 1            
+        "--nwait"
+            help = "Number of replicas to wait for in each iteration (defaults to all replicas)"
+            arg_type = Int
+            range_tester = (x) -> x >= 1
         "--inputdataset"
             help = "Input dataset name"
             default = "X"
@@ -64,9 +75,6 @@ function parse_commandline(isroot::Bool)
             help = "Output dataset name"
             default = "V"
             arg_type = String
-        "--nwait"
-            help = "Number of workers to wait for in each iteration (defaults to all workers)"
-            arg_type = Int
         "--saveiterates"
             help = "Save all intermediate iterates to the output file"
             action = :store_true
@@ -131,7 +139,7 @@ function worker_main()
     nsamples, dimension = problem_size(parsed_args[:inputfile], parsed_args[:inputdataset])
     try        
         # read input data for this worker
-        localdata = read_localdata(parsed_args[:inputfile], parsed_args[:inputdataset], rank, nworkers; parsed_args...)
+        localdata = read_localdata(parsed_args[:inputfile], parsed_args[:inputdataset], rank; nworkers, parsed_args...)
 
         # default to computing all principal components
         if isnothing(parsed_args[:ncomponents])
@@ -164,12 +172,15 @@ function root_main()
     ncomponents::Int = isnothing(parsed_args[:ncomponents]) ? dimension : parsed_args[:ncomponents]
     parsed_args[:ncomponents] = ncomponents
     ncomponents <= dimension || throw(DimensionMismatch("ncomponents is $ncomponents, but the dimension is $dimension"))
-    nwait::Int = isnothing(parsed_args[:nwait]) ? nworkers : parsed_args[:nwait]
-    parsed_args[:nwait] = nwait
-    0 < nwait <= nworkers || throw(DomainError(nwait, "nwait must be in [1, nworkers]"))    
     niterations::Int = parsed_args[:niterations]
     niterations > 0 || throw(DomainError(niterations, "The number of iterations must be non-negative"))
     saveiterates::Bool = parsed_args[:saveiterates]
+    nreplicas::Int = parsed_args[:nreplicas]
+    mod(nworkers, nreplicas) == 0 || throw(ArgumentError("nworkers must be divisible by nreplicas"))
+    npartitions = div(nworkers, nreplicas)
+    nwait::Int = isnothing(parsed_args[:nwait]) ? npartitions : parsed_args[:nwait]
+    parsed_args[:nwait] = nwait
+    0 < nwait <= npartitions || throw(DomainError(nwait, "nwait must be in [1, npartitions]"))
 
     # worker pool and communication buffers
     pool = StragglerPool(nworkers)
@@ -200,10 +211,25 @@ function root_main()
     ts_compute = zeros(niterations)
     ts_update = zeros(niterations)
 
+    function fwait(epoch, repochs)
+        length(repochs) == nworkers || throw(DomainError(nworkers, "repochs must have length nworkers"))
+        rreplicas = 0
+        for partition in 1:npartitions
+            for replica in 1:nreplicas
+                i = (partition-1)*nreplicas + replica
+                if repochs[i] == epoch
+                    rreplicas += 1
+                    break
+                end
+            end
+        end
+        rreplicas >= nwait
+    end
+
     # first iteration (initializes state)
     epoch = 1
     ts_compute[epoch] = @elapsed begin
-        repochs = kmap!(sendbuf, recvbuf, isendbuf, irecvbuf, nwait, epoch, pool, comm; tag=data_tag)
+        repochs = kmap!(sendbuf, recvbuf, isendbuf, irecvbuf, fwait, epoch, pool, comm; tag=data_tag)
     end
     responded[:, epoch] .= repochs .== epoch
     ts_update[epoch] = @elapsed begin
@@ -217,7 +243,7 @@ function root_main()
     # remaining iterations
     for epoch in 2:niterations
         ts_compute[epoch] = @elapsed begin
-            repochs = kmap!(sendbuf, recvbuf, isendbuf, irecvbuf, nwait, epoch, pool, comm; tag=data_tag)
+            repochs = kmap!(sendbuf, recvbuf, isendbuf, irecvbuf, fwait, epoch, pool, comm; tag=data_tag)
         end
         responded[:, epoch] .= repochs .== epoch
         ts_update[epoch] = @elapsed begin
