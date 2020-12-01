@@ -73,7 +73,7 @@ function worker_task!(V, Xw; state=nothing, pfraction=1, kwargs...)
     W, p
 end
 
-function update_gradient!(∇, Vs, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, nminibatches=1, kwargs...)
+function update_gradient!(∇, Vs, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, pfraction=1, kwargs...)
     length(Vs) == length(repochs) || throw(DimensionMismatch("Vs has dimension $(length(Vs)), but repochs has dimension $(length(repochs))"))
     ∇ .= 0
     nresults = 0
@@ -83,7 +83,7 @@ function update_gradient!(∇, Vs, epoch::Integer, repochs::Vector{<:Integer}; s
             nresults += 1
         end
     end
-    ∇ .*= length(Vs) / nresults * nminibatches
+    ∇ .*= length(Vs) / nresults / pfraction
     state
 end
 
