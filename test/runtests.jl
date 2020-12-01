@@ -74,9 +74,9 @@ end
 
     ## using mini batches
     outputfile = tempname()
-    nminibatches = 2
-    stepsize = 1/nminibatches
-    mpiexec(cmd -> run(`$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile --niterations $niterations --nwait $(nworkers-1) --nminibatches $nminibatches --stepsize $stepsize`))
+    pfraction = 0.9
+    stepsize = pfraction
+    mpiexec(cmd -> run(`$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile --niterations $niterations --nwait $(nworkers-1) --pfraction $pfraction --stepsize $stepsize`))
 
     # test that the output was generated correctly
     @test HDF5.ishdf5(outputfile)

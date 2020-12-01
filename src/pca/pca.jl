@@ -1,15 +1,17 @@
-using ArgParse
+using ArgParse, Random
 
 function update_argsettings!(s::ArgParseSettings)
     @add_arg_table s begin
-        "--nminibatches"
-            help = "Number of batches that the data stored by each worker is partitioned into. In each iteration, the worker selects one of the partitions at random to compute the gradient."
-            arg_type = Int
-            default = 1
+        "--pfraction"
+            help = "Fraction of the data stored at each worker that should be used to compute the gradient"
+            arg_type = Float64
+            default = 1.0
+            range_tester = (x) -> 0 < x <= 1
         "--stepsize"
             help = "Gradient descent step size"
             arg_type = Float64
             default = 1.0
+            range_tester = (x) -> x > 0
     end    
 end
 
@@ -49,22 +51,26 @@ function read_localdata(filename::String, dataset::String, i::Integer, npartitio
     end
 end
 
-function worker_task!(V, Xw; state=nothing, nminibatches=1, kwargs...)
-    0 < nminibatches <= size(Xw, 1) || throw(DomainError(nminibatches, "nminibatches must be in [1, size(Xw, 1)]"))
+function worker_task!(V, Xw; state=nothing, pfraction=1, kwargs...)
+    0 < pfraction <= 1 || throw(DomainError(pfraction, "pfraction must be in (0, 1]"))
     if isnothing(state)
         W = Matrix{eltype(V)}(undef, size(Xw, 1), size(V, 2))
+        p = collect(1:size(Xw, 1))
     else
-        W = state
-    end    
-    n = size(Xw, 1)
-    i = rand(1:nminibatches)
-    il = round(Int, (i - 1)/nminibatches*n + 1)
-    iu = round(Int, i/nminibatches*n)
-    Xwv = view(Xw, il:iu, :)
-    Wv = view(W, il:iu, :)
+        W, p = state
+    end
+
+    # select a fraction pfraction of the locally stored rows at random
+    shuffle!(p)
+    i = round(Int, pfraction*size(Xw, 1))
+    i = max(1, i)
+    Xwv = view(Xw, view(p, 1:i), :)
+    Wv = view(W, 1:size(Xwv, 1), :)
+
+    # do the computation
     mul!(Wv, Xwv, V)
     mul!(V, Xwv', Wv)
-    W
+    W, p
 end
 
 function update_gradient!(∇, Vs, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, nminibatches=1, kwargs...)
