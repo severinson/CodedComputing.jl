@@ -27,19 +27,23 @@ function isvalidh5csc(fid::HDF5.File, name::AbstractString)
     true, ""
 end
 
+function h5readcsc(fid::HDF5.File, name::AbstractString)::SparseMatrixCSC
+    flag, msg = isvalidh5csc(fid, name)
+    if !flag
+        throw(ArgumentError(msg))
+    end
+    g = fid[name]
+    colptr = g["colptr"][:]
+    m = g["m"][]
+    n = g["n"][]
+    nzval = g["nzval"][:]
+    rowval = g["rowval"][:]
+    return SparseMatrixCSC(m, n, colptr, rowval, nzval)
+end
+
 function h5readcsc(filename, name::AbstractString)::SparseMatrixCSC
     HDF5.ishdf5(filename) || throw(ArgumentError("$filename isn't a valid HDF5 file"))    
     h5open(filename, "r") do fid
-        flag, msg = isvalidh5csc(fid, name)
-        if !flag
-            throw(ArgumentError(msg))
-        end
-        g = fid[name]
-        colptr = g["colptr"][:]
-        m = g["m"][]
-        n = g["n"][]
-        nzval = g["nzval"][:]
-        rowval = g["rowval"][:]
-        return SparseMatrixCSC(m, n, colptr, rowval, nzval)
+        return h5readcsc(fid, name)
     end
 end
