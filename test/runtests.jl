@@ -90,22 +90,8 @@ end
     # test that the columns are orthogonal
     @test V'*V ≈ I
 
-end
-
-@testset "pcacsc.jl" begin
-
-    # setup
-    Random.seed!(123)
-    kernel = "../src/pca/pcacsc.jl"
-    nworkers = 2
-    niterations = 200
-    inputdataset = "X"
-    outputdataset = "V"
-    n, m = 20, 10
-    k = m
-    p = 0.9 # matrix density
-
-    # generate input dataset
+    ### sparse (CSC) matrices
+    p = 0.9 # matrix density    
     X = sprand(n, m, p)
     inputfile = tempname()
     h5writecsc(inputfile, inputdataset, X)
@@ -114,7 +100,7 @@ end
     V_correct = pca(Matrix(X), k)
     V = similar(V_correct)
 
-    ### exact
+    # exact solution
     outputfile = tempname()
     mpiexec(cmd -> run(`$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile --niterations $niterations --ncomponents $k`))
 
@@ -136,7 +122,8 @@ end
             CodedComputing.minangle(view(V, :, i), view(V_correct, :, i)),
             0, atol=1e-2
         )
-    end
+    end    
+
 end
 
 @testset "pcasega.jl" begin

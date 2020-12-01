@@ -18,17 +18,34 @@ function update_parsed_args!(s::ArgParseSettings, parsed_args)
 end
 
 function problem_size(filename::String, dataset::String)
-    h5open(filename, "r") do file
-        return size(file[dataset])
+    HDF5.ishdf5(filename) || throw(ArgumentError("$filename isn't an HDF5 file"))
+    h5open(filename, "r") do fid
+        dataset in keys(fid) || throw(ArgumentError("$dataset is not in $fid"))
+        flag, _ = isvalidh5csc(fid, dataset)
+        if flag
+            g = fid[dataset]
+            return g["m"][], g["n"][]
+        end
+        return size(fid[dataset])
     end
 end
 
 function read_localdata(filename::String, dataset::String, i::Integer, npartitions::Integer; kwargs...)
-    h5open(filename, "r") do file
-        n, m = size(file[dataset])
-        il = round(Int, (i - 1)/npartitions*n + 1)
-        iu = round(Int, i/npartitions*n)
-        return file[dataset][il:iu, :]
+    h5open(filename, "r") do fid
+        dataset in keys(fid) || throw(ArgumentError("$dataset is not in $fid"))
+        flag, _ = isvalidh5csc(fid, dataset)
+        if flag
+            X = h5readcsc(fid, dataset)
+            m = size(X, 1)
+            il = round(Int, (i - 1)/npartitions*m + 1)
+            iu = round(Int, i/npartitions*m)
+            return X[il:iu, :]            
+        else            
+            n, m = size(fid[dataset])
+            il = round(Int, (i - 1)/npartitions*n + 1)
+            iu = round(Int, i/npartitions*n)
+            return fid[dataset][il:iu, :]
+        end
     end
 end
 
