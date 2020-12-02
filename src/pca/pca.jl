@@ -97,13 +97,13 @@ function coordinator_setup(nworkers::Integer; inputfile::String, inputdataset::S
     end    
 
     # communication buffers
-    sendbuf = Vector{ELEMENT_TYPE}(undef, dimension*k)
-    recvbuf = Vector{ELEMENT_TYPE}(undef, dimension*nworkers*k)
+    sendbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*k)
+    recvbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*nworkers*k)
 
     # iterate, initialized at random
     V = randn(dimension, k)
     orthogonal!(V)
-    view(sendbuf, :) .= view(V, :)
+    reinterpret(ELEMENT_TYPE, view(sendbuf, :)) .= view(V, :)
 
     V, recvbuf, sendbuf
 end
