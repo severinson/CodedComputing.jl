@@ -90,6 +90,43 @@ end
     # test that the columns are orthogonal
     @test V'*V ≈ I
 
+    ### using mini batches
+    outputfile = tempname()
+    pfraction = 0.9
+    stepsize = pfraction
+    mpiexec(cmd -> run(`$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile --niterations $niterations --nwait $(nworkers-1) --pfraction $pfraction --stepsize $stepsize`))
+
+    # test that the output was generated correctly
+    @test HDF5.ishdf5(outputfile)
+    h5open(outputfile, "r") do fid
+        @test outputdataset in keys(fid)
+        @test size(fid[outputdataset]) == (m, k)
+        V .= fid[outputdataset][:, :]
+        @test length(fid["benchmark/t_compute"]) == niterations
+    end
+
+    # test that the columns are orthogonal
+    @test V'*V ≈ I    
+
+    ### sub-partitioning and stochastic sub-gradients
+    nsubpartitions = 2
+    pfraction = 0.9
+    stepsize = pfraction / nsubpartitions
+    outputfile = tempname()
+    mpiexec(cmd -> run(`$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile --niterations $niterations --nwait $(nworkers-1) --pfraction $pfraction --nsubpartitions $nsubpartitions --stepsize $stepsize`))
+
+    # test that the output was generated correctly
+    @test HDF5.ishdf5(outputfile)
+    h5open(outputfile, "r") do fid
+        @test outputdataset in keys(fid)
+        @test size(fid[outputdataset]) == (m, k)
+        V .= fid[outputdataset][:, :]
+        @test length(fid["benchmark/t_compute"]) == niterations
+    end
+
+    # test that the columns are orthogonal
+    @test V'*V ≈ I        
+
     ### sparse (CSC) matrices
     p = 0.9 # matrix density    
     X = sprand(n, m, p)
@@ -126,52 +163,52 @@ end
 
 end
 
-@testset "pcasega.jl" begin
+# @testset "pcasega.jl" begin
 
-    # setup
-    Random.seed!(123)
-    kernel = "../src/pca/pcasega.jl"
-    nworkers = 2
-    niterations = 200
-    inputdataset = "X"
-    outputdataset = "V"
-    n, m = 20, 10
-    k = m
-    p = 0.9 # matrix density
+#     # setup
+#     Random.seed!(123)
+#     kernel = "../src/pca/pcasega.jl"
+#     nworkers = 2
+#     niterations = 200
+#     inputdataset = "X"
+#     outputdataset = "V"
+#     n, m = 20, 10
+#     k = m
+#     p = 0.9 # matrix density
 
-    # generate input dataset
-    X = sprand(n, m, p)
-    inputfile = tempname()
-    h5writecsc(inputfile, inputdataset, X)
+#     # generate input dataset
+#     X = sprand(n, m, p)
+#     inputfile = tempname()
+#     h5writecsc(inputfile, inputdataset, X)
 
-    # correct solution (computed via LinearAlgebra.svd)
-    V_correct = pca(Matrix(X), k)
-    V = similar(V_correct)
+#     # correct solution (computed via LinearAlgebra.svd)
+#     V_correct = pca(Matrix(X), k)
+#     V = similar(V_correct)
 
-    ### exact
-    outputfile = tempname()
-    mpiexec(cmd -> run(`$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile --niterations $niterations --ncomponents $k`))
+#     ### exact
+#     outputfile = tempname()
+#     mpiexec(cmd -> run(`$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile --niterations $niterations --ncomponents $k`))
 
-    # test that the output was generated correctly
-    @test HDF5.ishdf5(outputfile)
-    h5open(outputfile, "r") do fid
-        @test outputdataset in keys(fid)
-        @test size(fid[outputdataset]) == (m, k)
-        V .= fid[outputdataset][:, :]
-        @test length(fid["benchmark/t_compute"]) == niterations
-    end
+#     # test that the output was generated correctly
+#     @test HDF5.ishdf5(outputfile)
+#     h5open(outputfile, "r") do fid
+#         @test outputdataset in keys(fid)
+#         @test size(fid[outputdataset]) == (m, k)
+#         V .= fid[outputdataset][:, :]
+#         @test length(fid["benchmark/t_compute"]) == niterations
+#     end
 
-    # test that the columns are orthogonal
-    @test V'*V ≈ I
+#     # test that the columns are orthogonal
+#     @test V'*V ≈ I
 
-    # compare the computed principal components with those obtained from the built-in svd
-    for i in 1:k
-        @test isapprox(
-            CodedComputing.minangle(view(V, :, i), view(V_correct, :, i)),
-            0, atol=1e-2
-        )
-    end
-end
+#     # compare the computed principal components with those obtained from the built-in svd
+#     for i in 1:k
+#         @test isapprox(
+#             CodedComputing.minangle(view(V, :, i), view(V_correct, :, i)),
+#             0, atol=1e-2
+#         )
+#     end
+# end
 
 @testset "HDF5Sparse.jl" begin
     Random.seed!(123)

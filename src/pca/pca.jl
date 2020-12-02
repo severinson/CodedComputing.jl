@@ -9,12 +9,17 @@ function update_argsettings!(s::ArgParseSettings)
             arg_type = Float64
             default = 1.0
             range_tester = (x) -> 0 < x <= 1
+        "--nsubpartitions"
+            help = "Number of sub-partitions to split the data stored at each worker into"
+            arg_type = Int
+            default = 1
+            range_tester = (x) -> x >= 1
         "--stepsize"
             help = "Gradient descent step size"
             arg_type = Float64
             default = 1.0
-            range_tester = (x) -> x > 0
-    end    
+            range_tester = (x) -> x > 0 
+    end
 end
 
 function update_parsed_args!(s::ArgParseSettings, parsed_args)
@@ -103,11 +108,12 @@ function coordinator_setup(nworkers::Integer; inputfile::String, inputdataset::S
     V, recvbuf, sendbuf
 end
 
-function worker_task!(recvbuf, sendbuf, localdata; state=nothing, pfraction=1, ncomponents, kwargs...)
+function worker_task!(recvbuf, sendbuf, localdata; state=nothing, pfraction::Real=1, nsubpartitions::Integer, ncomponents, kwargs...)
     0 < pfraction <= 1 || throw(DomainError(pfraction, "pfraction must be in (0, 1]"))
     isnothing(ncomponents) || 0 < ncomponents || throw(DomainError(ncomponents, "ncomponents must be positive"))        
     sizeof(recvbuf) == sizeof(sendbuf) || throw(DimensionMismatch("recvbuf has size $(sizeof(recvbuf)), but sendbuf has size $(sizeof(sendbuf))"))
     dimension = size(localdata, 2)
+    1 <= nsubpartitions <= dimension || throw(DimensionMismatch("nsubpartitions is $nsubpartitions, but the dimension is $dimension"))
 
     # default to computing all components
     if isnothing(ncomponents)
@@ -123,17 +129,22 @@ function worker_task!(recvbuf, sendbuf, localdata; state=nothing, pfraction=1, n
 
     # initialize state
     if isnothing(state)
-        W = Matrix{eltype(V)}(undef, size(Xw, 1), size(V, 2))
-        p = collect(1:size(Xw, 1))
+        max_rows = ceil(Int, ceil(size(Xw, 1)/nsubpartitions) * pfraction)
+        W = Matrix{eltype(V)}(undef, max_rows, size(V, 2))
     else
-        W, p = state
+        W = state
     end
 
-    # select a fraction pfraction of the locally stored rows at random
-    shuffle!(p)
-    i = round(Int, pfraction*size(Xw, 1))
-    i = max(1, i)
-    Xwv = view(Xw, view(p, 1:i), :)
+    # select a sub-partition at random
+    i = rand(1:nsubpartitions)
+    il = round(Int, (i - 1)/nsubpartitions*size(Xw, 1) + 1)
+    iu = round(Int, i/nsubpartitions*size(Xw, 1))
+
+    # select a fraction pfraction of that partition at random
+    p = shuffle!(collect(il:iu))
+    j = round(Int, pfraction*length(p))
+    j = max(1, j)
+    Xwv = view(Xw, view(p, 1:j), :)
     Wv = view(W, 1:size(Xwv, 1), :)
 
     # do the computation
@@ -141,7 +152,7 @@ function worker_task!(recvbuf, sendbuf, localdata; state=nothing, pfraction=1, n
     mul!(V, Xwv', Wv)
 
     view(sendbuf, :) .= view(recvbuf, :)
-    W, p
+    W
 end
 
 function update_gradient!(∇, recvbufs, sendbuf, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, nreplicas=1, pfraction=1, kwargs...)
