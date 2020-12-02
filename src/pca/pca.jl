@@ -1,5 +1,7 @@
 using ArgParse, Random
 
+const ELEMENT_TYPE = Float64
+
 function update_argsettings!(s::ArgParseSettings)
     @add_arg_table s begin
         "--pfraction"
@@ -72,8 +74,8 @@ function worker_setup(rank::Integer, nworkers::Integer; ncomponents, kwargs...)
         k = ncomponents
     end
 
-    recvbuf = Matrix{Float64}(undef, dimension, k)
-    sendbuf = Matrix{Float64}(undef, dimension, k)
+    recvbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*k)
+    sendbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*k)
     localdata, recvbuf, sendbuf
 end
 
@@ -90,8 +92,8 @@ function coordinator_setup(nworkers::Integer; inputfile::String, inputdataset::S
     end    
 
     # communication buffers
-    sendbuf = Matrix{Float64}(undef, dimension, k)
-    recvbuf = Matrix{Float64}(undef, dimension, nworkers*k)
+    sendbuf = Vector{ELEMENT_TYPE}(undef, dimension*k)
+    recvbuf = Vector{ELEMENT_TYPE}(undef, dimension*nworkers*k)
 
     # iterate, initialized at random
     V = randn(dimension, k)
@@ -101,10 +103,25 @@ function coordinator_setup(nworkers::Integer; inputfile::String, inputdataset::S
     V, recvbuf, sendbuf
 end
 
-function worker_task!(Vrecv, Vsend, localdata; state=nothing, pfraction=1, kwargs...)
-    V = Vrecv
-    Xw = localdata
+function worker_task!(recvbuf, sendbuf, localdata; state=nothing, pfraction=1, ncomponents, kwargs...)
     0 < pfraction <= 1 || throw(DomainError(pfraction, "pfraction must be in (0, 1]"))
+    isnothing(ncomponents) || 0 < ncomponents || throw(DomainError(ncomponents, "ncomponents must be positive"))        
+    sizeof(recvbuf) == sizeof(sendbuf) || throw(DimensionMismatch("recvbuf has size $(sizeof(recvbuf)), but sendbuf has size $(sizeof(sendbuf))"))
+    dimension = size(localdata, 2)
+
+    # default to computing all components
+    if isnothing(ncomponents)
+        k = dimension
+    else
+        k = ncomponents
+    end        
+
+    # format the recvbuf into a matrix we can operate on
+    length(reinterpret(ELEMENT_TYPE, recvbuf)) == dimension*k || throw(DimensionMismatch("recvbuf has length $(length(reinterpret(ELEMENT_TYPE, recvbuf))), but the data dimension is $dimension and ncomponents is $k"))
+    V = reshape(reinterpret(ELEMENT_TYPE, recvbuf), dimension, k)
+    Xw = localdata
+
+    # initialize state
     if isnothing(state)
         W = Matrix{eltype(V)}(undef, size(Xw, 1), size(V, 2))
         p = collect(1:size(Xw, 1))
@@ -122,13 +139,13 @@ function worker_task!(Vrecv, Vsend, localdata; state=nothing, pfraction=1, kwarg
     # do the computation
     mul!(Wv, Xwv, V)
     mul!(V, Xwv', Wv)
-    Vsend .= Vrecv
 
+    view(sendbuf, :) .= view(recvbuf, :)
     W, p
 end
 
 function update_gradient!(∇, recvbufs, sendbuf, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, nreplicas=1, pfraction=1, kwargs...)
-    Vs = [reshape(buf, size(∇)...) for buf in recvbufs]
+    Vs = [reshape(reinterpret(ELEMENT_TYPE, buf), size(∇)...) for buf in recvbufs]
     length(Vs) == length(repochs) || throw(DimensionMismatch("Vs has dimension $(length(Vs)), but repochs has dimension $(length(repochs))"))
     0 < pfraction <= 1 || throw(DomainError(pfraction, "pfraction must be in (0, 1]"))
     0 < nreplicas || throw(DomainError(nreplicas, "nreplicas must be positive"))
@@ -164,7 +181,7 @@ function update_iterate!(V, ∇, sendbuf, epoch, repochs; state=nothing, stepsiz
         V[I] -= stepsize * (∇[I] + V[I])
     end
     orthogonal!(V)
-    view(sendbuf, :) .= view(V, :)
+    reinterpret(ELEMENT_TYPE, view(sendbuf, :)) .= view(V, :)
     state
 end
 
