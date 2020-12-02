@@ -133,7 +133,7 @@ function worker_main()
     nsamples, dimension = problem_size(parsed_args[:inputfile], parsed_args[:inputdataset])
     try
         localdata, recvbuf, sendbuf = worker_setup(rank, nworkers; parsed_args...)
-        worker_loop(localdata, recvbuf, sendbuf; kwargs=parsed_args)
+        worker_loop(localdata, recvbuf, sendbuf; parsed_args...)
     catch e
         print(Base.stderr, "rank $rank exiting due to $e")
         exit(0) # only the root exits with non-zero status in case of error
