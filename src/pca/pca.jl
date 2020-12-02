@@ -159,7 +159,7 @@ end
 data_view(recvbuf) = reinterpret(ELEMENT_TYPE, @view recvbuf[METADATA_BYTES+1:end])
 metadata_view(recvbuf) = view(recvbuf, 1:METADATA_BYTES)
 
-function update_gradient!(∇, recvbufs, sendbuf, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, nreplicas=1, pfraction=1, kwargs...)
+function update_gradient!(∇, recvbufs, sendbuf, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, nreplicas=1, pfraction=1, nsubpartitions, kwargs...)
     length(recvbufs) == length(repochs) || throw(DimensionMismatch("recvbufs has dimension $(length(recvbufs)), but repochs has dimension $(length(repochs))"))
     0 < pfraction <= 1 || throw(DomainError(pfraction, "pfraction must be in (0, 1]"))
     0 < nreplicas || throw(DomainError(nreplicas, "nreplicas must be positive"))
@@ -185,7 +185,7 @@ function update_gradient!(∇, recvbufs, sendbuf, epoch::Integer, repochs::Vecto
     end
 
     # scale the (stochastic) gradient to make it unbiased estimate of the true gradient
-    ∇ .*= nworkers / nresults / pfraction
+    ∇ .*= (nworkers / nresults) / pfraction * nsubpartitions
 
     state
 end
