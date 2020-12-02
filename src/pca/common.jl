@@ -100,35 +100,29 @@ end
 
 Main loop run by each worker.
 """
-function worker_loop(localdata, dimension::Integer, ncomponents::Integer; kwargs)
+function worker_loop(localdata, recvbuf, sendbuf; kwargs...)
     
     # control channel, to tell the workers when to exit
     crreq = MPI.Irecv!(zeros(1), root, control_tag, comm)
 
-    # working memory
-    Vrecv = Matrix{Float64}(undef, dimension, ncomponents)
-    Vsend = Matrix{Float64}(undef, dimension, ncomponents)
-
     # first iteration (initializes state)
-    rreq = MPI.Irecv!(Vrecv, root, data_tag, comm)
+    rreq = MPI.Irecv!(recvbuf, root, data_tag, comm)
     index, _ = MPI.Waitany!([crreq, rreq])
     if index == 1 # exit message on control channel
         return
     end            
-    state = worker_task!(Vrecv, localdata; kwargs...)
-    Vsend .= Vrecv
-    MPI.Isend(Vsend, root, data_tag, comm)
+    state = worker_task!(recvbuf, sendbuf, localdata; kwargs...)
+    MPI.Isend(sendbuf, root, data_tag, comm)
 
     # remaining iterations
     while true
-        rreq = MPI.Irecv!(Vrecv, root, data_tag, comm)
+        rreq = MPI.Irecv!(recvbuf, root, data_tag, comm)
         index, _ = MPI.Waitany!([crreq, rreq])
         if index == 1 # exit message on control channel
             break
-        end        
-        worker_task!(Vrecv, localdata; kwargs..., state=state)
-        Vsend .= Vrecv
-        MPI.Isend(Vsend, root, data_tag, comm)
+        end
+        state = worker_task!(recvbuf, sendbuf, localdata; state=state, kwargs...)
+        MPI.Isend(sendbuf, root, data_tag, comm)
     end
     return
 end
@@ -137,18 +131,9 @@ function worker_main()
     nworkers = MPI.Comm_size(comm) - 1
     parsed_args = parse_commandline(isroot)
     nsamples, dimension = problem_size(parsed_args[:inputfile], parsed_args[:inputdataset])
-    try        
-        # read input data for this worker
-        localdata = read_localdata(parsed_args[:inputfile], parsed_args[:inputdataset], rank; nworkers, parsed_args...)
-
-        # default to computing all principal components
-        if isnothing(parsed_args[:ncomponents])
-            parsed_args[:ncomponents] = dimension
-        end
-        ncomponents::Int = parsed_args[:ncomponents]
-
-        # run the algorithm
-        worker_loop(localdata, dimension, ncomponents; kwargs=parsed_args)
+    try
+        localdata, recvbuf, sendbuf = worker_setup(rank, nworkers; parsed_args...)
+        worker_loop(localdata, recvbuf, sendbuf; kwargs=parsed_args)
     catch e
         print(Base.stderr, "rank $rank exiting due to $e")
         exit(0) # only the root exits with non-zero status in case of error
@@ -161,7 +146,7 @@ function shutdown(pool::StragglerPool)
     end
 end
 
-function root_main()
+function coordinator_main()
 
     # setup
     parsed_args = parse_commandline(isroot)
@@ -184,28 +169,26 @@ function root_main()
 
     # worker pool and communication buffers
     pool = StragglerPool(nworkers)
-    sendbuf = Matrix{Float64}(undef, dimension, ncomponents)    
-    recvbuf = Matrix{Float64}(undef, dimension, nworkers*ncomponents)
-    isendbuf = similar(sendbuf, nworkers*length(sendbuf))
-    irecvbuf = similar(recvbuf)
-
-    # iterate, initialized at random
-    V = view(sendbuf, :, :)
-    V .= randn(dimension, ncomponents)
+    V, recvbuf, sendbuf = coordinator_setup(nworkers; parsed_args...)
+    mod(length(recvbuf), nworkers) == 0 || error("the length of recvbuf must be divisible by the number of workers")
     ∇ = similar(V)
+    ∇ .= 0
+    isendbuf = similar(sendbuf, nworkers*length(sendbuf))
+    irecvbuf = similar(recvbuf)    
+
+    # views into recvbuf corresponding to each worker
+    n = div(length(recvbuf), nworkers)
+    recvbufs = [view(recvbuf, (i-1)*n+1:i*n) for i in 1:nworkers]
 
     # optionally store all intermediate iterates
     if saveiterates
-        iterates = zeros(dimension, ncomponents, niterations)
+        iterates = zeros(size(V)..., niterations)
     else
-        iterates = zeros(dimension, ncomponents, 0)
+        iterates = zeros(size(V)..., 0)
     end
 
     # store which workers responded in each iteration
     responded = zeros(Bool, nworkers, niterations)
-
-    # results computed by the workers
-    Vs = [view(recvbuf, :, (i-1)*ncomponents+1:i*ncomponents) for i in 1:nworkers]    
 
     # to record iteration time
     ts_compute = zeros(niterations)
@@ -233,8 +216,8 @@ function root_main()
     end
     responded[:, epoch] .= repochs .== epoch
     ts_update[epoch] = @elapsed begin
-        gradient_state = update_gradient!(∇, Vs, epoch, repochs; parsed_args...)
-        iterate_state = update_iterate!(V, ∇; parsed_args...)
+        gradient_state = update_gradient!(∇, recvbufs, sendbuf, epoch, repochs; parsed_args...)
+        iterate_state = update_iterate!(V, ∇, sendbuf, epoch, repochs; parsed_args...)
     end
     if saveiterates
         iterates[:, :, epoch] .= V
@@ -247,8 +230,8 @@ function root_main()
         end
         responded[:, epoch] .= repochs .== epoch
         ts_update[epoch] = @elapsed begin
-            update_gradient!(∇, Vs, epoch, repochs; state=gradient_state, parsed_args...)
-            update_iterate!(V, ∇; state=iterate_state, parsed_args...)
+            gradient_state = update_gradient!(∇, recvbufs, sendbuf, epoch, repochs; state=gradient_state, parsed_args...)
+            iterate_state = update_iterate!(V, ∇, sendbuf, epoch, repochs; state=iterate_state, parsed_args...)            
         end
         if saveiterates
             iterates[:, :, epoch] .= V
@@ -264,8 +247,7 @@ function root_main()
         end
 
         # write the computed principal components
-        # sendbuf is aliased to V (writing a view results in a crash)
-        fid[parsed_args[:outputdataset]] = sendbuf
+        fid[parsed_args[:outputdataset]] = V
 
         # optionally save all iterates
         if saveiterates
@@ -281,7 +263,7 @@ function root_main()
 end
 
 if isroot
-    root_main()
+    coordinator_main()
 else
     worker_main()
 end

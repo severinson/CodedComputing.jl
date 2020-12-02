@@ -32,31 +32,78 @@ function problem_size(filename::String, dataset::String)
     end
 end
 
-function read_localdata(filename::String, dataset::String, i::Integer; nworkers::Integer, nreplicas::Integer, kwargs...)
+function read_localdata(i::Integer, nworkers::Integer; inputfile::String, inputdataset::String, nreplicas::Integer, kwargs...)
+    HDF5.ishdf5(inputfile) || throw(ArgumentError("$inputfile isn't an HDF5 file"))
     0 < nworkers || throw(DomainError(nworkers, "nworkers must be positive"))
     0 < nreplicas || throw(DomainError(nreplicas, "nreplicas must be positive"))
     0 < i <= nworkers || throw(DomainError(i, "i must be in [1, nworkers]"))
     mod(nworkers, nreplicas) == 0 || throw(ArgumentError("nworkers must be divisible by nreplicas"))
     npartitions = div(nworkers, nreplicas)
-    h5open(filename, "r") do fid
-        dataset in keys(fid) || throw(ArgumentError("$dataset is not in $fid"))
-        flag, _ = isvalidh5csc(fid, dataset)
+    h5open(inputfile, "r") do fid
+        inputdataset in keys(fid) || throw(ArgumentError("$inputdataset is not in $fid"))
+        flag, _ = isvalidh5csc(fid, inputdataset)
         if flag
-            X = h5readcsc(fid, dataset)
+            X = h5readcsc(fid, inputdataset)
             m = size(X, 1)
             il = round(Int, (i - 1)/npartitions*m + 1)
             iu = round(Int, i/npartitions*m)
             return X[il:iu, :]            
         else            
-            n, m = size(fid[dataset])
+            n, m = size(fid[inputdataset])
             il = round(Int, (i - 1)/npartitions*n + 1)
             iu = round(Int, i/npartitions*n)
-            return fid[dataset][il:iu, :]
+            return fid[inputdataset][il:iu, :]
         end
     end
 end
 
-function worker_task!(V, Xw; state=nothing, pfraction=1, kwargs...)
+function worker_setup(rank::Integer, nworkers::Integer; ncomponents, kwargs...)
+    0 < nworkers || throw(DomainError(nworkers, "nworkers must be positive"))
+    isnothing(ncomponents) || 0 < ncomponents || throw(DomainError(ncomponents, "ncomponents must be positive"))
+    localdata = read_localdata(rank, nworkers; kwargs...)
+    dims = length(size(localdata))
+    dims == 2 || error("Expected localdata to be 2-dimensional, but got data of dimension $dims")
+    dimension = size(localdata, 2)
+
+    # default to computing all components
+    if isnothing(ncomponents)
+        k = dimension
+    else
+        k = ncomponents
+    end
+
+    recvbuf = Matrix{Float64}(undef, dimension, k)
+    sendbuf = Matrix{Float64}(undef, dimension, k)
+    localdata, recvbuf, sendbuf
+end
+
+function coordinator_setup(nworkers::Integer; inputfile::String, inputdataset::String, ncomponents, parsed_args...)    
+    0 < nworkers || throw(DomainError(nworkers, "nworkers must be positive"))
+    isnothing(ncomponents) || 0 < ncomponents || throw(DomainError(ncomponents, "ncomponents must be positive"))
+    nsamples, dimension = problem_size(inputfile, inputdataset)
+
+    # default to computing all components
+    if isnothing(ncomponents)
+        k = dimension
+    else
+        k = ncomponents
+    end    
+
+    # communication buffers
+    sendbuf = Matrix{Float64}(undef, dimension, k)
+    recvbuf = Matrix{Float64}(undef, dimension, nworkers*k)
+
+    # iterate, initialized at random
+    V = randn(dimension, k)
+    orthogonal!(V)
+    view(sendbuf, :) .= view(V, :)
+
+    V, recvbuf, sendbuf
+end
+
+function worker_task!(Vrecv, Vsend, localdata; state=nothing, pfraction=1, kwargs...)
+    V = Vrecv
+    Xw = localdata
     0 < pfraction <= 1 || throw(DomainError(pfraction, "pfraction must be in (0, 1]"))
     if isnothing(state)
         W = Matrix{eltype(V)}(undef, size(Xw, 1), size(V, 2))
@@ -75,10 +122,13 @@ function worker_task!(V, Xw; state=nothing, pfraction=1, kwargs...)
     # do the computation
     mul!(Wv, Xwv, V)
     mul!(V, Xwv', Wv)
+    Vsend .= Vrecv
+
     W, p
 end
 
-function update_gradient!(∇, Vs, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, nreplicas=1, pfraction=1, kwargs...)
+function update_gradient!(∇, recvbufs, sendbuf, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, nreplicas=1, pfraction=1, kwargs...)
+    Vs = [reshape(buf, size(∇)...) for buf in recvbufs]
     length(Vs) == length(repochs) || throw(DimensionMismatch("Vs has dimension $(length(Vs)), but repochs has dimension $(length(repochs))"))
     0 < pfraction <= 1 || throw(DomainError(pfraction, "pfraction must be in (0, 1]"))
     0 < nreplicas || throw(DomainError(nreplicas, "nreplicas must be positive"))
@@ -108,12 +158,13 @@ function update_gradient!(∇, Vs, epoch::Integer, repochs::Vector{<:Integer}; s
     state
 end
 
-function update_iterate!(V, ∇; state=nothing, stepsize=1, kwargs...)
+function update_iterate!(V, ∇, sendbuf, epoch, repochs; state=nothing, stepsize=1, kwargs...)
     size(V) == size(∇) || throw(DimensionMismatch("V has dimensions $(size(B)), but ∇ has dimensions $(size(∇))"))
     for I in CartesianIndices(V)
         V[I] -= stepsize * (∇[I] + V[I])
     end
     orthogonal!(V)
+    view(sendbuf, :) .= view(V, :)
     state
 end
 
