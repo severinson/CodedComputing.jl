@@ -1,5 +1,6 @@
 using ArgParse, Random
 
+const METADATA_BYTES = 2
 const ELEMENT_TYPE = Float64
 
 function update_argsettings!(s::ArgParseSettings)
@@ -80,7 +81,7 @@ function worker_setup(rank::Integer, nworkers::Integer; ncomponents, kwargs...)
     end
 
     recvbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*k)
-    sendbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*k)
+    sendbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*k + METADATA_BYTES)
     localdata, recvbuf, sendbuf
 end
 
@@ -98,7 +99,7 @@ function coordinator_setup(nworkers::Integer; inputfile::String, inputdataset::S
 
     # communication buffers
     sendbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*k)
-    recvbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*nworkers*k)
+    recvbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*nworkers*k + METADATA_BYTES*nworkers)
 
     # iterate, initialized at random
     V = randn(dimension, k)
@@ -111,7 +112,7 @@ end
 function worker_task!(recvbuf, sendbuf, localdata; state=nothing, pfraction::Real=1, nsubpartitions::Integer, ncomponents, kwargs...)
     0 < pfraction <= 1 || throw(DomainError(pfraction, "pfraction must be in (0, 1]"))
     isnothing(ncomponents) || 0 < ncomponents || throw(DomainError(ncomponents, "ncomponents must be positive"))        
-    sizeof(recvbuf) == sizeof(sendbuf) || throw(DimensionMismatch("recvbuf has size $(sizeof(recvbuf)), but sendbuf has size $(sizeof(sendbuf))"))
+    sizeof(recvbuf) + METADATA_BYTES == sizeof(sendbuf) || throw(DimensionMismatch("recvbuf has size $(sizeof(recvbuf)), but sendbuf has size $(sizeof(sendbuf))"))
     dimension = size(localdata, 2)
     1 <= nsubpartitions <= dimension || throw(DimensionMismatch("nsubpartitions is $nsubpartitions, but the dimension is $dimension"))
 
@@ -151,16 +152,18 @@ function worker_task!(recvbuf, sendbuf, localdata; state=nothing, pfraction::Rea
     mul!(Wv, Xwv, V)
     mul!(V, Xwv', Wv)
 
-    view(sendbuf, :) .= view(recvbuf, :)
+    @views sendbuf[METADATA_BYTES+1:end] .= recvbuf[:]
     W
 end
 
+data_view(recvbuf) = reinterpret(ELEMENT_TYPE, @view recvbuf[METADATA_BYTES+1:end])
+metadata_view(recvbuf) = view(recvbuf, 1:METADATA_BYTES)
+
 function update_gradient!(∇, recvbufs, sendbuf, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, nreplicas=1, pfraction=1, kwargs...)
-    Vs = [reshape(reinterpret(ELEMENT_TYPE, buf), size(∇)...) for buf in recvbufs]
-    length(Vs) == length(repochs) || throw(DimensionMismatch("Vs has dimension $(length(Vs)), but repochs has dimension $(length(repochs))"))
+    length(recvbufs) == length(repochs) || throw(DimensionMismatch("recvbufs has dimension $(length(recvbufs)), but repochs has dimension $(length(repochs))"))
     0 < pfraction <= 1 || throw(DomainError(pfraction, "pfraction must be in (0, 1]"))
     0 < nreplicas || throw(DomainError(nreplicas, "nreplicas must be positive"))
-    nworkers = length(Vs)    
+    nworkers = length(recvbufs)
     mod(nworkers, nreplicas) == 0 || throw(ArgumentError("nworkers must be divisible by nreplicas"))
     npartitions = div(nworkers, nreplicas)
     ∇ .= 0
@@ -173,7 +176,8 @@ function update_gradient!(∇, recvbufs, sendbuf, epoch::Integer, repochs::Vecto
         for replica in 1:nreplicas
             i = (partition-1)*nreplicas + replica
             if repochs[i] == epoch
-                ∇ .+= Vs[i]
+                Vi = reshape(data_view(recvbufs[i]), size(∇)...)
+                ∇ .+= Vi
                 nresults += 1
                 break
             end
