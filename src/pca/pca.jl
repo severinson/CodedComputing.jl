@@ -1,6 +1,6 @@
 using ArgParse, Random
 
-const METADATA_BYTES = 2
+const METADATA_BYTES = 4
 const ELEMENT_TYPE = Float64
 
 function update_argsettings!(s::ArgParseSettings)
@@ -151,6 +151,11 @@ function worker_task!(recvbuf, sendbuf, localdata; state=nothing, pfraction::Rea
     # do the computation
     mul!(Wv, Xwv, V)
     mul!(V, Xwv', Wv)
+    
+    # populate the send buffer
+    metadata = reinterpret(UInt16, view(sendbuf, 1:METADATA_BYTES))
+    metadata[1] = i
+    metadata[2] = size(Xwv, 1)
 
     @views sendbuf[METADATA_BYTES+1:end] .= recvbuf[:]
     W
@@ -177,6 +182,7 @@ function update_gradient!(∇, recvbufs, sendbuf, epoch::Integer, repochs::Vecto
             i = (partition-1)*nreplicas + replica
             if repochs[i] == epoch
                 Vi = reshape(data_view(recvbufs[i]), size(∇)...)
+                subpartition_index, subgradient_samples = reinterpret(UInt16, metadata_view(recvbufs[i]))
                 ∇ .+= Vi
                 nresults += 1
                 break
