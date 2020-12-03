@@ -20,6 +20,9 @@ function update_argsettings!(s::ArgParseSettings)
             arg_type = Float64
             default = 1.0
             range_tester = (x) -> x > 0 
+        "--variancereduced"
+            help = "Compute a variance-reduced gradient in each iteration"
+            action = :store_true            
     end
 end
 
@@ -164,15 +167,16 @@ end
 data_view(recvbuf) = reinterpret(ELEMENT_TYPE, @view recvbuf[METADATA_BYTES+1:end])
 metadata_view(recvbuf) = view(recvbuf, 1:METADATA_BYTES)
 
-function update_gradient!(∇, recvbufs, sendbuf, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, nreplicas=1, pfraction=1, nsubpartitions, kwargs...)
+update_gradient!(args...; variancereduced::Bool, kwargs...) = variancereduced ? update_gradient_vr!(args...; kwargs...) : update_gradient_sgd!(args...; kwargs...)
+
+function update_gradient_sgd!(∇, recvbufs, sendbuf, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, nreplicas, pfraction, nsubpartitions, kwargs...)
     length(recvbufs) == length(repochs) || throw(DimensionMismatch("recvbufs has dimension $(length(recvbufs)), but repochs has dimension $(length(repochs))"))
     0 < pfraction <= 1 || throw(DomainError(pfraction, "pfraction must be in (0, 1]"))
     0 < nreplicas || throw(DomainError(nreplicas, "nreplicas must be positive"))
+    epoch == 1 || !isnothing(state) || error("expected state to be initiated for epoch > 1")
     nworkers = length(recvbufs)
     mod(nworkers, nreplicas) == 0 || throw(ArgumentError("nworkers must be divisible by nreplicas"))
     npartitions = div(nworkers, nreplicas) * nsubpartitions
-    ∇ .= 0
-    nresults = 0
 
     # record the epoch at which each partition was last updated
     if isnothing(state)
@@ -185,10 +189,12 @@ function update_gradient!(∇, recvbufs, sendbuf, epoch::Integer, repochs::Vecto
     # add at most 1 replica of each partition to the overall gradient
     # the partitions are arranged sequentially, so if there are 2 partitions and 3 replicas, then
     # Vs is of length 6, and its elements correspond to partitions [1, 1, 1, 2, 2, 2]
+    ∇ .= 0
+    nresults = 0
     for worker_index in 1:nworkers
         metadata = reinterpret(UInt16, metadata_view(recvbufs[worker_index]))
         if length(metadata) != 2
-            @error "Received incorrectly formatted metadata from the $(worker_index)-th worker: $metadata"
+            @error "received incorrectly formatted metadata from the $(worker_index)-th worker in epoch $epoch: $metadata"
             continue
         end
         subpartition_index, subgradient_nsamples = metadata
@@ -214,7 +220,74 @@ function update_gradient!(∇, recvbufs, sendbuf, epoch::Integer, repochs::Vecto
     uepochs
 end
 
-function update_iterate!(V, ∇, sendbuf, epoch, repochs; state=nothing, stepsize=1, kwargs...)
+function update_gradient_vr!(∇, recvbufs, sendbuf, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, nreplicas, pfraction, nsubpartitions, kwargs...)
+    length(recvbufs) == length(repochs) || throw(DimensionMismatch("recvbufs has dimension $(length(recvbufs)), but repochs has dimension $(length(repochs))"))
+    0 < pfraction <= 1 || throw(DomainError(pfraction, "pfraction must be in (0, 1]"))
+    0 < nreplicas || throw(DomainError(nreplicas, "nreplicas must be positive"))
+    epoch == 1 || !isnothing(state) || error("expected state to be initiated for epoch > 1")
+    nworkers = length(recvbufs)
+    mod(nworkers, nreplicas) == 0 || throw(ArgumentError("nworkers must be divisible by nreplicas"))
+    npartitions = div(nworkers, nreplicas) * nsubpartitions
+
+    # record the epoch at which each partition was last updated
+    # store the previously computed partial gradients
+    if isnothing(state)
+        uepochs = Vector{Int}(undef, npartitions)
+        uepochs .= -1
+        ∇s = [zeros(eltype(∇), size(∇)...) for _ in 1:npartitions]
+    else
+        uepochs, ∇s = state
+    end
+
+    # iterate over the received partial gradients
+    # cache any received partial gradient that is newer than what we currently store
+    for worker_index in 1:nworkers
+
+        # skip workers that we've never received anything from
+        if repochs[worker_index] == 0
+            continue
+        end
+
+        metadata = reinterpret(UInt16, metadata_view(recvbufs[worker_index]))
+        if length(metadata) != 2
+            @error "received incorrectly formatted metadata from the $(worker_index)-th worker in epoch $epoch: $metadata"
+            continue
+        end
+        subpartition_index, subgradient_nsamples = metadata
+        if subpartition_index > nsubpartitions
+            @error "received incorrect sub-partition index from the $(worker_index)-th worker in epoch $epoch: $subpartition_index "
+            continue
+        end
+        replica_index = ceil(Int, worker_index/nreplicas)
+        partition_index = (replica_index-1)*nsubpartitions + subpartition_index
+
+        # don't do anything unless the received update is newer than the one we already have
+        if repochs[worker_index] <= uepochs[partition_index]
+            continue
+        end
+
+        # store the received partial gradient
+        ∇s[partition_index] .= reshape(data_view(recvbufs[worker_index]), size(∇)...)
+        uepochs[partition_index] = epoch
+    end
+
+    # estimate the gradient by the sum of the cached partial gradients
+    ∇ .= 0
+    nresults = 0
+    for ∇i in ∇s
+        if !iszero(∇i)
+            ∇ .+= ∇i
+            nresults += 1
+        end
+    end
+
+    # scale by the number of non-zero partial gradients
+    ∇ .*= npartitions / nresults
+
+    uepochs, ∇s
+end
+
+function update_iterate!(V, ∇, sendbuf, epoch, repochs; state=nothing, stepsize, kwargs...)
     size(V) == size(∇) || throw(DimensionMismatch("V has dimensions $(size(B)), but ∇ has dimensions $(size(∇))"))
     for I in CartesianIndices(V)
         V[I] -= stepsize * (∇[I] + V[I])
