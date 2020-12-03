@@ -170,30 +170,48 @@ function update_gradient!(∇, recvbufs, sendbuf, epoch::Integer, repochs::Vecto
     0 < nreplicas || throw(DomainError(nreplicas, "nreplicas must be positive"))
     nworkers = length(recvbufs)
     mod(nworkers, nreplicas) == 0 || throw(ArgumentError("nworkers must be divisible by nreplicas"))
-    npartitions = div(nworkers, nreplicas)
+    npartitions = div(nworkers, nreplicas) * nsubpartitions
     ∇ .= 0
     nresults = 0
+
+    # record the epoch at which each partition was last updated
+    if isnothing(state)
+        uepochs = Vector{Int}(undef, npartitions)
+        uepochs .= -1
+    else
+        uepochs = state
+    end
 
     # add at most 1 replica of each partition to the overall gradient
     # the partitions are arranged sequentially, so if there are 2 partitions and 3 replicas, then
     # Vs is of length 6, and its elements correspond to partitions [1, 1, 1, 2, 2, 2]
-    for partition in 1:npartitions
-        for replica in 1:nreplicas
-            i = (partition-1)*nreplicas + replica
-            if repochs[i] == epoch
-                Vi = reshape(data_view(recvbufs[i]), size(∇)...)
-                subpartition_index, subgradient_samples = reinterpret(UInt16, metadata_view(recvbufs[i]))
-                ∇ .+= Vi
-                nresults += 1
-                break
-            end
+    for worker_index in 1:nworkers
+        metadata = reinterpret(UInt16, metadata_view(recvbufs[worker_index]))
+        if length(metadata) != 2
+            @error "Received incorrectly formatted metadata from the $(worker_index)-th worker: $metadata"
+            continue
         end
+        subpartition_index, subgradient_nsamples = metadata
+        replica_index = ceil(Int, worker_index/nreplicas)
+        partition_index = (replica_index-1)*nreplicas + subpartition_index
+
+        # don't do anything if we didn't receive from this worker this epoch,
+        # or if we've already updated that partition this epoch
+        if repochs[worker_index] < epoch || uepochs[partition_index] == epoch
+            continue
+        end
+
+        # add the sub-gradient computed by this worker
+        uepochs[partition_index] = epoch
+        Vi = reshape(data_view(recvbufs[worker_index]), size(∇)...)
+        ∇ .+= Vi
+        nresults += 1
     end
 
     # scale the (stochastic) gradient to make it unbiased estimate of the true gradient
-    ∇ .*= (nworkers / nresults) / pfraction * nsubpartitions
+    ∇ .*= (npartitions / nresults) / pfraction
 
-    state
+    uepochs
 end
 
 function update_iterate!(V, ∇, sendbuf, epoch, repochs; state=nothing, stepsize=1, kwargs...)
