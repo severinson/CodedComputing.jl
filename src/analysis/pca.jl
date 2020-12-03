@@ -81,7 +81,7 @@ function aggregate_benchmark_data(;dir="/shared/201124/3/", inputfile="/shared/2
     for i in 1:size(responded_all, 2)
         df["worker_$(i)_responded"] = responded_all[:, i]
     end
-    CSV.write(dir*dfname, df)
+    CSV.write(joinpath(dir, dfname), df)
     df
 end
 
