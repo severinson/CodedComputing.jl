@@ -10,6 +10,115 @@ using Test
     @test V'*V ≈ I
 end
 
+@testset "power.jl" begin
+      
+    # setup
+    Random.seed!(123)
+    kernel = "../src/pca/power.jl"
+    nworkers = 2
+    npartitions = nworkers
+    niterations = 200
+    inputdataset = "X"
+    outputdataset = "V"
+    n, m = 20, 10
+    k = m          
+
+    # generate input dataset
+    X = randn(n, m)
+    inputfile = tempname()
+    h5open(inputfile, "w") do file
+        file[inputdataset] = X
+    end
+
+    # correct solution (computed via LinearAlgebra.svd)
+    V_correct = pca(X, k)
+    V = similar(V_correct)
+    ev_correct = explained_variance(X, V_correct)
+    
+    ### code weight 1 (i.e., coding is equivalent to multiplying by a scalar)
+    ### the computed results can be recovered exactly
+    codeweight = 1
+    outputfile = tempname()
+    mpiexec(cmd -> run(`$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile --npartitions $npartitions --codeweight $codeweight --niterations $niterations --ncomponents $k`))
+
+    # test that the output was generated correctly
+    @test HDF5.ishdf5(outputfile)
+    h5open(outputfile, "r") do file
+        @test outputdataset in keys(file)
+        @test size(file[outputdataset]) == (m, k)
+        V .= file[outputdataset][:, :]
+    end
+
+    # test that the columns are orthogonal
+    @test V'*V ≈ I
+
+    # compare the computed principal components with those obtained from the built-in svd
+    @test explained_variance(X, V) ≈ ev_correct 
+    
+    ### code weight 2
+    ### the computed results can be recovered exactly    
+    codeweight = 2
+    outputfile = tempname()
+    mpiexec(cmd -> run(`$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile --npartitions $npartitions --codeweight $codeweight --niterations $niterations --ncomponents $k`))
+
+    # test that the output was generated correctly
+    @test HDF5.ishdf5(outputfile)
+    h5open(outputfile, "r") do file
+        @test outputdataset in keys(file)
+        @test size(file[outputdataset]) == (m, k)
+        V .= file[outputdataset][:, :]
+    end
+
+    # test that the columns are orthogonal
+    @test V'*V ≈ I
+
+    # compare the computed principal components with those obtained from the built-in svd
+    @test explained_variance(X, V) ≈ ev_correct     
+
+    ### code weight 1, nwait 1
+    ### the computed results can be recovered exactly        
+    codeweight = 1
+    nwait = nworkers - 1
+    outputfile = tempname()
+    mpiexec(cmd -> run(`$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile --nwait $nwait --npartitions $npartitions --codeweight $codeweight --niterations $niterations --ncomponents $k`))
+
+    # test that the output was generated correctly
+    @test HDF5.ishdf5(outputfile)
+    h5open(outputfile, "r") do file
+        @test outputdataset in keys(file)
+        @test size(file[outputdataset]) == (m, k)
+        V .= file[outputdataset][:, :]
+    end
+
+    # test that the columns are orthogonal
+    @test V'*V ≈ I
+
+    # compare the computed principal components with those obtained from the built-in svd
+    @test explained_variance(X, V) ≈ ev_correct         
+
+    ### code weight 2, nwait 1
+    ### the computed results can't be recovered exactly            
+    codeweight = 2
+    nwait = nworkers - 1
+    outputfile = tempname()
+    mpiexec(cmd -> run(`$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile --nwait $nwait --npartitions $npartitions --codeweight $codeweight --niterations $niterations --ncomponents $k`))
+
+    # test that the output was generated correctly
+    @test HDF5.ishdf5(outputfile)
+    h5open(outputfile, "r") do file
+        @test outputdataset in keys(file)
+        @test size(file[outputdataset]) == (m, k)
+        V .= file[outputdataset][:, :]
+    end
+
+    # test that the columns are orthogonal
+    @test V'*V ≈ I
+
+    # compare the computed principal components with those obtained from the built-in svd
+    @test explained_variance(X, V) ≈ ev_correct             
+
+end
+
 @testset "pca.jl" begin
 
     # setup
