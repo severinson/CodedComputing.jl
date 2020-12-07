@@ -21,7 +21,7 @@ end
     inputdataset = "X"
     outputdataset = "V"
     n, m = 20, 10
-    k = m          
+    k = div(m, 2)
 
     # generate input dataset
     X = randn(n, m)
@@ -73,7 +73,7 @@ end
     @test V'*V ≈ I
 
     # compare the computed principal components with those obtained from the built-in svd
-    @test explained_variance(X, V) ≈ ev_correct     
+    @test isapprox(explained_variance(X, V), ev_correct, atol=1e-2)
 
     ### code weight 1, nwait 1
     ### the computed results can be recovered exactly        
@@ -94,7 +94,7 @@ end
     @test V'*V ≈ I
 
     # compare the computed principal components with those obtained from the built-in svd
-    @test explained_variance(X, V) ≈ ev_correct         
+    @test isapprox(explained_variance(X, V), ev_correct, atol=1e-2)
 
     ### code weight 2, nwait 1
     ### the computed results can't be recovered exactly            
@@ -115,7 +115,7 @@ end
     @test V'*V ≈ I
 
     # compare the computed principal components with those obtained from the built-in svd
-    @test explained_variance(X, V) ≈ ev_correct             
+    @test isapprox(explained_variance(X, V), ev_correct, atol=1e-2)    
 
 end
 
@@ -129,7 +129,7 @@ end
     inputdataset = "X"
     outputdataset = "V"
     n, m = 20, 10
-    k = m    
+    k = div(m, 2)
 
     # generate input dataset
     X = randn(n, m)
@@ -159,11 +159,11 @@ end
     @test V'*V ≈ I
 
     # compare the computed principal components with those obtained from the built-in svd
-    @test explained_variance(X, V) ≈ ev_correct
+    @test isapprox(explained_variance(X, V), ev_correct, atol=1e-2)    
 
     ### ignoring the slowest worker
     outputfile = tempname()
-    mpiexec(cmd -> run(`$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile --niterations $niterations --nwait $(nworkers-1)`))
+    mpiexec(cmd -> run(`$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile --ncomponents $k --niterations $niterations --nwait $(nworkers-1)`))
 
     # test that the output was generated correctly
     @test HDF5.ishdf5(outputfile)
@@ -181,7 +181,7 @@ end
     outputfile = tempname()
     pfraction = 0.9
     stepsize = pfraction
-    mpiexec(cmd -> run(`$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile --niterations $niterations --nwait $(nworkers-1) --pfraction $pfraction --stepsize $stepsize`))
+    mpiexec(cmd -> run(`$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile --ncomponents $k --niterations $niterations --nwait $(nworkers-1) --pfraction $pfraction --stepsize $stepsize`))
 
     # test that the output was generated correctly
     @test HDF5.ishdf5(outputfile)
@@ -199,7 +199,7 @@ end
     outputfile = tempname()
     pfraction = 0.9
     stepsize = pfraction
-    mpiexec(cmd -> run(`$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile --niterations $niterations --nwait $(nworkers-1) --pfraction $pfraction --stepsize $stepsize`))
+    mpiexec(cmd -> run(`$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile --ncomponents $k --niterations $niterations --nwait $(nworkers-1) --pfraction $pfraction --stepsize $stepsize`))
 
     # test that the output was generated correctly
     @test HDF5.ishdf5(outputfile)
@@ -218,7 +218,7 @@ end
     pfraction = 0.9
     stepsize = pfraction / nsubpartitions
     outputfile = tempname()
-    mpiexec(cmd -> run(`$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile --niterations $niterations --nwait $(nworkers-1) --pfraction $pfraction --nsubpartitions $nsubpartitions --stepsize $stepsize`))
+    mpiexec(cmd -> run(`$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile --ncomponents $k --niterations $niterations --nwait $(nworkers-1) --pfraction $pfraction --nsubpartitions $nsubpartitions --stepsize $stepsize`))
 
     # test that the output was generated correctly
     @test HDF5.ishdf5(outputfile)
@@ -235,11 +235,14 @@ end
     ### variance reduction
     niterations = 100
     stepsize = 1
-    outputfile = tempname()    
+    outputfile = tempname()
+    nsubpartitions = 1 
     mpiexec(cmd -> run(```$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile 
+        --ncomponents $k    
         --niterations $niterations 
         --stepsize $stepsize        
-        --nwait $(nworkers-1)        
+        --nsubpartitions $nsubpartitions
+        --nwait $(nworkers-1)
         --variancereduced
         ```))
 
@@ -257,14 +260,15 @@ end
 
     # compare the computed principal components with those obtained from the built-in svd
     # with variance reduction, the algorithm should always converge eventually
-    @test explained_variance(X, V) ≈ ev_correct
+    @test isapprox(explained_variance(X, V), ev_correct, atol=1e-2)
 
     ### sub-partitioning + variance reduction
     niterations = 100
-    stepsize = 1
+    stepsize = 1/2
     nsubpartitions = 2
     outputfile = tempname()
     mpiexec(cmd -> run(```$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile 
+        --ncomponents $k
         --niterations $niterations 
         --stepsize $stepsize        
         --nwait $(nworkers-1)        
@@ -286,7 +290,7 @@ end
 
     # compare the computed principal components with those obtained from the built-in svd
     # with variance reduction, the algorithm should always converge eventually
-    @test explained_variance(X, V) ≈ ev_correct
+    @test isapprox(explained_variance(X, V), ev_correct, atol=1e-2)    
 
     ### sparse (CSC) matrices
     p = 0.9 # matrix density    
@@ -297,10 +301,11 @@ end
     # correct solution (computed via LinearAlgebra.svd)
     V_correct = pca(Matrix(X), k)
     V = similar(V_correct)
+    ev_correct = explained_variance(X, V_correct)
 
     # exact solution
     outputfile = tempname()
-    mpiexec(cmd -> run(`$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile --niterations $niterations --ncomponents $k`))
+    mpiexec(cmd -> run(`$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile --ncomponents $k --niterations $niterations --ncomponents $k`))
 
     # test that the output was generated correctly
     @test HDF5.ishdf5(outputfile)
@@ -315,7 +320,7 @@ end
     @test V'*V ≈ I
     
     # compare the computed principal components with those obtained from the built-in svd
-    @test explained_variance(X, V) ≈ ev_correct    
+    @test isapprox(explained_variance(X, V), ev_correct, atol=1e-2)        
 
 end
 
