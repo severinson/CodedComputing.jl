@@ -1,7 +1,8 @@
 using ArgParse, Random
 
-const METADATA_BYTES = 4
+const METADATA_BYTES = 6
 const ELEMENT_TYPE = Float64
+const CANARY_VALUE = UInt16(2^16 - 1)
 
 function update_argsettings!(s::ArgParseSettings)
     @add_arg_table s begin
@@ -112,7 +113,7 @@ function coordinator_setup(nworkers::Integer; inputfile::String, inputdataset::S
     V, recvbuf, sendbuf
 end
 
-function worker_task!(recvbuf, sendbuf, localdata; state=nothing, pfraction::Real=1, nsubpartitions::Integer, ncomponents, kwargs...)
+function worker_task!(recvbuf, sendbuf, localdata; state=nothing, pfraction::Real, nsubpartitions::Integer, ncomponents, kwargs...)
     0 < pfraction <= 1 || throw(DomainError(pfraction, "pfraction must be in (0, 1]"))
     isnothing(ncomponents) || 0 < ncomponents || throw(DomainError(ncomponents, "ncomponents must be positive"))        
     sizeof(recvbuf) + METADATA_BYTES == sizeof(sendbuf) || throw(DimensionMismatch("recvbuf has size $(sizeof(recvbuf)), but sendbuf has size $(sizeof(sendbuf))"))
@@ -129,37 +130,37 @@ function worker_task!(recvbuf, sendbuf, localdata; state=nothing, pfraction::Rea
     # format the recvbuf into a matrix we can operate on
     length(reinterpret(ELEMENT_TYPE, recvbuf)) == dimension*k || throw(DimensionMismatch("recvbuf has length $(length(reinterpret(ELEMENT_TYPE, recvbuf))), but the data dimension is $dimension and ncomponents is $k"))
     V = reshape(reinterpret(ELEMENT_TYPE, recvbuf), dimension, k)
-    Xw = localdata
+    Xw = localdata    
 
     # initialize state
     if isnothing(state)
         max_rows = ceil(Int, ceil(size(Xw, 1)/nsubpartitions) * pfraction)
         W = Matrix{eltype(V)}(undef, max_rows, size(V, 2))
     else
-        W = state
+        W::Matrix{eltype(V)} = state
     end
 
     # select a sub-partition at random
-    i = rand(1:nsubpartitions)
-    il = round(Int, (i - 1)/nsubpartitions*size(Xw, 1) + 1)
-    iu = round(Int, i/nsubpartitions*size(Xw, 1))
+    subpartition_index = rand(1:nsubpartitions)
+    il = round(Int, (subpartition_index - 1)/nsubpartitions*size(Xw, 1) + 1)
+    iu = round(Int, subpartition_index/nsubpartitions*size(Xw, 1))
 
     # select a fraction pfraction of that partition at random
     p = shuffle!(collect(il:iu))
     j = round(Int, pfraction*length(p))
     j = max(1, j)
     Xwv = view(Xw, view(p, 1:j), :)
-    Wv = view(W, 1:size(Xwv, 1), :)
 
     # do the computation
+    Wv = view(W, 1:size(Xwv, 1), :)
     mul!(Wv, Xwv, V)
     mul!(V, Xwv', Wv)
     
     # populate the send buffer
     metadata = reinterpret(UInt16, view(sendbuf, 1:METADATA_BYTES))
-    metadata[1] = i
-    metadata[2] = size(Xwv, 1)
-
+    metadata[1] = CANARY_VALUE
+    metadata[2] = rank
+    metadata[3] = subpartition_index
     @views sendbuf[METADATA_BYTES+1:end] .= recvbuf[:]
     W
 end
@@ -192,12 +193,30 @@ function update_gradient_sgd!(∇, recvbufs, sendbuf, epoch::Integer, repochs::V
     ∇ .= 0
     nresults = 0
     for worker_index in 1:nworkers
+
+        # skip workers that we've never received anything from
+        if repochs[worker_index] == 0
+            continue
+        end
+
         metadata = reinterpret(UInt16, metadata_view(recvbufs[worker_index]))
-        if length(metadata) != 2
+        if length(metadata) != 3
             @error "received incorrectly formatted metadata from the $(worker_index)-th worker in epoch $epoch: $metadata"
             continue
         end
-        subpartition_index, subgradient_nsamples = metadata
+        canary, worker_rank, subpartition_index = metadata
+        if  canary != CANARY_VALUE
+            @error "recieved incorrect canary value from the $(worker_index)-th worker in epoch $epoch: $canary"
+            continue
+        end
+        if worker_rank != worker_index
+            @error "unexpected rank for the $(worker_index)-th worker in epoch $epoch: $worker_rank"
+            continue
+        end
+        if subpartition_index > nsubpartitions
+            @error "received incorrect sub-partition index from the $(worker_index)-th worker in epoch $epoch: $subpartition_index "
+            continue
+        end
         replica_index = ceil(Int, worker_index/nreplicas)
         partition_index = (replica_index-1)*nreplicas + subpartition_index
 
@@ -209,8 +228,8 @@ function update_gradient_sgd!(∇, recvbufs, sendbuf, epoch::Integer, repochs::V
 
         # add the sub-gradient computed by this worker
         uepochs[partition_index] = epoch
-        Vi = reshape(data_view(recvbufs[worker_index]), size(∇)...)
-        ∇ .+= Vi
+        Vw = reshape(data_view(recvbufs[worker_index]), size(∇)...)
+        ∇ .-= Vw
         nresults += 1
     end
 
@@ -249,11 +268,19 @@ function update_gradient_vr!(∇, recvbufs, sendbuf, epoch::Integer, repochs::Ve
         end
 
         metadata = reinterpret(UInt16, metadata_view(recvbufs[worker_index]))
-        if length(metadata) != 2
+        if length(metadata) != 3
             @error "received incorrectly formatted metadata from the $(worker_index)-th worker in epoch $epoch: $metadata"
             continue
         end
-        subpartition_index, subgradient_nsamples = metadata
+        canary, worker_rank, subpartition_index = metadata
+        if  canary != CANARY_VALUE
+            @error "recieved incorrect canary value from the $(worker_index)-th worker in epoch $epoch: $canary"
+            continue
+        end
+        if worker_rank != worker_index
+            @error "unexpected rank for the $(worker_index)-th worker in epoch $epoch: $worker_rank"
+            continue
+        end
         if subpartition_index > nsubpartitions
             @error "received incorrect sub-partition index from the $(worker_index)-th worker in epoch $epoch: $subpartition_index "
             continue
@@ -267,8 +294,9 @@ function update_gradient_vr!(∇, recvbufs, sendbuf, epoch::Integer, repochs::Ve
         end
 
         # store the received partial gradient
-        ∇s[partition_index] .= reshape(data_view(recvbufs[worker_index]), size(∇)...)
-        uepochs[partition_index] = epoch
+        ∇w = reshape(data_view(recvbufs[worker_index]), size(∇)...)              
+        ∇s[partition_index] .= ∇w
+        uepochs[partition_index] = repochs[worker_index]
     end
 
     # estimate the gradient by the sum of the cached partial gradients
@@ -276,13 +304,15 @@ function update_gradient_vr!(∇, recvbufs, sendbuf, epoch::Integer, repochs::Ve
     nresults = 0
     for ∇i in ∇s
         if !iszero(∇i)
-            ∇ .+= ∇i
+            ∇ .-= ∇i
             nresults += 1
         end
     end
 
-    # scale by the number of non-zero partial gradients
-    ∇ .*= npartitions / nresults
+    # scale by the fraction of non-zero partial gradients
+    if nresults != npartitions
+        ∇ .*= npartitions / nresults
+    end
 
     uepochs, ∇s
 end
