@@ -170,7 +170,7 @@ data_view(recvbuf) = reinterpret(ELEMENT_TYPE, @view recvbuf[METADATA_BYTES+1:en
 metadata_view(recvbuf) = view(recvbuf, 1:METADATA_BYTES)
 
 function update_gradient!(∇, recvbufs, sendbuf, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, codeweight::Integer, npartitions::Integer, kwargs...)
-    epoch == 1 || !isnothing(state) || error("expected state to be initiated for epoch > 1")
+    epoch <= 1 || !isnothing(state) || error("expected state to be initiated for epoch > 1")
     length(recvbufs) == length(repochs) || throw(DimensionMismatch("recvbufs has dimension $(length(recvbufs)), but repochs has dimension $(length(repochs))"))    
     nworkers = length(recvbufs)
     1 <= npartitions <= nworkers || throw(DomainError(npartitions, "npartitions must be in [1, nworkers]"))

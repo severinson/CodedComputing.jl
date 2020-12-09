@@ -174,7 +174,7 @@ function update_gradient_sgd!(∇, recvbufs, sendbuf, epoch::Integer, repochs::V
     length(recvbufs) == length(repochs) || throw(DimensionMismatch("recvbufs has dimension $(length(recvbufs)), but repochs has dimension $(length(repochs))"))
     0 < pfraction <= 1 || throw(DomainError(pfraction, "pfraction must be in (0, 1]"))
     0 < nreplicas || throw(DomainError(nreplicas, "nreplicas must be positive"))
-    epoch == 1 || !isnothing(state) || error("expected state to be initiated for epoch > 1")
+    epoch <= 1 || !isnothing(state) || error("expected state to be initiated for epoch > 1")
     nworkers = length(recvbufs)
     mod(nworkers, nreplicas) == 0 || throw(ArgumentError("nworkers must be divisible by nreplicas"))
     npartitions = div(nworkers, nreplicas) * nsubpartitions
@@ -243,7 +243,7 @@ function update_gradient_vr!(∇, recvbufs, sendbuf, epoch::Integer, repochs::Ve
     length(recvbufs) == length(repochs) || throw(DimensionMismatch("recvbufs has dimension $(length(recvbufs)), but repochs has dimension $(length(repochs))"))
     0 < pfraction <= 1 || throw(DomainError(pfraction, "pfraction must be in (0, 1]"))
     0 < nreplicas || throw(DomainError(nreplicas, "nreplicas must be positive"))
-    epoch == 1 || !isnothing(state) || error("expected state to be initiated for epoch > 1")
+    epoch <= 1 || !isnothing(state) || error("expected state to be initiated for epoch > 1")
     nworkers = length(recvbufs)
     mod(nworkers, nreplicas) == 0 || throw(ArgumentError("nworkers must be divisible by nreplicas"))
     npartitions = div(nworkers, nreplicas) * nsubpartitions

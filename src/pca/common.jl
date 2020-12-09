@@ -114,6 +114,9 @@ function worker_loop(localdata, recvbuf, sendbuf; kwargs...)
     state = worker_task!(recvbuf, sendbuf, localdata; kwargs...)
     MPI.Isend(sendbuf, root, data_tag, comm)
 
+    # ensure all workers have finished compiling before starting the computation
+    MPI.Barrier(comm)
+
     # remaining iterations
     while true
         rreq = MPI.Irecv!(recvbuf, root, data_tag, comm)
@@ -168,7 +171,7 @@ function coordinator_main()
     0 < nwait <= npartitions || throw(DomainError(nwait, "nwait must be in [1, npartitions]"))
 
     # worker pool and communication buffers
-    pool = StragglerPool(nworkers)
+    pool = StragglerPool(nworkers, epoch0=-1)
     V, recvbuf, sendbuf = coordinator_setup(nworkers; parsed_args...)
     mod(length(recvbuf), nworkers) == 0 || error("the length of recvbuf must be divisible by the number of workers")
     ∇ = similar(V)
@@ -208,6 +211,15 @@ function coordinator_main()
         end
         rreplicas >= nwait
     end
+
+    # run 1 dummy iteration, where we wait for all workers, to trigger compilation
+    epoch = 0
+    repochs = kmap!(copy(sendbuf), copy(recvbuf), isendbuf, irecvbuf, nworkers, epoch, pool, comm; tag=data_tag)
+    update_gradient!(copy(∇), copy(recvbufs), copy(sendbuf), epoch, repochs; parsed_args...)
+    update_iterate!(copy(V), copy(∇), copy(sendbuf), epoch, repochs; parsed_args...)
+
+    # ensure all workers have finished compiling before starting the computation
+    MPI.Barrier(comm)
 
     # first iteration (initializes state)
     epoch = 1
