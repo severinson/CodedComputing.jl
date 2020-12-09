@@ -213,12 +213,16 @@ function coordinator_main()
     end
 
     # run 1 dummy iteration, where we wait for all workers, to trigger compilation
+    # (this is only necessary when benchmarking)
     epoch = 0
     repochs = kmap!(copy(sendbuf), copy(recvbuf), isendbuf, irecvbuf, nworkers, epoch, pool, comm; tag=data_tag)
-    update_gradient!(copy(∇), copy(recvbufs), copy(sendbuf), epoch, repochs; parsed_args...)
-    update_iterate!(copy(V), copy(∇), copy(sendbuf), epoch, repochs; parsed_args...)
+    gradient_state = update_gradient!(copy(∇), copy(recvbufs), copy(sendbuf), epoch, repochs; parsed_args...)
+    iterate_state = update_iterate!(copy(V), copy(∇), copy(sendbuf), epoch, repochs; parsed_args...)
+    gradient_state = update_gradient!(copy(∇), copy(recvbufs), copy(sendbuf), epoch, repochs; state=gradient_state, parsed_args...)
+    iterate_state = update_iterate!(copy(V), copy(∇), copy(sendbuf), epoch, repochs; state=iterate_state, parsed_args...)
 
     # ensure all workers have finished compiling before starting the computation
+    # (this is only necessary when benchmarking)
     MPI.Barrier(comm)
 
     # first iteration (initializes state)
