@@ -116,7 +116,6 @@ end
 
     # compare the computed principal components with those obtained from the built-in svd
     @test isapprox(explained_variance(X, V), ev_correct, atol=1e-2)    
-
 end
 
 @testset "pca.jl" begin
@@ -231,9 +230,33 @@ end
 
     # test that the columns are orthogonal
     @test V'*V ≈ I
-    
-    ### variance reduction
+end
+
+@testset "pca.jl (variance reduced)" begin
+
+    # setup
+    Random.seed!(123)
+    kernel = "../src/pca/pca.jl"
+    nworkers = 2
     niterations = 100
+    inputdataset = "X"
+    outputdataset = "V"
+    n, m = 20, 10
+    k = div(m, 2)
+
+    # generate input dataset
+    X = randn(n, m)
+    inputfile = tempname()
+    h5open(inputfile, "w") do file
+        file[inputdataset] = X
+    end
+
+    # correct solution (computed via LinearAlgebra.svd)
+    V_correct = pca(X, k)
+    V = similar(V_correct)
+    ev_correct = explained_variance(X, V_correct)    
+
+    ### partitioning the dataset over the workers
     stepsize = 1
     outputfile = tempname()
     nsubpartitions = 1 
@@ -262,7 +285,7 @@ end
     # with variance reduction, the algorithm should always converge eventually
     @test isapprox(explained_variance(X, V), ev_correct, atol=1e-2)
 
-    ### sub-partitioning + variance reduction
+    ### sub-partitioning the data stored at each worker
     niterations = 100
     stepsize = 1/2
     nsubpartitions = 2
