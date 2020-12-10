@@ -9,24 +9,33 @@ function test_matrix(n, m, k)
     X
 end
 
-function benchmark_main(n=10000, m=5000, k=100, directory=joinpath("./simulations", "$(now())"))
+function benchmark_main(n=10000, m=5000, k=100, directory=joinpath("./simulations", "$(now())"), coderate=0.8)
     
     # prepare a directory for storing everything
     inputfile = joinpath(directory, "inputfile.h5")
     mkpath(directory)
 
+    # simulation parameters
+    kernel = "./src/pca/pca.jl"
+    inputdataset = "X"
+    nworkers = 12
+    ncomponents = k
+    niterations = 20
+
     # generate a random input data matrix if it doesn't already exist
     if !isfile(inputfile)
         X = test_matrix(n, m, k)
         h5write(inputfile, "X", X)
+
+        # optionally add more redundancy to the source data via Diggavi encoding
+        if coderate < 1
+            nc = ceil(Int, size(X, 1) / coderate) # number of coded rows
+            C = encode_hadamard(X, nc)
+            h5write(inputfile, "C", C)
+            inputdataset = "C"
+        end
     end
     @assert HDF5.ishdf5(inputfile)
-
-    # simulation parameters
-    kernel = "./src/pca/pca.jl"
-    nworkers = 12
-    ncomponents = k
-    niterations = 20
 
     # run jobs
     # pfraction_all = [1.0, 0.9, 0.5, 0.1]
@@ -113,34 +122,37 @@ function benchmark_main(n=10000, m=5000, k=100, directory=joinpath("./simulation
 
     niterations = 10
     stepsize = 0.9
-    for nsubpartitions in [1, 2, 3, 4, 5]
-        for nwait in 1:nworkers
+    for nsubpartitions in [1] # [1, 2, 3, 4, 5]
+        nwait = 12
+        for stepsize in [0.1, 0.2, 0.5]
+            # for nwait in 1:nworkers
 
             # variance-reduced sgd
-            outputfile = joinpath(directory, "output_$(now()).h5")
-            mpiexec(cmd -> run(```
-                $cmd -n $(nworkers+1) julia --project $kernel 
-                $inputfile $outputfile 
-                --nwait $nwait
-                --niterations $niterations
-                --ncomponents $ncomponents
-                --stepsize $stepsize
-                --nsubpartitions $nsubpartitions
-                --variancereduced
-                --saveiterates
-                ```))
+            # outputfile = joinpath(directory, "output_$(now()).h5")
+            # mpiexec(cmd -> run(```
+            #     $cmd -n $(nworkers+1) julia --project $kernel 
+            #     $inputfile $outputfile
+            #     --inputdataset $inputdataset
+            #     --nwait $nwait
+            #     --niterations $niterations
+            #     --ncomponents $ncomponents
+            #     --stepsize $stepsize
+            #     --nsubpartitions $nsubpartitions
+            #     --variancereduced
+            #     --saveiterates
+            #     ```))
 
             # sgd
             outputfile = joinpath(directory, "output_$(now()).h5")
             mpiexec(cmd -> run(```
                 $cmd -n $(nworkers+1) julia --project $kernel 
                 $inputfile $outputfile 
+                --inputdataset $inputdataset
                 --nwait $nwait
                 --niterations $niterations
                 --ncomponents $ncomponents
                 --stepsize $stepsize
                 --nsubpartitions $nsubpartitions
-                --variancereduced
                 --saveiterates
                 ```))                
         end
