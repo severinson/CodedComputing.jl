@@ -51,25 +51,26 @@ function read_localdata(i::Integer, nworkers::Integer; inputfile::String, inputd
     0 < i <= nworkers || throw(DomainError(i, "i must be in [1, nworkers]"))
     mod(nworkers, nreplicas) == 0 || throw(ArgumentError("nworkers must be divisible by nreplicas"))
     npartitions = div(nworkers, nreplicas)
+    partition_index = ceil(Int, i/nreplicas)
     h5open(inputfile, "r") do fid
         inputdataset in keys(fid) || throw(ArgumentError("$inputdataset is not in $fid"))
         flag, _ = isvalidh5csc(fid, inputdataset)
         if flag
             X = h5readcsc(fid, inputdataset)
-            m = size(X, 1)
-            il = round(Int, (i - 1)/npartitions*m + 1)
-            iu = round(Int, i/npartitions*m)
+            nrows = size(X, 1)
+            il = round(Int, (partition_index - 1)/npartitions*nrows + 1)
+            iu = round(Int, partition_index/npartitions*nrows)
             return X[il:iu, :]            
         else            
-            n, m = size(fid[inputdataset])
-            il = round(Int, (i - 1)/npartitions*n + 1)
-            iu = round(Int, i/npartitions*n)
+            nrows = size(fid[inputdataset], 1)
+            il = round(Int, (partition_index - 1)/npartitions*nrows + 1)
+            iu = round(Int, partition_index/npartitions*nrows)
             return fid[inputdataset][il:iu, :]
         end
     end
 end
 
-function worker_setup(rank::Integer, nworkers::Integer; ncomponents, kwargs...)
+function worker_setup(rank::Integer, nworkers::Integer; ncomponents::Union{Nothing,<:Integer}, kwargs...)
     0 < nworkers || throw(DomainError(nworkers, "nworkers must be positive"))
     isnothing(ncomponents) || 0 < ncomponents || throw(DomainError(ncomponents, "ncomponents must be positive"))
     localdata = read_localdata(rank, nworkers; kwargs...)
@@ -235,11 +236,10 @@ function update_gradient_sgd!(∇, recvbufs, sendbuf, epoch::Integer, repochs::V
 
     # scale the (stochastic) gradient to make it unbiased estimate of the true gradient
     ∇ .*= (npartitions / nresults) / pfraction
-
     uepochs
 end
 
-function update_gradient_vr!(∇, recvbufs, sendbuf, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, nreplicas, pfraction, nsubpartitions, kwargs...)
+function update_gradient_vr!(∇, recvbufs, sendbuf, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, nreplicas::Integer, pfraction::Real, nsubpartitions::Integer, kwargs...)
     length(recvbufs) == length(repochs) || throw(DimensionMismatch("recvbufs has dimension $(length(recvbufs)), but repochs has dimension $(length(repochs))"))
     0 < pfraction <= 1 || throw(DomainError(pfraction, "pfraction must be in (0, 1]"))
     0 < nreplicas || throw(DomainError(nreplicas, "nreplicas must be positive"))
