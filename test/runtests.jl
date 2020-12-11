@@ -52,8 +52,7 @@ end
     # compare the computed principal components with those obtained from the built-in svd
     @test isapprox(explained_variance(X, V), ev_correct, atol=1e-2)   
     
-    # with replication
-    nworkers = 4
+    ### exact with replication
     nreplicas = 2
     outputfile = tempname()
     mpiexec(cmd -> run(```
@@ -271,6 +270,7 @@ end
     # with replication
     nworkers = 4
     nreplicas = 2
+    npartitions = div(nworkers, nreplicas)
     niterations = 100
     stepsize = 1/2
     nsubpartitions = 2
@@ -280,7 +280,7 @@ end
         --ncomponents $k
         --niterations $niterations 
         --stepsize $stepsize        
-        --nwait $(nreplicas-1)
+        --nwait $(npartitions-1)
         --nsubpartitions $nsubpartitions
         --nreplicas $nreplicas
         --variancereduced
