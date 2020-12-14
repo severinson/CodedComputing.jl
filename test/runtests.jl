@@ -10,6 +10,19 @@ using Test
     @test V'*V ≈ I
 end
 
+function test_load_pca_iterates(outputfile::AbstractString, name::AbstractString)
+    @test HDF5.ishdf5(outputfile)
+    h5open(outputfile, "r") do fid
+        @test name in keys(fid)
+        if "iterates" in keys(fid) && length(size(fid["iterates"])) == 3 && size(fid["iterates"], 3) > 0
+            @test fid[name][:, :] ≈ fid["iterates"][:, :, end]
+            return [fid["iterates"][:, :, i] for i in 1:size(fid["iterates"], 3)]
+        else
+            return [fid[name][:, :]]
+        end
+    end
+end
+
 @testset "pca.jl" begin
 
     # setup
@@ -30,27 +43,25 @@ end
     end
 
     # correct solution (computed via LinearAlgebra.svd)
-    V_correct = pca(X, k)
-    V = similar(V_correct)
-    ev_correct = explained_variance(X, V_correct)
+    V_exact = pca(X, k)
+    ev_exact = explained_variance(X, V_exact)
+    println("Exact explained variance: $ev_exact")
 
     ### exact
     outputfile = tempname()
-    mpiexec(cmd -> run(`$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile --niterations $niterations --ncomponents $k`))
-
-    # test that the output was generated correctly
-    @test HDF5.ishdf5(outputfile)
-    h5open(outputfile, "r") do file
-        @test outputdataset in keys(file)
-        @test size(file[outputdataset]) == (m, k)
-        V .= file[outputdataset][:, :]
-    end
-
-    # test that the columns are orthogonal
-    @test V'*V ≈ I
-
-    # compare the computed principal components with those obtained from the built-in svd
-    @test isapprox(explained_variance(X, V), ev_correct, atol=1e-2)   
+    mpiexec(cmd -> run(```
+        $cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile 
+        --niterations $niterations 
+        --ncomponents $k 
+        --saveiterates
+        ```))    
+    Vs = test_load_pca_iterates(outputfile, outputdataset)
+    fs = [explained_variance(X, V) for V in Vs]    
+    # println("SGD (exact) convergence: $fs")
+    @test length(Vs) == niterations
+    @test all((V)->size(V)==(m,k), Vs)
+    @test Vs[end]'*Vs[end] ≈ I
+    @test isapprox(fs[end], ev_exact, atol=1e-2)
     
     ### exact with replication
     nreplicas = 2
@@ -60,104 +71,97 @@ end
         --niterations $niterations 
         --ncomponents $k
         --nreplicas $nreplicas
+        --saveiterates
         ```))
-
-    # test that the output was generated correctly
-    @test HDF5.ishdf5(outputfile)
-    h5open(outputfile, "r") do file
-        @test outputdataset in keys(file)
-        @test size(file[outputdataset]) == (m, k)
-        V .= file[outputdataset][:, :]
-    end
-
-    # test that the columns are orthogonal
-    @test V'*V ≈ I
-
-    # compare the computed principal components with those obtained from the built-in svd
-    @test isapprox(explained_variance(X, V), ev_correct, atol=1e-2)       
+    Vs = test_load_pca_iterates(outputfile, outputdataset)
+    fs = [explained_variance(X, V) for V in Vs]
+    # println("SGD (exact) convergence: $fs")
+    @test length(Vs) == niterations
+    @test all((V)->size(V)==(m,k), Vs)    
+    @test Vs[end]'*Vs[end] ≈ I
+    @test isapprox(fs[end], ev_exact, atol=1e-2)
 
     ### ignoring the slowest worker
     nworkers = 2
     outputfile = tempname()
-    mpiexec(cmd -> run(`$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile --ncomponents $k --niterations $niterations --nwait $(nworkers-1)`))
+    mpiexec(cmd -> run(```
+        $cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile 
+        --ncomponents $k 
+        --niterations $niterations 
+        --nwait $(nworkers-1)
+        --saveiterates
+        ```))
+    Vs = test_load_pca_iterates(outputfile, outputdataset)
+    fs = [explained_variance(X, V) for V in Vs]
+    # println("SGD convergence: $fs")
+    @test length(Vs) == niterations
+    @test all((V)->size(V)==(m,k), Vs)    
+    @test Vs[end]'*Vs[end] ≈ I
 
-    # test that the output was generated correctly
-    @test HDF5.ishdf5(outputfile)
-    h5open(outputfile, "r") do fid
-        @test outputdataset in keys(fid)
-        @test size(fid[outputdataset]) == (m, k)
-        V .= fid[outputdataset][:, :]
-        @test length(fid["benchmark/t_compute"]) == niterations
-    end
-
-    # test that the columns are orthogonal
-    @test V'*V ≈ I
-
-    ## using mini batches
+    ## using mini-batches
     outputfile = tempname()
     pfraction = 0.9
     stepsize = pfraction
-    mpiexec(cmd -> run(`$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile --ncomponents $k --niterations $niterations --nwait $(nworkers-1) --pfraction $pfraction --stepsize $stepsize`))
-
-    # test that the output was generated correctly
-    @test HDF5.ishdf5(outputfile)
-    h5open(outputfile, "r") do fid
-        @test outputdataset in keys(fid)
-        @test size(fid[outputdataset]) == (m, k)
-        V .= fid[outputdataset][:, :]
-        @test length(fid["benchmark/t_compute"]) == niterations
-    end
-
-    # test that the columns are orthogonal
-    @test V'*V ≈ I
-
-    ### using mini batches
-    outputfile = tempname()
-    pfraction = 0.9
-    stepsize = pfraction
-    mpiexec(cmd -> run(`$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile --ncomponents $k --niterations $niterations --nwait $(nworkers-1) --pfraction $pfraction --stepsize $stepsize`))
-
-    # test that the output was generated correctly
-    @test HDF5.ishdf5(outputfile)
-    h5open(outputfile, "r") do fid
-        @test outputdataset in keys(fid)
-        @test size(fid[outputdataset]) == (m, k)
-        V .= fid[outputdataset][:, :]
-        @test length(fid["benchmark/t_compute"]) == niterations
-    end
-
-    # test that the columns are orthogonal
-    @test V'*V ≈ I    
+    mpiexec(cmd -> run(```
+        $cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile 
+        --ncomponents $k 
+        --niterations $niterations 
+        --nwait $(nworkers-1) 
+        --pfraction $pfraction 
+        --stepsize $stepsize
+        --saveiterates
+        ```))
+    Vs = test_load_pca_iterates(outputfile, outputdataset)
+    fs = [explained_variance(X, V) for V in Vs]
+    # println("SGD convergence: $fs")
+    @test length(Vs) == niterations
+    @test all((V)->size(V)==(m,k), Vs)    
+    @test Vs[end]'*Vs[end] ≈ I
 
     ### sub-partitioning and stochastic sub-gradients
     nsubpartitions = 2
     pfraction = 0.9
     stepsize = pfraction / nsubpartitions
     outputfile = tempname()
-    mpiexec(cmd -> run(`$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile --ncomponents $k --niterations $niterations --nwait $(nworkers-1) --pfraction $pfraction --nsubpartitions $nsubpartitions --stepsize $stepsize`))
+    mpiexec(cmd -> run(```
+        $cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile
+        --ncomponents $k 
+        --niterations $niterations 
+        --nwait $(nworkers-1) 
+        --pfraction $pfraction 
+        --nsubpartitions $nsubpartitions 
+        --stepsize $stepsize
+        --saveiterates
+        ```))
+    Vs = test_load_pca_iterates(outputfile, outputdataset)
+    fs = [explained_variance(X, V) for V in Vs]
+    # println("SGD convergence: $fs")
+    @test length(Vs) == niterations
+    @test all((V)->size(V)==(m,k), Vs)    
+    @test Vs[end]'*Vs[end] ≈ I
+end
 
-    # test that the output was generated correctly
-    @test HDF5.ishdf5(outputfile)
-    h5open(outputfile, "r") do fid
-        @test outputdataset in keys(fid)
-        @test size(fid[outputdataset]) == (m, k)
-        V .= fid[outputdataset][:, :]
-        @test length(fid["benchmark/t_compute"]) == niterations
-    end
+@time @testset "pca.jl (sparse matrices)" begin
 
-    # test that the columns are orthogonal
-    @test V'*V ≈ I
-
-    ### sparse (CSC) matrices
+    # setup
+    Random.seed!(123)
+    kernel = "../src/pca/pca.jl"
+    nworkers = 2
+    niterations = 200
+    inputdataset = "X"
+    outputdataset = "V"
+    n, m = 20, 10
+    k = div(m, 2)
     p = 0.9 # matrix density    
+
+    # generate input dataset
     X = sprand(n, m, p)
     inputfile = tempname()
     h5writecsc(inputfile, inputdataset, X)
 
-    # correct solution (computed via LinearAlgebra.svd)
-    V_correct = pca(Matrix(X), k)
-    V = similar(V_correct)
-    ev_correct = explained_variance(X, V_correct)
+    # exact solution (computed via LinearAlgebra.svd)
+    V_exact = pca(Matrix(X), k)
+    ev_exact = explained_variance(X, V_exact)
 
     # exact solution
     outputfile = tempname()
@@ -165,25 +169,20 @@ end
         $cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile 
         --ncomponents $k 
         --niterations $niterations 
-        --ncomponents $k```))
-
-    # test that the output was generated correctly
-    @test HDF5.ishdf5(outputfile)
-    h5open(outputfile, "r") do fid
-        @test outputdataset in keys(fid)
-        @test size(fid[outputdataset]) == (m, k)
-        V .= fid[outputdataset][:, :]
-        @test length(fid["benchmark/t_compute"]) == niterations
-    end
-
-    # test that the columns are orthogonal
-    @test V'*V ≈ I
-    
-    # compare the computed principal components with those obtained from the built-in svd
-    @test isapprox(explained_variance(X, V), ev_correct, atol=1e-2)        
+        --ncomponents $k
+        --saveiterates
+        ```))
+    Vs = test_load_pca_iterates(outputfile, outputdataset)
+    fs = [explained_variance(X, V) for V in Vs]
+    # println("SGD convergence: $fs")
+    @test length(Vs) == niterations
+    @test all((V)->size(V)==(m,k), Vs)    
+    @test Vs[end]'*Vs[end] ≈ I
+    @test isapprox(fs[end], ev_exact, atol=1e-2)
 end
 
 @testset "pca.jl (variance reduced)" begin
+    # with variance reduction, the algorithm should always converge eventually
 
     # setup
     Random.seed!(123)
@@ -201,11 +200,8 @@ end
     h5open(inputfile, "w") do file
         file[inputdataset] = X
     end
-
-    # correct solution (computed via LinearAlgebra.svd)
-    V_correct = pca(X, k)
-    V = similar(V_correct)
-    ev_correct = explained_variance(X, V_correct)    
+    V_exact = pca(X, k)    
+    ev_exact = explained_variance(X, V_exact)    
 
     ### partitioning the dataset over the workers
     stepsize = 1
@@ -218,23 +214,15 @@ end
         --nsubpartitions $nsubpartitions
         --nwait $(nworkers-1)
         --variancereduced
+        --saveiterates        
         ```))
-
-    # test that the output was generated correctly
-    @test HDF5.ishdf5(outputfile)
-    h5open(outputfile, "r") do fid
-        @test outputdataset in keys(fid)
-        @test size(fid[outputdataset]) == (m, k)
-        V .= fid[outputdataset][:, :]
-        @test length(fid["benchmark/t_compute"]) == niterations
-    end
-
-    # test that the columns are orthogonal
-    @test V'*V ≈ I
-
-    # compare the computed principal components with those obtained from the built-in svd
-    # with variance reduction, the algorithm should always converge eventually
-    @test isapprox(explained_variance(X, V), ev_correct, atol=1e-2)
+    Vs = test_load_pca_iterates(outputfile, outputdataset)
+    fs = [explained_variance(X, V) for V in Vs]
+    # println("SGD convergence: $fs")
+    @test length(Vs) == niterations
+    @test all((V)->size(V)==(m,k), Vs)    
+    @test Vs[end]'*Vs[end] ≈ I
+    @test isapprox(fs[end], ev_exact, atol=1e-2)                
 
     ### sub-partitioning the data stored at each worker
     niterations = 100
@@ -249,23 +237,15 @@ end
         --nwait $(nworkers-1)        
         --nsubpartitions $nsubpartitions
         --variancereduced
+        --saveiterates        
         ```))
-
-    # test that the output was generated correctly
-    @test HDF5.ishdf5(outputfile)
-    h5open(outputfile, "r") do fid
-        @test outputdataset in keys(fid)
-        @test size(fid[outputdataset]) == (m, k)
-        V .= fid[outputdataset][:, :]
-        @test length(fid["benchmark/t_compute"]) == niterations
-    end
-
-    # test that the columns are orthogonal
-    @test V'*V ≈ I
-
-    # compare the computed principal components with those obtained from the built-in svd
-    # with variance reduction, the algorithm should always converge eventually
-    @test isapprox(explained_variance(X, V), ev_correct, atol=1e-2)    
+    Vs = test_load_pca_iterates(outputfile, outputdataset)
+    fs = [explained_variance(X, V) for V in Vs]
+    # println("SGD convergence: $fs")
+    @test length(Vs) == niterations
+    @test all((V)->size(V)==(m,k), Vs)    
+    @test Vs[end]'*Vs[end] ≈ I
+    @test isapprox(fs[end], ev_exact, atol=1e-2)                        
 
     # with replication
     nworkers = 4
@@ -284,23 +264,15 @@ end
         --nsubpartitions $nsubpartitions
         --nreplicas $nreplicas
         --variancereduced
+        --saveiterates        
         ```))
-
-    # test that the output was generated correctly
-    @test HDF5.ishdf5(outputfile)
-    h5open(outputfile, "r") do fid
-        @test outputdataset in keys(fid)
-        @test size(fid[outputdataset]) == (m, k)
-        V .= fid[outputdataset][:, :]
-        @test length(fid["benchmark/t_compute"]) == niterations
-    end       
-    
-    # test that the columns are orthogonal
-    @test V'*V ≈ I    
-
-    # compare the computed principal components with those obtained from the built-in svd
-    # with variance reduction, the algorithm should always converge eventually
-    @test isapprox(explained_variance(X, V), ev_correct, atol=1e-2)
+    Vs = test_load_pca_iterates(outputfile, outputdataset)
+    fs = [explained_variance(X, V) for V in Vs]
+    # println("SGD convergence: $fs")
+    @test length(Vs) == niterations
+    @test all((V)->size(V)==(m,k), Vs)    
+    @test Vs[end]'*Vs[end] ≈ I
+    @test isapprox(fs[end], ev_exact, atol=1e-2)
 end
 
 @testset "power.jl" begin
@@ -322,93 +294,92 @@ end
     h5open(inputfile, "w") do file
         file[inputdataset] = X
     end
-
-    # correct solution (computed via LinearAlgebra.svd)
-    V_correct = pca(X, k)
-    V = similar(V_correct)
-    ev_correct = explained_variance(X, V_correct)
+    V_exact = pca(X, k)
+    ev_exact = explained_variance(X, V_exact)
     
     ### code weight 1 (i.e., coding is equivalent to multiplying by a scalar)
     ### the computed results can be recovered exactly
     codeweight = 1
     outputfile = tempname()
-    mpiexec(cmd -> run(`$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile --npartitions $npartitions --codeweight $codeweight --niterations $niterations --ncomponents $k`))
-
-    # test that the output was generated correctly
-    @test HDF5.ishdf5(outputfile)
-    h5open(outputfile, "r") do file
-        @test outputdataset in keys(file)
-        @test size(file[outputdataset]) == (m, k)
-        V .= file[outputdataset][:, :]
-    end
-
-    # test that the columns are orthogonal
-    @test V'*V ≈ I
-
-    # compare the computed principal components with those obtained from the built-in svd
-    @test explained_variance(X, V) ≈ ev_correct 
+    mpiexec(cmd -> run(```
+        $cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile
+        --npartitions $npartitions 
+        --codeweight $codeweight 
+        --niterations $niterations 
+        --ncomponents $k
+        --saveiterates
+        ```))
+    Vs = test_load_pca_iterates(outputfile, outputdataset)
+    fs = [explained_variance(X, V) for V in Vs]
+    # println("SGD convergence: $fs")
+    @test length(Vs) == niterations
+    @test all((V)->size(V)==(m,k), Vs)    
+    @test Vs[end]'*Vs[end] ≈ I
+    @test isapprox(fs[end], ev_exact, atol=1e-2)    
     
     ### code weight 2
     ### the computed results can be recovered exactly    
     codeweight = 2
     outputfile = tempname()
-    mpiexec(cmd -> run(`$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile --npartitions $npartitions --codeweight $codeweight --niterations $niterations --ncomponents $k`))
-
-    # test that the output was generated correctly
-    @test HDF5.ishdf5(outputfile)
-    h5open(outputfile, "r") do file
-        @test outputdataset in keys(file)
-        @test size(file[outputdataset]) == (m, k)
-        V .= file[outputdataset][:, :]
-    end
-
-    # test that the columns are orthogonal
-    @test V'*V ≈ I
-
-    # compare the computed principal components with those obtained from the built-in svd
-    @test isapprox(explained_variance(X, V), ev_correct, atol=1e-2)
+    mpiexec(cmd -> run(```
+        $cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile
+        --npartitions $npartitions
+        --codeweight $codeweight
+        --niterations $niterations
+        --ncomponents $k
+        --saveiterates
+        ```))
+    Vs = test_load_pca_iterates(outputfile, outputdataset)
+    fs = [explained_variance(X, V) for V in Vs]
+    # println("SGD convergence: $fs")
+    @test length(Vs) == niterations
+    @test all((V)->size(V)==(m,k), Vs)    
+    @test Vs[end]'*Vs[end] ≈ I
+    @test isapprox(fs[end], ev_exact, atol=1e-2)
 
     ### code weight 1, nwait 1
     ### the computed results can be recovered exactly        
     codeweight = 1
     nwait = nworkers - 1
     outputfile = tempname()
-    mpiexec(cmd -> run(`$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile --nwait $nwait --npartitions $npartitions --codeweight $codeweight --niterations $niterations --ncomponents $k`))
-
-    # test that the output was generated correctly
-    @test HDF5.ishdf5(outputfile)
-    h5open(outputfile, "r") do file
-        @test outputdataset in keys(file)
-        @test size(file[outputdataset]) == (m, k)
-        V .= file[outputdataset][:, :]
-    end
-
-    # test that the columns are orthogonal
-    @test V'*V ≈ I
-
-    # compare the computed principal components with those obtained from the built-in svd
-    @test isapprox(explained_variance(X, V), ev_correct, atol=1e-2)
+    mpiexec(cmd -> run(```
+        $cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile
+        --nwait $nwait
+        --npartitions $npartitions
+        --codeweight $codeweight
+        --niterations $niterations
+        --ncomponents $k
+        --saveiterates
+        ```))
+    Vs = test_load_pca_iterates(outputfile, outputdataset)
+    fs = [explained_variance(X, V) for V in Vs]
+    # println("SGD convergence: $fs")
+    @test length(Vs) == niterations
+    @test all((V)->size(V)==(m,k), Vs)    
+    @test Vs[end]'*Vs[end] ≈ I
+    @test isapprox(fs[end], ev_exact, atol=1e-2)    
 
     ### code weight 2, nwait 1
     ### the computed results can't be recovered exactly            
     codeweight = 2
     nwait = nworkers - 1
     outputfile = tempname()
-    mpiexec(cmd -> run(`$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile --nwait $nwait --npartitions $npartitions --codeweight $codeweight --niterations $niterations --ncomponents $k`))
-
-    # test that the output was generated correctly
-    @test HDF5.ishdf5(outputfile)
-    h5open(outputfile, "r") do file
-        @test outputdataset in keys(file)
-        @test size(file[outputdataset]) == (m, k)
-        V .= file[outputdataset][:, :]
-    end
-
-    # test that the columns are orthogonal
-    @test V'*V ≈ I
-
-    # compare the computed principal components with those obtained from the built-in svd
-    @test isapprox(explained_variance(X, V), ev_correct, atol=1e-2)    
+    mpiexec(cmd -> run(```
+        $cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile
+        --nwait $nwait
+        --npartitions $npartitions
+        --codeweight $codeweight
+        --niterations $niterations
+        --ncomponents $k
+        --saveiterates
+        ```))
+    Vs = test_load_pca_iterates(outputfile, outputdataset)
+    fs = [explained_variance(X, V) for V in Vs]
+    # println("SGD convergence: $fs")
+    @test length(Vs) == niterations
+    @test all((V)->size(V)==(m,k), Vs)    
+    @test Vs[end]'*Vs[end] ≈ I
+    @test isapprox(fs[end], ev_exact, atol=1e-2)        
 end
 
 @testset "HDF5Sparse.jl" begin
