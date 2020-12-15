@@ -169,7 +169,7 @@ end
 data_view(recvbuf) = reinterpret(ELEMENT_TYPE, @view recvbuf[METADATA_BYTES+1:end])
 metadata_view(recvbuf) = view(recvbuf, 1:METADATA_BYTES)
 
-function update_gradient!(∇, recvbufs, sendbuf, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, codeweight::Integer, npartitions::Integer, kwargs...)
+function substitute_multiplication!(∇, recvbufs, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, codeweight::Integer, npartitions::Integer, kwargs...)
     epoch <= 1 || !isnothing(state) || error("expected state to be initiated for epoch > 1")
     length(recvbufs) == length(repochs) || throw(DimensionMismatch("recvbufs has dimension $(length(recvbufs)), but repochs has dimension $(length(repochs))"))    
     nworkers = length(recvbufs)
@@ -219,8 +219,13 @@ function update_gradient!(∇, recvbufs, sendbuf, epoch::Integer, repochs::Vecto
     G, ∇s
 end
 
-function update_iterate!(V, ∇, sendbuf, epoch, repochs; state=nothing, kwargs...)
+function coordinator_task!(V, ∇, recvbufs, sendbuf, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, kwargs...)
     size(V) == size(∇) || throw(DimensionMismatch("V has dimensions $(size(B)), but ∇ has dimensions $(size(∇))"))
+    if isnothing(state)
+        state = substitute_multiplication!(∇, recvbufs, epoch, repochs; kwargs...)
+    else
+        state = substitute_multiplication!(∇, recvbufs, epoch, repochs; state, kwargs...)
+    end
     V .= ∇
     orthogonal!(V)
     reinterpret(ELEMENT_TYPE, view(sendbuf, :)) .= view(V, :)

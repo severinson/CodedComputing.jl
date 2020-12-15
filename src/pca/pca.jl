@@ -169,9 +169,7 @@ end
 data_view(recvbuf) = reinterpret(ELEMENT_TYPE, @view recvbuf[METADATA_BYTES+1:end])
 metadata_view(recvbuf) = view(recvbuf, 1:METADATA_BYTES)
 
-update_gradient!(args...; variancereduced::Bool, kwargs...) = variancereduced ? update_gradient_vr!(args...; kwargs...) : update_gradient_sgd!(args...; kwargs...)
-
-function update_gradient_sgd!(∇, recvbufs, sendbuf, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, nreplicas, pfraction, nsubpartitions, kwargs...)
+function update_gradient_sgd!(∇, recvbufs, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, nreplicas, pfraction, nsubpartitions, kwargs...)
     length(recvbufs) == length(repochs) || throw(DimensionMismatch("recvbufs has dimension $(length(recvbufs)), but repochs has dimension $(length(repochs))"))
     0 < pfraction <= 1 || throw(DomainError(pfraction, "pfraction must be in (0, 1]"))
     0 < nreplicas || throw(DomainError(nreplicas, "nreplicas must be positive"))
@@ -239,7 +237,7 @@ function update_gradient_sgd!(∇, recvbufs, sendbuf, epoch::Integer, repochs::V
     uepochs
 end
 
-function update_gradient_vr!(∇, recvbufs, sendbuf, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, nreplicas::Integer, pfraction::Real, nsubpartitions::Integer, kwargs...)
+function update_gradient_vr!(∇, recvbufs, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, nreplicas::Integer, pfraction::Real, nsubpartitions::Integer, kwargs...)
     length(recvbufs) == length(repochs) || throw(DimensionMismatch("recvbufs has dimension $(length(recvbufs)), but repochs has dimension $(length(repochs))"))
     0 < pfraction <= 1 || throw(DomainError(pfraction, "pfraction must be in (0, 1]"))
     0 < nreplicas || throw(DomainError(nreplicas, "nreplicas must be positive"))
@@ -317,14 +315,29 @@ function update_gradient_vr!(∇, recvbufs, sendbuf, epoch::Integer, repochs::Ve
     uepochs, ∇s
 end
 
-function update_iterate!(V, ∇, sendbuf, epoch, repochs; state=nothing, stepsize, kwargs...)
+update_gradient!(args...; variancereduced::Bool, kwargs...) = variancereduced ? update_gradient_vr!(args...; kwargs...) : update_gradient_sgd!(args...; kwargs...)
+
+function update_iterate!(V, ∇; state=nothing, stepsize, kwargs...)
     size(V) == size(∇) || throw(DimensionMismatch("V has dimensions $(size(B)), but ∇ has dimensions $(size(∇))"))
     for I in CartesianIndices(V)
         V[I] -= stepsize * (∇[I] + V[I])
     end
     orthogonal!(V)
-    reinterpret(ELEMENT_TYPE, view(sendbuf, :)) .= view(V, :)
     state
+end
+
+function coordinator_task!(V, ∇, recvbufs, sendbuf, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, kwargs...)
+    isnothing(state) || length(state) == 2 || throw(ArgumentError("expected state to be nothing or a tuple of length 2, but got $state"))
+    if isnothing(state)
+        gradient_state = update_gradient!(∇, recvbufs, epoch, repochs; kwargs...)
+        iterate_state = update_iterate!(V, ∇; kwargs...)
+    else
+        gradient_state, iterate_state = state
+        gradient_state = update_gradient!(∇, recvbufs, epoch, repochs; state=gradient_state, kwargs...)
+        iterate_state = update_iterate!(V, ∇; state=iterate_state, kwargs...)
+    end
+    reinterpret(ELEMENT_TYPE, view(sendbuf, :)) .= view(V, :)        
+    gradient_state, iterate_state
 end
 
 include("common.jl")

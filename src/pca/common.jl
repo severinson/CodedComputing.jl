@@ -216,10 +216,8 @@ function coordinator_main()
     # (this is only necessary when benchmarking)
     epoch = 0
     repochs = kmap!(copy(sendbuf), copy(recvbuf), isendbuf, irecvbuf, nworkers, epoch, pool, comm; tag=data_tag)
-    gradient_state = update_gradient!(copy(∇), copy(recvbufs), copy(sendbuf), epoch, repochs; parsed_args...)
-    iterate_state = update_iterate!(copy(V), copy(∇), copy(sendbuf), epoch, repochs; parsed_args...)
-    gradient_state = update_gradient!(copy(∇), copy(recvbufs), copy(sendbuf), epoch, repochs; state=gradient_state, parsed_args...)
-    iterate_state = update_iterate!(copy(V), copy(∇), copy(sendbuf), epoch, repochs; state=iterate_state, parsed_args...)
+    state = coordinator_task!(copy(V), copy(∇), copy(recvbufs), copy(sendbuf), epoch, repochs; parsed_args...)
+    state = coordinator_task!(copy(V), copy(∇), copy(recvbufs), copy(sendbuf), epoch, repochs; state, parsed_args...)
 
     # ensure all workers have finished compiling before starting the computation
     # (this is only necessary when benchmarking)
@@ -232,8 +230,7 @@ function coordinator_main()
     end
     responded[:, epoch] .= repochs .== epoch
     ts_update[epoch] = @elapsed begin
-        gradient_state = update_gradient!(∇, recvbufs, sendbuf, epoch, repochs; parsed_args...)
-        iterate_state = update_iterate!(V, ∇, sendbuf, epoch, repochs; parsed_args...)
+        state = coordinator_task!(V, ∇, recvbufs, sendbuf, epoch, repochs; parsed_args...)    
     end
     if saveiterates
         iterates[:, :, epoch] .= V
@@ -246,8 +243,7 @@ function coordinator_main()
         end
         responded[:, epoch] .= repochs .== epoch
         ts_update[epoch] = @elapsed begin
-            gradient_state = update_gradient!(∇, recvbufs, sendbuf, epoch, repochs; state=gradient_state, parsed_args...)
-            iterate_state = update_iterate!(V, ∇, sendbuf, epoch, repochs; state=iterate_state, parsed_args...)            
+            state = coordinator_task!(V, ∇, recvbufs, sendbuf, epoch, repochs; state, parsed_args...)    
         end
         if saveiterates
             iterates[:, :, epoch] .= V
