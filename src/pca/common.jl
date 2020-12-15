@@ -114,7 +114,12 @@ function worker_loop(localdata, recvbuf, sendbuf; kwargs...)
     state = worker_task!(recvbuf, sendbuf, localdata; kwargs...)
     MPI.Isend(sendbuf, root, data_tag, comm)
 
+    # manually call the GC now to avoid pauses later during execution
+    # (this is only necessary when benchmarking)
+    GC.gc()    
+
     # ensure all workers have finished compiling before starting the computation
+    # (this is only necessary when benchmarking)
     MPI.Barrier(comm)
 
     # remaining iterations
@@ -218,6 +223,10 @@ function coordinator_main()
     repochs = kmap!(copy(sendbuf), copy(recvbuf), isendbuf, irecvbuf, nworkers, epoch, pool, comm; tag=data_tag)
     state = coordinator_task!(copy(V), copy(∇), copy(recvbufs), copy(sendbuf), epoch, repochs; parsed_args...)
     state = coordinator_task!(copy(V), copy(∇), copy(recvbufs), copy(sendbuf), epoch, repochs; state, parsed_args...)
+
+    # manually call the GC now to avoid pauses later during execution
+    # (this is only necessary when benchmarking)
+    GC.gc()
 
     # ensure all workers have finished compiling before starting the computation
     # (this is only necessary when benchmarking)
