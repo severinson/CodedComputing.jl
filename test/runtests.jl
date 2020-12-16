@@ -62,9 +62,33 @@ end
     @test all((V)->size(V)==(m,k), Vs)
     @test Vs[end]'*Vs[end] ≈ I
     @test isapprox(fs[end], ev_exact, atol=1e-2)
+
+    ### providing an initial iterate
+    println("test hash: $(hash(Vs[end]))")
+    iteratedataset = "V"
+    niterations = 1
+    h5open(inputfile, "r+") do fid
+        fid[iteratedataset] = Vs[end]
+    end
+    outputfile = tempname()
+    mpiexec(cmd -> run(```
+        $cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile 
+        --niterations $niterations
+        --ncomponents $k
+        --saveiterates
+        --iteratedataset $iteratedataset
+        ```))    
+    Vs = test_load_pca_iterates(outputfile, outputdataset)
+    fs = [explained_variance(X, V) for V in Vs]    
+    # println("SGD (exact) convergence: $fs")
+    @test length(Vs) == niterations
+    @test all((V)->size(V)==(m,k), Vs)
+    @test Vs[end]'*Vs[end] ≈ I
+    @test isapprox(fs[end], ev_exact, atol=1e-2)    
     
     ### exact with replication
     nreplicas = 2
+    niterations = 200
     outputfile = tempname()
     mpiexec(cmd -> run(```
         $cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile 
@@ -139,6 +163,7 @@ end
     @test length(Vs) == niterations
     @test all((V)->size(V)==(m,k), Vs)    
     @test Vs[end]'*Vs[end] ≈ I
+
 end
 
 @time @testset "pca.jl (sparse matrices)" begin
@@ -316,10 +341,34 @@ end
     @test all((V)->size(V)==(m,k), Vs)    
     @test Vs[end]'*Vs[end] ≈ I
     @test isapprox(fs[end], ev_exact, atol=1e-2)    
+
+    ### providing an initial iterate
+    iteratedataset = "V"
+    niterations = 1
+    h5open(inputfile, "r+") do fid
+        fid[iteratedataset] = Vs[end]
+    end
+    outputfile = tempname()
+    mpiexec(cmd -> run(```
+        $cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile
+        --npartitions $npartitions 
+        --codeweight $codeweight 
+        --niterations $niterations 
+        --ncomponents $k
+        --saveiterates
+        --iteratedataset $iteratedataset
+        ```))
+    Vs = test_load_pca_iterates(outputfile, outputdataset)
+    fs = [explained_variance(X, V) for V in Vs]    
+    @test length(Vs) == niterations
+    @test all((V)->size(V)==(m,k), Vs)
+    @test Vs[end]'*Vs[end] ≈ I
+    @test isapprox(fs[end], ev_exact, atol=1e-2)      
     
     ### code weight 2
     ### the computed results can be recovered exactly    
     codeweight = 2
+    niterations = 200
     outputfile = tempname()
     mpiexec(cmd -> run(```
         $cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile
@@ -379,7 +428,7 @@ end
     @test length(Vs) == niterations
     @test all((V)->size(V)==(m,k), Vs)    
     @test Vs[end]'*Vs[end] ≈ I
-    @test isapprox(fs[end], ev_exact, atol=1e-2)        
+    @test isapprox(fs[end], ev_exact, atol=1e-2)         
 end
 
 @testset "HDF5Sparse.jl" begin

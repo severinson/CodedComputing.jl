@@ -75,6 +75,9 @@ function parse_commandline(isroot::Bool)
             help = "Output dataset name"
             default = "V"
             arg_type = String
+        "--iteratedataset"
+            help = "Initial iterate dataset name (an initial iterate is selected at random if not provided)"
+            arg_type = String
         "--saveiterates"
             help = "Save all intermediate iterates to the output file"
             action = :store_true
@@ -182,7 +185,7 @@ function coordinator_main()
     ∇ = similar(V)
     ∇ .= 0
     isendbuf = similar(sendbuf, nworkers*length(sendbuf))
-    irecvbuf = similar(recvbuf)    
+    irecvbuf = similar(recvbuf)
 
     # views into recvbuf corresponding to each worker
     n = div(length(recvbuf), nworkers)
@@ -220,7 +223,7 @@ function coordinator_main()
     # run 1 dummy iteration, where we wait for all workers, to trigger compilation
     # (this is only necessary when benchmarking)
     epoch = 0
-    repochs = kmap!(copy(sendbuf), copy(recvbuf), isendbuf, irecvbuf, nworkers, epoch, pool, comm; tag=data_tag)
+    repochs = kmap!(copy(sendbuf), copy(recvbuf), copy(isendbuf), copy(irecvbuf), nworkers, epoch, pool, comm; tag=data_tag)
     state = coordinator_task!(copy(V), copy(∇), copy(recvbufs), copy(sendbuf), epoch, repochs; parsed_args...)
     state = coordinator_task!(copy(V), copy(∇), copy(recvbufs), copy(sendbuf), epoch, repochs; state, parsed_args...)
 
@@ -264,6 +267,9 @@ function coordinator_main()
 
         # write parameters to the output file
         for (key, val) in parsed_args
+            if isnothing(val)
+                continue
+            end
             fid["parameters/$key"] = val
         end
 

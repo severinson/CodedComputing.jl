@@ -88,25 +88,28 @@ function worker_setup(rank::Integer, nworkers::Integer; codeweight::Integer, npa
     localdata, recvbuf, sendbuf
 end
 
-function coordinator_setup(nworkers::Integer; inputfile::String, inputdataset::String, ncomponents, parsed_args...)    
+function coordinator_setup(nworkers::Integer; inputfile::String, inputdataset::String, iteratedataset, ncomponents, parsed_args...)    
     0 < nworkers || throw(DomainError(nworkers, "nworkers must be positive"))
     isnothing(ncomponents) || 0 < ncomponents || throw(DomainError(ncomponents, "ncomponents must be positive"))
     nsamples, dimension = problem_size(inputfile, inputdataset)
 
-    # default to computing all components
-    if isnothing(ncomponents)
-        k = dimension
-    else
-        k = ncomponents
-    end    
+    # initial iterate
+    if isnothing(iteratedataset) # initialized at random
+        k = isnothing(ncomponents) ? dimension : ncomponents
+        V = randn(dimension, k)
+        orthogonal!(V)
+    else # given as an argument and loaded from disk
+        h5open(inputfile) do fid
+            iteratedataset in keys(fid) || throw(ArgumentError("iterate dataset $iteratedataset not found"))
+            V = fid[iteratedataset][:, :]
+        end
+        ncomponents == size(V, 2) || throw(DimensionMismatch("V has dimensions $(size(V)), but ncomponents is $ncomponents"))
+        k = size(V, 2)
+    end
 
     # communication buffers
     sendbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*k)
     recvbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*nworkers*k + METADATA_BYTES*nworkers)
-
-    # iterate, initialized at random
-    V = randn(dimension, k)
-    orthogonal!(V)
     reinterpret(ELEMENT_TYPE, view(sendbuf, :)) .= view(V, :)
 
     V, recvbuf, sendbuf
