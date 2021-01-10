@@ -1,6 +1,9 @@
 using HDF5, MPI, Dates
 using CodedComputing
 
+include("../encoding/diggavi.jl")
+include("../analysis/pca.jl")
+
 function test_matrix(n, m, k)
     G = randn(n, m)
     P = orthogonal!(randn(m, k))
@@ -9,8 +12,39 @@ function test_matrix(n, m, k)
     X
 end
 
-function benchmark_main(n=10000, m=5000, k=100, directory=joinpath("./simulations", "$(now())"), coderate=0.8)
+function write_input(n, m, k; inputfile::AbstractString, name="X")
+
+    # don't do anything if the input file already exists
+    if isfile(inputfile)
+        @assert HDF5.ishdf5(inputfile)
+        return h5read(inputfile, name)[:, :]
+    end
+
+    # generate a random input data matrix if it doesn't already exist
+    if k == m
+        X = randn(n, m)
+    else
+        X = test_matrix(n, m, k)
+    end
+    h5write(inputfile, name, X)
+    return X
+end
+
+function write_coded_input(X; inputfile::AbstractString, name="C", coderate=1)
+    nc = ceil(Int, size(X, 1) / coderate) # number of coded rows
+    C = Matrix(encode_hadamard(X, nc))
+    h5write(inputfile, name, C)
+    return C
+end
+
+function benchmark_main(n=5000, m=5000, k=5000, directory=joinpath("./simulations", "$(now())"), coderate=1)
+
+    # (1000, 500, 100)
+    # directory = "/home/albin/.julia/dev/CodedComputing.jl/simulations/2020-12-17T14:19:57.949"
     
+    # (5000, 5000, 200)
+    # directory = "/home/albin/.julia/dev/CodedComputing.jl/simulations/2020-12-17T14:20:23.572"
+
     # prepare a directory for storing everything
     inputfile = joinpath(directory, "inputfile.h5")
     mkpath(directory)
@@ -18,24 +52,71 @@ function benchmark_main(n=10000, m=5000, k=100, directory=joinpath("./simulation
     # simulation parameters
     kernel = "./src/pca/pca.jl"
     inputdataset = "X"
-    nworkers = 12
+    nworkers = 47
     ncomponents = k
-    niterations = 20
+    niterations = 10
 
-    # generate a random input data matrix if it doesn't already exist
-    if !isfile(inputfile)
-        X = test_matrix(n, m, k)
-        h5write(inputfile, "X", X)
+    X = write_input(n, m, k; inputfile, name=inputdataset)
+    if coderate < 1
+        write_coded_input(X; inputfile, name="C")
+        inputdataset = "C"
+    end
 
-        # optionally add more redundancy to the source data via Diggavi encoding
-        if coderate < 1
-            nc = ceil(Int, size(X, 1) / coderate) # number of coded rows
-            C = encode_hadamard(X, nc)
-            h5write(inputfile, "C", C)
-            inputdataset = "C"
+    # Measure iteration time
+    stepsize = 0.9
+    for nwait in round.(Int, range(1, nworkers, length=5))
+        for nsubpartitions in [1, 3, 5]
+            for ncomponents in [1, 100, 200]
+                println((nwait, nsubpartitions, ncomponents))
+
+                # with variance reduction
+                outputfile = joinpath(directory, "output_$(now()).h5")
+                mpiexec(cmd -> run(```
+                    $cmd -n $(nworkers+1) julia --project $kernel 
+                    $inputfile $outputfile 
+                    --niterations $niterations
+                    --nwait $nwait
+                    --ncomponents $ncomponents
+                    --stepsize $stepsize
+                    --nsubpartitions $nsubpartitions
+                    --variancereduced
+                    --saveiterates
+                    ```))
+
+                # without variance reduction
+                outputfile = joinpath(directory, "output_$(now()).h5")
+                mpiexec(cmd -> run(```
+                    $cmd -n $(nworkers+1) julia --project $kernel 
+                    $inputfile $outputfile 
+                    --niterations $niterations 
+                    --nwait $nwait
+                    --ncomponents $ncomponents
+                    --stepsize $stepsize
+                    --nsubpartitions $nsubpartitions
+                    --saveiterates
+                    ```))  
+            end
         end
     end
-    @assert HDF5.ishdf5(inputfile)
+
+    # # substitute decoding power method
+    # kernel = "./src/pca/power.jl"
+    # for nwait in [1, 10, 11, 12]
+    #     for npartitions in [4, 6]
+    #         for ncomponents in [1, 100]
+    #             outputfile = joinpath(directory, "output_power_$(now()).h5")
+    #             mpiexec(cmd -> run(```
+    #                 $cmd -n $(nworkers+1) julia --project $kernel 
+    #                 $inputfile $outputfile
+    #                 --niterations $niterations
+    #                 --nwait $nwait
+    #                 --ncomponents $ncomponents
+    #                 --npartitions $npartitions
+    #                 --saveiterates
+    #                 ```))        
+    #         end
+    #     end
+    # end
 
     # run jobs
     # pfraction_all = [1.0, 0.9, 0.5, 0.1]
@@ -120,43 +201,43 @@ function benchmark_main(n=10000, m=5000, k=100, directory=joinpath("./simulation
     #     # end
     # end
 
-    niterations = 10
-    stepsize = 0.9
-    for nsubpartitions in [1] # [1, 2, 3, 4, 5]
-        nwait = 12
-        for stepsize in [0.1, 0.2, 0.5]
-            # for nwait in 1:nworkers
+    # niterations = 10
+    # stepsize = 0.9
+    # for nsubpartitions in [1] # [1, 2, 3, 4, 5]
+    #     nwait = 12
+    #     for stepsize in [0.1, 0.2, 0.5]
+    #         # for nwait in 1:nworkers
 
-            # variance-reduced sgd
-            # outputfile = joinpath(directory, "output_$(now()).h5")
-            # mpiexec(cmd -> run(```
-            #     $cmd -n $(nworkers+1) julia --project $kernel 
-            #     $inputfile $outputfile
-            #     --inputdataset $inputdataset
-            #     --nwait $nwait
-            #     --niterations $niterations
-            #     --ncomponents $ncomponents
-            #     --stepsize $stepsize
-            #     --nsubpartitions $nsubpartitions
-            #     --variancereduced
-            #     --saveiterates
-            #     ```))
+    #         # variance-reduced sgd
+    #         # outputfile = joinpath(directory, "output_$(now()).h5")
+    #         # mpiexec(cmd -> run(```
+    #         #     $cmd -n $(nworkers+1) julia --project $kernel 
+    #         #     $inputfile $outputfile
+    #         #     --inputdataset $inputdataset
+    #         #     --nwait $nwait
+    #         #     --niterations $niterations
+    #         #     --ncomponents $ncomponents
+    #         #     --stepsize $stepsize
+    #         #     --nsubpartitions $nsubpartitions
+    #         #     --variancereduced
+    #         #     --saveiterates
+    #         #     ```))
 
-            # sgd
-            outputfile = joinpath(directory, "output_$(now()).h5")
-            mpiexec(cmd -> run(```
-                $cmd -n $(nworkers+1) julia --project $kernel 
-                $inputfile $outputfile 
-                --inputdataset $inputdataset
-                --nwait $nwait
-                --niterations $niterations
-                --ncomponents $ncomponents
-                --stepsize $stepsize
-                --nsubpartitions $nsubpartitions
-                --saveiterates
-                ```))                
-        end
-    end
+    #         # sgd
+    #         outputfile = joinpath(directory, "output_$(now()).h5")
+    #         mpiexec(cmd -> run(```
+    #             $cmd -n $(nworkers+1) julia --project $kernel 
+    #             $inputfile $outputfile 
+    #             --inputdataset $inputdataset
+    #             --nwait $nwait
+    #             --niterations $niterations
+    #             --ncomponents $ncomponents
+    #             --stepsize $stepsize
+    #             --nsubpartitions $nsubpartitions
+    #             --saveiterates
+    #             ```))                
+    #     end
+    # end
 
     # # substitute decoding
     # kernel = "./src/pca/power.jl"
@@ -175,5 +256,31 @@ function benchmark_main(n=10000, m=5000, k=100, directory=joinpath("./simulation
     #     end
     # end
 
+    # ### compare convergence with and without Diggavi encoding
+    # # with Diggavi encoding
+    # outputfile = joinpath(directory, "output_$(now()).h5")
+    # mpiexec(cmd -> run(```
+    #     $cmd -n $(nworkers+1) julia --project $kernel 
+    #     $inputfile $outputfile
+    #     --inputdataset C
+    #     --nwait $(nworkers-1)
+    #     --niterations $niterations
+    #     --ncomponents $ncomponents
+    #     --variancereduced
+    #     --saveiterates
+    # ```))    
+    # # without Diggavi encoding    
+    # outputfile = joinpath(directory, "output_$(now()).h5")    
+    # mpiexec(cmd -> run(```
+    #     $cmd -n $(nworkers+1) julia --project $kernel 
+    #     $inputfile $outputfile
+    #     --inputdataset X
+    #     --nwait $(nworkers-1)
+    #     --niterations $niterations
+    #     --ncomponents $ncomponents
+    #     --variancereduced
+    #     --saveiterates
+    #     ```))
+    
     df = aggregate_benchmark_data(dir=directory, inputfile=inputfile, inputname="X", prefix="output", dfname="df.csv")
 end
