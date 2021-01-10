@@ -78,3 +78,16 @@ function projection_distance(X::SparseMatrixCSC, V)
     rv = sqrt(rv)
     rv /= length(V)
 end
+
+"""
+    matrix_from_tensor(T)
+
+Convert a tensor (i.e., a 3D matrix) to a matrix by flattening the first two dimensions. For 
+example, if the tensor corresponds to a vector of images, each image corresponds to a row of 
+the resulting matrix.
+"""
+function matrix_from_tensor(T)
+    d1, d2, n = size(T)
+    d = d1*d2
+    Matrix(reshape(T, d, n)')
+end
