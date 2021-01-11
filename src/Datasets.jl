@@ -22,3 +22,9 @@ end
 
 load_mnist_training() = load_dataset(60000, 784, MLDatasets.MNIST.traintensor, filename="MNIST_training.bin")
 load_mnist_testing() = load_dataset(10000, 784, MLDatasets.MNIST.testtensor, filename="MNIST_testing.bin")
+
+function load_genome_data(chr=20; directory="./1000genomes")
+    filename = joinpath(directory, "chr$(chr).txt")
+    df = DataFrame(CSV.File(filename))
+    sparse(df[:, 2], df[:, 1], true)
+end
