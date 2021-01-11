@@ -9,14 +9,10 @@ disk (in a file with the given filename) to speed up subsequent calls.
 """
 function load_dataset(n, d, f; filename::Union{Nothing,<:AbstractString})
     try # try to load from cache
-        return Matrix(reshape(
-            reinterpret(
-                FixedPointNumbers.Normed{UInt8, 8},
-                read(filename),
-            ), n, d))
+        return Matrix(reshape(reinterpret(UInt8, read(filename)), n, d))
     catch SystemError # load from MLDatasets (about 10x slower)
         T = f()
-        X = matrix_from_tensor(T)
+        X = UInt8.(255 .* matrix_from_tensor(T))
         if !isnothing(filename)
             write(filename, X) # cache on disk to speed up subsequent calls
         end
