@@ -2,14 +2,6 @@ using CodedComputing
 using Random, MPI, HDF5, LinearAlgebra, SparseArrays
 using Test
 
-@testset "Linalg.jl" begin
-    Random.seed!(123)
-    n, m = 100, 10
-    V = randn(n, m)
-    orthogonal!(V)
-    @test V'*V ≈ I
-end
-
 function test_load_pca_iterates(outputfile::AbstractString, name::AbstractString)
     @test HDF5.ishdf5(outputfile)
     h5open(outputfile, "r") do fid
@@ -21,6 +13,14 @@ function test_load_pca_iterates(outputfile::AbstractString, name::AbstractString
             return [fid[name][:, :]]
         end
     end
+end
+
+@testset "Linalg.jl" begin
+    Random.seed!(123)
+    n, m = 100, 10
+    V = randn(n, m)
+    orthogonal!(V)
+    @test V'*V ≈ I
 end
 
 @testset "pca.jl" begin
@@ -243,16 +243,34 @@ end
         ```))
     Vs = test_load_pca_iterates(outputfile, outputdataset)
     fs = [explained_variance(X, V) for V in Vs]
-    # println("SGD convergence: $fs")
     @test length(Vs) == niterations
     @test all((V)->size(V)==(m,k), Vs)    
     @test Vs[end]'*Vs[end] ≈ I
-    @test isapprox(fs[end], ev_exact, atol=1e-2)                
+    @test isapprox(fs[end], ev_exact, atol=1e-2)
+    
+    ### same as the previous, but with unbias enabled
+    outputfile = tempname()
+    mpiexec(cmd -> run(```$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile 
+        --ncomponents $k
+        --niterations $niterations 
+        --stepsize $stepsize        
+        --nsubpartitions $nsubpartitions
+        --nwait $(nworkers-1)
+        --variancereduced
+        --unbias
+        --saveiterates
+        ```))
+    Vs = test_load_pca_iterates(outputfile, outputdataset)
+    fs = [explained_variance(X, V) for V in Vs]
+    @test length(Vs) == niterations
+    @test all((V)->size(V)==(m,k), Vs)
+    @test Vs[end]'*Vs[end] ≈ I
+    @test isapprox(fs[end], ev_exact, atol=1e-2)
 
     ### sub-partitioning the data stored at each worker
     niterations = 100
-    stepsize = 1/2
     nsubpartitions = 2
+    stepsize = 1/2
     outputfile = tempname()
     mpiexec(cmd -> run(```
         $cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile 
@@ -266,11 +284,32 @@ end
         ```))
     Vs = test_load_pca_iterates(outputfile, outputdataset)
     fs = [explained_variance(X, V) for V in Vs]
-    # println("SGD convergence: $fs")
+    println("BiasSEGA: $fs")
     @test length(Vs) == niterations
     @test all((V)->size(V)==(m,k), Vs)    
     @test Vs[end]'*Vs[end] ≈ I
     @test isapprox(fs[end], ev_exact, atol=1e-2)                        
+
+    ### same as the previous, but with unbias enabled
+    outputfile = tempname()
+    stepsize = 1/20
+    mpiexec(cmd -> run(```$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile 
+        --ncomponents $k
+        --niterations $niterations 
+        --stepsize $stepsize        
+        --nsubpartitions $nsubpartitions
+        --nwait $(nworkers-1)
+        --variancereduced
+        --unbias
+        --saveiterates
+        ```))
+    Vs = test_load_pca_iterates(outputfile, outputdataset)
+    fs = [explained_variance(X, V) for V in Vs]
+    println("SEGA: $fs")
+    @test length(Vs) == niterations
+    @test all((V)->size(V)==(m,k), Vs)
+    @test Vs[end]'*Vs[end] ≈ I
+    @test isapprox(fs[end], ev_exact, atol=1e-2)    
 
     # with replication
     nworkers = 4

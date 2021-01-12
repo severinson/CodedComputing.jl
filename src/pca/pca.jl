@@ -24,11 +24,18 @@ function update_argsettings!(s::ArgParseSettings)
         "--variancereduced"
             help = "Compute a variance-reduced gradient in each iteration"
             action = :store_true
+        "--unbias"
+            help = "Remove bias from the stochastic gradient, at the expense of slower updates"
+            action = :store_true
     end
 end
 
 function update_parsed_args!(s::ArgParseSettings, parsed_args)
     parsed_args[:algorithm] = "pca.jl"
+    if parsed_args[:unbias] && !parsed_args[:variancereduced]
+        throw(ArgumentError("unbias must be used together with variancereduced"))
+    end
+    parsed_args
 end
 
 function problem_size(filename::String, dataset::String)
@@ -178,8 +185,7 @@ function update_gradient_sgd!(∇, recvbufs, epoch::Integer, repochs::Vector{<:I
 
     # record the epoch at which each partition was last updated
     if isnothing(state)
-        uepochs = Vector{Int}(undef, npartitions)
-        uepochs .= -1
+        uepochs = zeros(Int, npartitions)        
     else
         uepochs = state
     end
@@ -235,25 +241,24 @@ function update_gradient_sgd!(∇, recvbufs, epoch::Integer, repochs::Vector{<:I
     uepochs
 end
 
-function update_gradient_vr!(∇, recvbufs, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, nreplicas::Integer, pfraction::Real, nsubpartitions::Integer, kwargs...)
+function update_gradient_vr!(∇, recvbufs, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, unbias::Bool, nreplicas::Integer, pfraction::Real, nsubpartitions::Integer, kwargs...)
     length(recvbufs) == length(repochs) || throw(DimensionMismatch("recvbufs has dimension $(length(recvbufs)), but repochs has dimension $(length(repochs))"))
     0 < pfraction <= 1 || throw(DomainError(pfraction, "pfraction must be in (0, 1]"))
     0 < nreplicas || throw(DomainError(nreplicas, "nreplicas must be positive"))
     epoch <= 1 || !isnothing(state) || error("expected state to be initiated for epoch > 1")
     nworkers = length(recvbufs)
     mod(nworkers, nreplicas) == 0 || throw(ArgumentError("nworkers must be divisible by nreplicas"))
-    npartitions = div(nworkers, nreplicas) * nsubpartitions
+    npartitions = div(nworkers, nreplicas) * nsubpartitions    
 
     # record the epoch at which each partition was last updated
     # store the previously computed partial gradients
     if isnothing(state)
-        uepochs = Vector{Int}(undef, npartitions)
-        uepochs .= -1
+        uepochs = zeros(Int, npartitions)
         ∇s = [zeros(eltype(∇), size(∇)...) for _ in 1:npartitions]
-        sega = BiasSEGA(∇s)
+        sega = unbias ? SEGA(∇s) : BiasSEGA(∇s)
     else
         uepochs, sega = state
-    end
+    end    
 
     # iterate over the received partial gradients
     # cache any received partial gradient that is newer than what we currently store
@@ -285,15 +290,32 @@ function update_gradient_vr!(∇, recvbufs, epoch::Integer, repochs::Vector{<:In
         replica_index = ceil(Int, worker_index/nreplicas)
         partition_index = (replica_index-1)*nsubpartitions + subpartition_index
 
-        # don't do anything unless the received update is newer than the one we already have
+        # skip updates that contain no new information
         if repochs[worker_index] <= uepochs[partition_index]
             continue
         end
 
+        # is unbias is enabled, we can only use updates for the current iterate
+        # if unbias is disabled, we can use any iterates newer than what is currently stored
+        if unbias && repochs[worker_index] != epoch
+            continue
+        end
+
         # store the received partial gradient
-        ∇w = reshape(data_view(recvbufs[worker_index]), size(∇)...)              
-        project!(sega, ∇w, partition_index)
+        ∇w = reshape(data_view(recvbufs[worker_index]), size(∇)...)          
+        if unbias
+            @assert size(sega)[1] == npartitions
+            project!(sega, 1/npartitions, ∇w, partition_index)
+        else
+            project!(sega, ∇w, partition_index)
+        end
         uepochs[partition_index] = repochs[worker_index]
+    end
+
+    # removing bias entails combining two adjacent gradient estimates
+    # handled by the GradientSketching library  
+    if unbias
+        unbias!(sega)
     end
 
     # estimate the gradient by the sum of the cached partial gradients
