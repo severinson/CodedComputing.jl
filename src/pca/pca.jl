@@ -1,4 +1,4 @@
-using ArgParse, Random
+using ArgParse, Random, GradientSketching
 
 const METADATA_BYTES = 6
 const ELEMENT_TYPE = Float64
@@ -23,7 +23,7 @@ function update_argsettings!(s::ArgParseSettings)
             range_tester = (x) -> x > 0 
         "--variancereduced"
             help = "Compute a variance-reduced gradient in each iteration"
-            action = :store_true            
+            action = :store_true
     end
 end
 
@@ -250,8 +250,9 @@ function update_gradient_vr!(∇, recvbufs, epoch::Integer, repochs::Vector{<:In
         uepochs = Vector{Int}(undef, npartitions)
         uepochs .= -1
         ∇s = [zeros(eltype(∇), size(∇)...) for _ in 1:npartitions]
+        sega = BiasSEGA(∇s)
     else
-        uepochs, ∇s = state
+        uepochs, sega = state
     end
 
     # iterate over the received partial gradients
@@ -291,26 +292,17 @@ function update_gradient_vr!(∇, recvbufs, epoch::Integer, repochs::Vector{<:In
 
         # store the received partial gradient
         ∇w = reshape(data_view(recvbufs[worker_index]), size(∇)...)              
-        ∇s[partition_index] .= ∇w
+        project!(sega, ∇w, partition_index)
         uepochs[partition_index] = repochs[worker_index]
     end
 
     # estimate the gradient by the sum of the cached partial gradients
     ∇ .= 0
-    nresults = 0
-    for ∇i in ∇s
-        if !iszero(∇i)
-            ∇ .-= ∇i
-            nresults += 1
-        end
+    for ∇i in gradient(sega)
+        ∇ .-= ∇i
     end
 
-    # scale by the fraction of non-zero partial gradients
-    if nresults != npartitions
-        ∇ .*= npartitions / nresults
-    end
-
-    uepochs, ∇s
+    uepochs, sega
 end
 
 update_gradient!(args...; variancereduced::Bool, kwargs...) = variancereduced ? update_gradient_vr!(args...; kwargs...) : update_gradient_sgd!(args...; kwargs...)
