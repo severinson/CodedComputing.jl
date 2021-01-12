@@ -179,7 +179,7 @@ function coordinator_main()
     0 < nwait <= npartitions || throw(DomainError(nwait, "nwait must be in [1, npartitions]"))
 
     # worker pool and communication buffers
-    pool = StragglerPool(nworkers, epoch0=-1)
+    pool = StragglerPool(nworkers)
     V, recvbuf, sendbuf = coordinator_setup(nworkers; parsed_args...)
     mod(length(recvbuf), nworkers) == 0 || error("the length of recvbuf must be divisible by the number of workers")
     ∇ = similar(V)
@@ -222,10 +222,26 @@ function coordinator_main()
 
     # run 1 dummy iteration, where we wait for all workers, to trigger compilation
     # (this is only necessary when benchmarking)
-    epoch = 0
-    repochs = kmap!(copy(sendbuf), copy(recvbuf), copy(isendbuf), copy(irecvbuf), nworkers, epoch, pool, comm; tag=data_tag)
-    state = coordinator_task!(copy(V), copy(∇), copy(recvbufs), copy(sendbuf), epoch, repochs; parsed_args...)
-    state = coordinator_task!(copy(V), copy(∇), copy(recvbufs), copy(sendbuf), epoch, repochs; state, parsed_args...)
+    epoch = 1
+    repochs = kmap!(sendbuf, recvbuf, isendbuf, irecvbuf, nworkers, epoch, pool, comm; tag=data_tag)
+    state = coordinator_task!(V, ∇, recvbufs, sendbuf, epoch, repochs; parsed_args...)
+    epoch = 2
+    repochs .= epoch
+    state = coordinator_task!(V, ∇, recvbufs, sendbuf, epoch, repochs; state, parsed_args...)
+
+    # re-initialize to avoid the dummy run affecting convergence
+    # worker pool and communication buffers
+    pool = StragglerPool(nworkers)
+    V, recvbuf, sendbuf = coordinator_setup(nworkers; parsed_args...)
+    mod(length(recvbuf), nworkers) == 0 || error("the length of recvbuf must be divisible by the number of workers")
+    ∇ = similar(V)
+    ∇ .= 0
+    isendbuf = similar(sendbuf, nworkers*length(sendbuf))
+    irecvbuf = similar(recvbuf)
+
+    # views into recvbuf corresponding to each worker
+    n = div(length(recvbuf), nworkers)
+    recvbufs = [view(recvbuf, (i-1)*n+1:i*n) for i in 1:nworkers]    
 
     # manually call the GC now to avoid pauses later during execution
     # (this is only necessary when benchmarking)
@@ -235,7 +251,7 @@ function coordinator_main()
     # (this is only necessary when benchmarking)
     MPI.Barrier(comm)
 
-    # first iteration (initializes state)
+    # first (real) iteration (initializes state)
     epoch = 1
     ts_compute[epoch] = @elapsed begin
         repochs = kmap!(sendbuf, recvbuf, isendbuf, irecvbuf, fwait, epoch, pool, comm; tag=data_tag)
