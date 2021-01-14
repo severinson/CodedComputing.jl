@@ -80,8 +80,15 @@ function aggregate_benchmark_data(;dir="/shared/201124/3/", inputfile="/shared/2
     filenames = glob("$(prefix)*.h5", dir)    
     dfs = Vector{DataFrame}(undef, length(filenames))
     for (i, filename) in collect(enumerate(filenames))
-        dfs[i] = parse_output_file(filename, X)
-        dfs[i][:jobid] = i # store a unique ID for each file read
+        try
+            dfs[i] = parse_output_file(filename, X)
+            dfs[i][:jobid] = i # store a unique ID for each file read
+        catch e
+            printstyled(stderr,"ERROR: ", bold=true, color=:red)
+            printstyled(stderr,sprint(showerror,e), color=:light_red)
+            println(stderr)            
+            dfs[i] = DataFrame()
+        end
     end
 
     # concatenate, write to disk, and return
