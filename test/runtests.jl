@@ -248,7 +248,52 @@ end
     @test Vs[end]'*Vs[end] ≈ I
     @test isapprox(fs[end], ev_exact, atol=1e-2)
 
-    ### sub-partitioning the data stored at each worker
+    ### with a factor 2 replication
+    outputfile = tempname()
+    nsubpartitions = 1
+    nworkers = 4
+    nreplicas = 2
+    npartitions = div(nworkers, nreplicas)
+    mpiexec(cmd -> run(```$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile 
+        --ncomponents $k    
+        --niterations $niterations 
+        --stepsize $stepsize        
+        --nsubpartitions $nsubpartitions
+        --nwait $(npartitions-1)
+        --variancereduced
+        --saveiterates        
+        ```))
+    Vs = test_load_pca_iterates(outputfile, outputdataset)
+    fs = [explained_variance(X, V) for V in Vs]
+    @test length(Vs) == niterations
+    @test all((V)->size(V)==(m,k), Vs)    
+    @test Vs[end]'*Vs[end] ≈ I
+    @test isapprox(fs[end], ev_exact, atol=1e-2)  
+    
+    ### with a factor 3 replication
+    outputfile = tempname()
+    nsubpartitions = 1
+    nworkers = 3
+    nreplicas = 3
+    npartitions = div(nworkers, nreplicas)
+    mpiexec(cmd -> run(```$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile 
+        --ncomponents $k    
+        --niterations $niterations 
+        --stepsize $stepsize        
+        --nsubpartitions $nsubpartitions
+        --nwait $npartitions
+        --variancereduced
+        --saveiterates        
+        ```))
+    Vs = test_load_pca_iterates(outputfile, outputdataset)
+    fs = [explained_variance(X, V) for V in Vs]
+    @test length(Vs) == niterations
+    @test all((V)->size(V)==(m,k), Vs)    
+    @test Vs[end]'*Vs[end] ≈ I
+    @test isapprox(fs[end], ev_exact, atol=1e-2)      
+
+    ### sub-partitioning the data stored at each worker    
+    nworkers = 2
     niterations = 100
     nsubpartitions = 2
     stepsize = 1/2
