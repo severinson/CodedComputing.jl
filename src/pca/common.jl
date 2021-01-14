@@ -311,6 +311,14 @@ end
 if isroot
     coordinator_main()
 else
-    worker_main()
+    # try/catch to eliminate stacktrace
+    try
+        worker_main()
+    catch e
+        printstyled(stderr,"ERROR: ", bold=true, color=:red)
+        printstyled(stderr,sprint(showerror,e), color=:light_red)
+        println(stderr)
+    end
+    # worker_main()
 end
 MPI.Barrier(comm)
