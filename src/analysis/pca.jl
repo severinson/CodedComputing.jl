@@ -1,6 +1,47 @@
 using HDF5, DataFrames, CSV, Glob
 using CodedComputing
 
+function parse_output_file(jobid::Integer, fid, inputmatrix)
+    rv = DataFrame()    
+
+    row = Dict{String,Any}()
+    row["nrows"] = size(inputmatrix, 1)
+    row["ncolumns"] = size(inputmatrix, 2)
+    niterations = fid["parameters/niterations"][]
+    nworkers = fid["parameters/nworkers"][]            
+
+    # store a unique ID for each file read
+    row["jobid"] = jobid
+
+    # store all parameters the job was run with
+    if "parameters" in keys(fid) && typeof(fid["parameters"]) <: HDF5.Group
+        g = fid["parameters"]
+        for key in keys(g)
+            value = g[key][]
+            row[key] = value
+        end
+    end
+
+    # compute mse
+    mses = Vector{Union{Missing,Float64}}(missing, niterations)
+    if "iterates" in keys(fid)
+        iterates = [fid["iterates"][:, :, i] for i in 1:niterations]        
+        Threads.@threads for i in 1:niterations
+            mses[i] = explained_variance(inputmatrix, iterates[i])
+        end
+    end
+
+    # add benchmark data
+    for i in 1:niterations
+        row["iteration"] = i
+        row["mse"] = mses[i]
+        row["t_compute"] = fid["benchmark/t_compute"][i]
+        row["t_update"] = fid["benchmark/t_update"][i]
+        push!(rv, row, cols=:union)
+    end
+    rv
+end
+
 """
 
 Read all output files from a given directory and write summary statistics (e.g., iteration time 
@@ -8,7 +49,7 @@ and convergence) to a DataFrame.
 """
 function aggregate_benchmark_data(;dir="/shared/201124/3/", inputfile="/shared/201124/ratings.h5", inputname="X", prefix="output", dfname="df.csv")
 
-    # read input matrix to measure convergence
+    # read input matrix (used to measure convergence)
     iscsc = false
     h5open(inputfile) do fid
         iscsc, _ = isvalidh5csc(fid, inputname)
@@ -19,71 +60,23 @@ function aggregate_benchmark_data(;dir="/shared/201124/3/", inputfile="/shared/2
         X = h5read(inputfile, inputname)
     end
 
-    responded_all = zeros(Bool, 0, 0)
-    jobid = 1    
-
     # process output files
-    df = DataFrame()    
-    for filename in glob("$(prefix)*.h5", dir)
-        println(filename)
+    filenames = glob("$(prefix)*.h5", dir)    
+    dfs = Vector{DataFrame}(undef, length(filenames))
+    for (i, filename) in collect(enumerate(filenames))
+
+        println("parsing $filename")
         if !HDF5.ishdf5(filename)
-            println("skipping (not an HDF5 file)")
-            continue
+            println("skipping (not a HDF5 file): $filename")
+            return rv
         end
-        h5open(filename) do fid
-            row = Dict{String,Any}()
-            row["nrows"] = size(X, 1)
-            row["ncolumns"] = size(X, 2)
-            niterations = fid["parameters/niterations"][]
-            nworkers = fid["parameters/nworkers"][]            
-
-            # store a unique ID for each file read
-            row["jobid"] = jobid
-            jobid += 1
-
-            # store all parameters the job was run with
-            if "parameters" in keys(fid) && typeof(fid["parameters"]) <: HDF5.Group
-                g = fid["parameters"]
-                for key in keys(g)
-                    value = g[key][]
-                    row[key] = value
-                end
-            end
-
-            # compute mse
-            if "iterates" in keys(fid)
-                mses = [explained_variance(X, fid["iterates"][:, :, i]) for i in 1:niterations]
-            else
-                mses = repeat([missing], niterations)
-            end
-
-            # add benchmark data
-            for i in 1:niterations
-                row["iteration"] = i
-                row["mse"] = mses[i]
-                row["t_compute"] = fid["benchmark/t_compute"][i]
-                row["t_update"] = fid["benchmark/t_update"][i]
-                push!(df, row, cols=:union)                
-            end            
-
-            # record which workers responded in each iteration
-            responded_all = vcat(responded_all, zeros(Bool, niterations, size(responded_all, 2)))
-            if "responded" in keys(fid["benchmark"])
-                if nworkers > size(responded_all, 2)
-                    responded_all = hcat(
-                        responded_all, 
-                        zeros(Bool, size(responded_all, 1), nworkers-size(responded_all, 2))
-                        )
-                end                
-                responded_all[end-niterations+1:end, 1:nworkers] .= fid["benchmark/responded"][:, :]'
-            end
+        h5open(filename) do fid        
+            dfs[i] = parse_output_file(i, fid, X)
         end
     end
 
-    # insert a column for each worker indicating if that worker responded
-    for i in 1:size(responded_all, 2)
-        df["worker_$(i)_responded"] = responded_all[:, i]
-    end
+    # concatenate, write to disk, and return
+    df = vcat(dfs..., cols=:union)
     CSV.write(joinpath(dir, dfname), df)
     df
 end
