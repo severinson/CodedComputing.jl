@@ -247,25 +247,6 @@ end
     @test all((V)->size(V)==(m,k), Vs)    
     @test Vs[end]'*Vs[end] ≈ I
     @test isapprox(fs[end], ev_exact, atol=1e-2)
-    
-    ### same as the previous, but with unbias enabled
-    outputfile = tempname()
-    mpiexec(cmd -> run(```$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile 
-        --ncomponents $k
-        --niterations $niterations 
-        --stepsize $stepsize        
-        --nsubpartitions $nsubpartitions
-        --nwait $(nworkers-1)
-        --variancereduced
-        --unbias
-        --saveiterates
-        ```))
-    Vs = test_load_pca_iterates(outputfile, outputdataset)
-    fs = [explained_variance(X, V) for V in Vs]
-    @test length(Vs) == niterations
-    @test all((V)->size(V)==(m,k), Vs)
-    @test Vs[end]'*Vs[end] ≈ I
-    @test isapprox(fs[end], ev_exact, atol=1e-2)
 
     ### sub-partitioning the data stored at each worker
     niterations = 100
@@ -284,32 +265,11 @@ end
         ```))
     Vs = test_load_pca_iterates(outputfile, outputdataset)
     fs = [explained_variance(X, V) for V in Vs]
-    println("BiasSEGA: $fs")
+    # println("BiasSEGA: $fs")
     @test length(Vs) == niterations
     @test all((V)->size(V)==(m,k), Vs)    
     @test Vs[end]'*Vs[end] ≈ I
-    @test isapprox(fs[end], ev_exact, atol=1e-2)                        
-
-    ### same as the previous, but with unbias enabled
-    outputfile = tempname()
-    stepsize = 1/20
-    mpiexec(cmd -> run(```$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile 
-        --ncomponents $k
-        --niterations $niterations 
-        --stepsize $stepsize        
-        --nsubpartitions $nsubpartitions
-        --nwait $(nworkers-1)
-        --variancereduced
-        --unbias
-        --saveiterates
-        ```))
-    Vs = test_load_pca_iterates(outputfile, outputdataset)
-    fs = [explained_variance(X, V) for V in Vs]
-    println("SEGA: $fs")
-    @test length(Vs) == niterations
-    @test all((V)->size(V)==(m,k), Vs)
-    @test Vs[end]'*Vs[end] ≈ I
-    @test isapprox(fs[end], ev_exact, atol=1e-2)    
+    @test isapprox(fs[end], ev_exact, atol=1e-2) 
 
     # with replication
     nworkers = 4
@@ -332,7 +292,6 @@ end
         ```))
     Vs = test_load_pca_iterates(outputfile, outputdataset)
     fs = [explained_variance(X, V) for V in Vs]
-    # println("SGD convergence: $fs")
     @test length(Vs) == niterations
     @test all((V)->size(V)==(m,k), Vs)    
     @test Vs[end]'*Vs[end] ≈ I
