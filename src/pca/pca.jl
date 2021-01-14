@@ -300,6 +300,13 @@ function update_gradient_vr!(∇, recvbufs, epoch::Integer, repochs::Vector{<:In
         ∇ .-= ∇i
     end
 
+    # scale the gradient by the number of non-zero partial gradients,
+    # important for the first few iterations when some entries of ∇s may be zero
+    s = npartitions / (npartitions - sum(iszero, uepochs))
+    if !isone(s) && !isinf(s)
+        ∇ .*= s
+    end
+
     uepochs, ∇s
 end
 
