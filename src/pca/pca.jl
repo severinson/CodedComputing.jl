@@ -210,12 +210,12 @@ function update_gradient_sgd!(∇, recvbufs, epoch::Integer, repochs::Vector{<:I
             @error "unexpected rank for the $(worker_index)-th worker in epoch $epoch: $worker_rank"
             continue
         end
-        if subpartition_index > nsubpartitions
+        if !(0 < subpartition_index <= nsubpartitions)
             @error "received incorrect sub-partition index from the $(worker_index)-th worker in epoch $epoch: $subpartition_index "
             continue
         end
         replica_index = ceil(Int, worker_index/nreplicas)
-        partition_index = (replica_index-1)*nreplicas + subpartition_index
+        partition_index = (replica_index-1)*nsubpartitions + subpartition_index
 
         # don't do anything if we didn't receive from this worker this epoch,
         # or if we've already updated that partition this epoch
@@ -276,7 +276,7 @@ function update_gradient_vr!(∇, recvbufs, epoch::Integer, repochs::Vector{<:In
             @error "unexpected rank for the $(worker_index)-th worker in epoch $epoch: $worker_rank"
             continue
         end
-        if subpartition_index > nsubpartitions
+        if !(0 < subpartition_index <= nsubpartitions)
             @error "received incorrect sub-partition index from the $(worker_index)-th worker in epoch $epoch: $subpartition_index "
             continue
         end
