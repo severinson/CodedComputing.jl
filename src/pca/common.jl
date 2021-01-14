@@ -205,12 +205,15 @@ function coordinator_main()
     ts_compute = zeros(niterations)
     ts_update = zeros(niterations)
 
+    # function called inside kmap! whenever a result is received from a worker
+    # to determine if a sufficient number of workers have returned
+    # kmap! returns once fwait returns true
     function fwait(epoch, repochs)
         length(repochs) == nworkers || throw(DomainError(nworkers, "repochs must have length nworkers"))
-        rreplicas = 0
+        rreplicas = 0 # number of received replicas
         for partition in 1:npartitions
             for replica in 1:nreplicas
-                i = (partition-1)*nreplicas + replica
+                i = (partition-1)*nreplicas + replica # worker index
                 if repochs[i] == epoch
                     rreplicas += 1
                     break
