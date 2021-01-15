@@ -67,6 +67,9 @@ function parse_commandline(isroot::Bool)
             help = "Number of replicas to wait for in each iteration (defaults to all replicas)"
             arg_type = Int
             range_tester = (x) -> x >= 1
+        "--kickstart"
+            help = "Wait for all partitions in the first iteration"
+            action = :store_true
         "--inputdataset"
             help = "Input dataset name"
             default = "X"
@@ -254,6 +257,10 @@ function coordinator_main()
     # (this is only necessary when benchmarking)
     MPI.Barrier(comm)
 
+    # if kickstart is enabled, wait for all partitions in the first iteration
+    nwait_prev = nwait
+    nwait = parsed_args[:kickstart] ? npartitions : nwait
+
     # first (real) iteration (initializes state)
     epoch = 1
     ts_compute[epoch] = @elapsed begin
@@ -266,6 +273,9 @@ function coordinator_main()
     if saveiterates
         iterates[:, :, epoch] .= V
     end
+
+    # reset nwait (we changed it above if kickstart was enabled)
+    nwait = nwait_prev
 
     # remaining iterations
     for epoch in 2:niterations

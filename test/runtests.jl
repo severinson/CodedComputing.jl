@@ -268,7 +268,26 @@ end
     @test length(Vs) == niterations
     @test all((V)->size(V)==(m,k), Vs)    
     @test Vs[end]'*Vs[end] ≈ I
-    @test isapprox(fs[end], ev_exact, atol=1e-2)  
+    @test isapprox(fs[end], ev_exact, atol=1e-2)
+
+    ### same as the previous, but with kickstart enabled
+    outputfile = tempname()    
+    mpiexec(cmd -> run(```$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile 
+        --ncomponents $k    
+        --niterations $niterations 
+        --stepsize $stepsize        
+        --nsubpartitions $nsubpartitions
+        --nwait $(npartitions-1)
+        --variancereduced
+        --kickstart
+        --saveiterates        
+        ```))
+    Vs = test_load_pca_iterates(outputfile, outputdataset)
+    fs = [explained_variance(X, V) for V in Vs]
+    @test length(Vs) == niterations
+    @test all((V)->size(V)==(m,k), Vs)    
+    @test Vs[end]'*Vs[end] ≈ I
+    @test isapprox(fs[end], ev_exact, atol=1e-2)    
     
     ### with a factor 3 replication
     outputfile = tempname()
