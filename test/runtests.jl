@@ -45,7 +45,7 @@ end
     # correct solution (computed via LinearAlgebra.svd)
     V_exact = pca(X, k)
     ev_exact = explained_variance(X, V_exact)
-    println("Exact explained variance: $ev_exact")
+    println("Exact explained variance: $ev_exact")    
 
     ### exact
     outputfile = tempname()
@@ -103,7 +103,7 @@ end
     @test length(Vs) == niterations
     @test all((V)->size(V)==(m,k), Vs)    
     @test Vs[end]'*Vs[end] ≈ I
-    @test isapprox(fs[end], ev_exact, atol=1e-2)
+    @test isapprox(fs[end], ev_exact, atol=1e-2)  
 
     ### ignoring the slowest worker
     nworkers = 2
@@ -119,8 +119,29 @@ end
     fs = [explained_variance(X, V) for V in Vs]
     # println("SGD convergence: $fs")
     @test length(Vs) == niterations
+    @test all((V)->size(V)==(m,k), Vs)
+    @test Vs[end]'*Vs[end] ≈ I
+    
+    ### 12 workers, a factor 3 replication
+    nworkers = 12
+    nreplicas = 3
+    nwait = div(nworkers, nreplicas)
+    outputfile = tempname()
+    mpiexec(cmd -> run(```
+        $cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile 
+        --niterations $niterations 
+        --ncomponents $k
+        --nreplicas $nreplicas
+        --nwait $nwait
+        --saveiterates
+        ```))
+    Vs = test_load_pca_iterates(outputfile, outputdataset)
+    fs = [explained_variance(X, V) for V in Vs]
+    # println("SGD (exact) convergence: $fs")
+    @test length(Vs) == niterations
     @test all((V)->size(V)==(m,k), Vs)    
     @test Vs[end]'*Vs[end] ≈ I
+    @test isapprox(fs[end], ev_exact, atol=1e-2)      
 
     ## using mini-batches
     outputfile = tempname()
