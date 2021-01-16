@@ -112,12 +112,16 @@ function worker_loop(localdata, recvbuf, sendbuf; kwargs...)
     crreq = MPI.Irecv!(zeros(1), root, control_tag, comm)
 
     # first iteration (initializes state)
+    # the first iteration is a dummy iteration to trigger compilation
+    # (only necessary when benchmarking)
     rreq = MPI.Irecv!(recvbuf, root, data_tag, comm)
     index, _ = MPI.Waitany!([crreq, rreq])
     if index == 1 # exit message on control channel
         return
-    end            
+    end
+    # trigger compilation for both version of worker_task!
     state = worker_task!(recvbuf, sendbuf, localdata; kwargs...)
+    state = worker_task!(recvbuf, sendbuf, localdata; state, kwargs...)
     MPI.Isend(sendbuf, root, data_tag, comm)
 
     # manually call the GC now to avoid pauses later during execution
