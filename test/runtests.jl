@@ -144,6 +144,7 @@ end
     @test isapprox(fs[end], ev_exact, atol=1e-2)      
 
     ## using mini-batches
+    nworkers = 2
     outputfile = tempname()
     pfraction = 0.9
     stepsize = pfraction
