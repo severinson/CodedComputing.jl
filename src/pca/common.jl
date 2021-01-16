@@ -230,24 +230,15 @@ function coordinator_main()
     # (this is only necessary when benchmarking)
     epoch = 1
     repochs = kmap!(sendbuf, recvbuf, isendbuf, irecvbuf, nworkers, epoch, pool, comm; tag=data_tag)
-    state = coordinator_task!(V, ∇, recvbufs, sendbuf, epoch, repochs; parsed_args...)
+    state = coordinator_task!(deepcopy(V), deepcopy(∇), recvbufs, deepcopy(sendbuf), epoch, repochs; parsed_args...)
+    GC.gc() # reduce the probability that we run out of memory due to making too many copies
     epoch = 2
     repochs .= epoch
-    state = coordinator_task!(V, ∇, recvbufs, sendbuf, epoch, repochs; state, parsed_args...)
+    state = coordinator_task!(deepcopy(V), deepcopy(∇), recvbufs, deepcopy(sendbuf), epoch, repochs; state, parsed_args...) 
+    state = nothing # so that we can release the memory
 
-    # re-initialize to avoid the dummy run affecting convergence
-    # worker pool and communication buffers
+    # create a new pool to reset the epochs
     pool = StragglerPool(nworkers)
-    V, recvbuf, sendbuf = coordinator_setup(nworkers; parsed_args...)
-    mod(length(recvbuf), nworkers) == 0 || error("the length of recvbuf must be divisible by the number of workers")
-    ∇ = similar(V)
-    ∇ .= 0
-    isendbuf = similar(sendbuf, nworkers*length(sendbuf))
-    irecvbuf = similar(recvbuf)
-
-    # views into recvbuf corresponding to each worker
-    n = div(length(recvbuf), nworkers)
-    recvbufs = [view(recvbuf, (i-1)*n+1:i*n) for i in 1:nworkers]    
 
     # manually call the GC now to avoid pauses later during execution
     # (this is only necessary when benchmarking)
