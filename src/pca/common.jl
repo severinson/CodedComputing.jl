@@ -206,7 +206,7 @@ function coordinator_main()
     end
 
     # store which workers responded in each iteration
-    responded = zeros(Bool, nworkers, niterations)
+    responded = zeros(Int, nworkers, niterations)
 
     # to record iteration time
     ts_compute = zeros(niterations)
@@ -261,7 +261,7 @@ function coordinator_main()
     ts_compute[epoch] = @elapsed begin
         repochs = kmap!(sendbuf, recvbuf, isendbuf, irecvbuf, fwait, epoch, pool, comm; tag=data_tag)
     end
-    responded[:, epoch] .= repochs .== epoch
+    responded[:, epoch] .= repochs
     ts_update[epoch] = @elapsed begin
         state = coordinator_task!(V, ∇, recvbufs, sendbuf, epoch, repochs; parsed_args...)    
     end
@@ -277,7 +277,7 @@ function coordinator_main()
         ts_compute[epoch] = @elapsed begin
             repochs = kmap!(sendbuf, recvbuf, isendbuf, irecvbuf, fwait, epoch, pool, comm; tag=data_tag)
         end
-        responded[:, epoch] .= repochs .== epoch
+        responded[:, epoch] .= repochs
         ts_update[epoch] = @elapsed begin
             state = coordinator_task!(V, ∇, recvbufs, sendbuf, epoch, repochs; state, parsed_args...)    
         end
