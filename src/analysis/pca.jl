@@ -97,9 +97,11 @@ function aggregate_benchmark_data(;dir="/shared/201124/3/", inputfile="/shared/2
         end
     end
 
-    # concatenate, write to disk, and return
-    df = vcat(dfs..., cols=:union)
-    CSV.write(joinpath(dir, dfname), df)
+    # read all dfs from disk (so that we get any files without an associated .h5 file),
+    # write the aggregated df to disk, and return
+    df = vcat([DataFrame(CSV.File(filename)) for filename in glob("$(prefix)*.csv", dir)]..., cols=:union)
+    CSV.write(joinpath(dir, dfname), df)    
+
     df
 end
 
