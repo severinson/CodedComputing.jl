@@ -48,6 +48,12 @@ function parse_output_file(filename::AbstractString, inputmatrix)
             row["mse"] = mses[i]
             row["t_compute"] = fid["benchmark/t_compute"][i]
             row["t_update"] = fid["benchmark/t_update"][i]
+
+            # add worker response epochs
+            for j in 1:nworkers
+                row["repoch_worker_$j"] = fid["benchmark/responded"][j, i]
+            end
+
             push!(rv, row, cols=:union)
         end
     end    
