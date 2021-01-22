@@ -37,9 +37,19 @@ function parse_output_file(filename::AbstractString, inputmatrix)
         # compute mse
         mses = Vector{Union{Missing,Float64}}(missing, niterations)
         if "iterates" in keys(fid)
-            iterates = [fid["iterates"][:, :, i] for i in 1:niterations]        
+            l = ReentrantLock() # HDF5 read isn't thread-safe
+            cache = zeros(eltype(fid["iterates"]), size(fid["iterates"], 1), size(fid["iterates"], 2), min(Threads.nthreads(), niterations))
             Threads.@threads for i in 1:niterations
-                mses[i] = explained_variance(inputmatrix, iterates[i])
+                j = Threads.threadid()                
+                begin
+                    lock(l)
+                    try
+                        cache[:, :, j] .= fid["iterates"][:, :, i]
+                    finally
+                        unlock(l)
+                    end
+                end
+                mses[i] = explained_variance(inputmatrix, view(cache, :, :, j))
             end
         end
 
