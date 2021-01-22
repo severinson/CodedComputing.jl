@@ -106,6 +106,7 @@ function aggregate_benchmark_data(;dir="/shared/201124/3/", inputfile="/shared/2
             println(stderr)            
             dfs[i] = DataFrame()
         end
+        GC.gc()
     end
 
     # read all dfs from disk (so that we get any files without an associated .h5 file),
