@@ -1,8 +1,9 @@
-using HDF5, DataFrames, CSV, Glob
+using HDF5, DataFrames, CSV, Glob, Dates
 using CodedComputing
 
 function parse_output_file(filename::AbstractString, inputmatrix)    
-    println("parsing $filename")    
+    t = now()
+    println("[$(Dates.format(now(), "HH:MM"))] parsing $filename")
 
     # return a memoized result if one exists
     df_filename = filename * ".csv"
