@@ -1,4 +1,4 @@
-using HDF5, DataFrames, CSV, Glob, Dates
+using HDF5, DataFrames, CSV, Glob, Dates, Random
 using CodedComputing
 
 """
@@ -124,4 +124,11 @@ function parse_benchmark_files(;dir::AbstractString, inputfile::AbstractString, 
         GC.gc()
     end
     aggregate_benchmark_dataframes(;dir, prefix, dfname)
+end
+
+# if run as a script
+if abspath(PROGRAM_FILE) == @__FILE__
+    dir = ARGS[1]
+    inputfile = ARGS[2]
+    parse_benchmark_files(;dir, inputfile)
 end
