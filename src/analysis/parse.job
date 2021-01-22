@@ -1,0 +1,18 @@
+#!/bin/sh -l
+# Run 
+#SBATCH --job-name=parse.jl
+#SBATCH --output=parse.out
+#SBATCH --nodes=10
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=4
+#SBATCH --time=600:00
+
+export JULIA_DEPOT_PATH="/shared/.julia/"
+date
+kernel=/shared/.julia/dev/CodedComputing/src/analysis/pca.jl
+
+# 1000 genomes
+input_file=/shared/.julia/dev/CodedComputing/simulations/1000genomes/inputfile.h5
+output_directory=/shared/.julia/dev/CodedComputing/simulations/1000genomes/210114/
+
+/opt/amazon/openmpi/bin/mpirun -n "$SLURM_NTASKS" julia --project --threads 4 ${kernel} ${output_directory} ${input_file}
