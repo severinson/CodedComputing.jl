@@ -38,7 +38,7 @@ function df_from_output_file(filename::AbstractString, inputmatrix)
             end
         end
 
-        # compute mse
+        # compute mse using multiple threads (it's by far the most time-consuming part of the parsing)
         mses = Vector{Union{Missing,Float64}}(missing, niterations)
         if "iterates" in keys(fid)
             l = ReentrantLock() # HDF5 read isn't thread-safe
@@ -81,10 +81,23 @@ end
 
 """
 
-Read all output files from a given directory and write summary statistics (e.g., iteration time 
-and convergence) to a DataFrame.
+Aggregate all DataFrames in `dir` into a single DataFrame.
 """
-function aggregate_benchmark_data(;dir="/shared/201124/3/", inputfile="/shared/201124/ratings.h5", inputname="X", prefix="output", dfname="df.csv")
+function aggregate_benchmark_dataframes(;dir::AbstractString, prefix::AbstractString="output", dfname::AbstractString="df.csv")
+    dfs = [DataFrame(CSV.File(filename)) for filename in glob("$(prefix)*.csv", dir)]
+    for (i, df) in enumerate(dfs)
+        df[:jobid] = i # store a unique ID for each file read
+    end
+    df = vcat(dfs..., cols=:union)
+    CSV.write(joinpath(dir, dfname), df)
+    df
+end
+
+"""
+
+Read all output files from `dir` and write summary statistics (e.g., iteration time and convergence) to DataFrames.
+"""
+function parse_benchmark_files(;dir::AbstractString, inputfile::AbstractString, inputname="X", prefix="output", dfname="df.csv")
 
     # read input matrix (used to measure convergence)
     iscsc = false
@@ -102,7 +115,7 @@ function aggregate_benchmark_data(;dir="/shared/201124/3/", inputfile="/shared/2
     shuffle!(filenames) # randomize the order to minimize overlap when using multiple concurrent processes
     for filename in filenames
         try
-            df_from_output_file(filename, X)
+            df_from_output_file(filename, X) # the result is memoized on disk
         catch e
             printstyled(stderr,"ERROR: ", bold=true, color=:red)
             printstyled(stderr,sprint(showerror,e), color=:light_red)
@@ -110,15 +123,5 @@ function aggregate_benchmark_data(;dir="/shared/201124/3/", inputfile="/shared/2
         end
         GC.gc()
     end
-
-    # read all dfs from disk (so that we get any files without an associated .h5 file),
-    # write the aggregated df to disk, and return
-    dfs = [DataFrame(CSV.File(filename)) for filename in glob("$(prefix)*.csv", dir)]
-    for (i, df) in enumerate(dfs)
-        df[:jobid] = i # store a unique ID for each file read
-    end
-    df = vcat(dfs..., cols=:union)
-    CSV.write(joinpath(dir, dfname), df)
-
-    df
+    aggregate_benchmark_dataframes(;dir, prefix, dfname)
 end
