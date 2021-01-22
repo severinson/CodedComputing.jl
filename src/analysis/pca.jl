@@ -1,7 +1,11 @@
 using HDF5, DataFrames, CSV, Glob, Dates
 using CodedComputing
 
-function parse_output_file(filename::AbstractString, inputmatrix)    
+"""
+
+Parse an output file and record everything in a DataFrame.
+"""
+function df_from_output_file(filename::AbstractString, inputmatrix)    
     t = now()
     println("[$(Dates.format(now(), "HH:MM"))] parsing $filename")
 
@@ -98,7 +102,7 @@ function aggregate_benchmark_data(;dir="/shared/201124/3/", inputfile="/shared/2
     dfs = Vector{DataFrame}(undef, length(filenames))
     for (i, filename) in collect(enumerate(filenames))
         try
-            dfs[i] = parse_output_file(filename, X)
+            dfs[i] = df_from_output_file(filename, X)
             dfs[i][:jobid] = i # store a unique ID for each file read
         catch e
             printstyled(stderr,"ERROR: ", bold=true, color=:red)
