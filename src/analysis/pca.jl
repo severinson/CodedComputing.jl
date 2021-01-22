@@ -98,17 +98,15 @@ function aggregate_benchmark_data(;dir="/shared/201124/3/", inputfile="/shared/2
     end
 
     # process output files
-    filenames = glob("$(prefix)*.h5", dir)    
-    dfs = Vector{DataFrame}(undef, length(filenames))
-    for (i, filename) in collect(enumerate(filenames))
+    filenames = glob("$(prefix)*.h5", dir)
+    shuffle!(filenames) # randomize the order to minimize overlap when using multiple concurrent processes
+    for filename in filenames
         try
-            dfs[i] = df_from_output_file(filename, X)
-            dfs[i][:jobid] = i # store a unique ID for each file read
+            df_from_output_file(filename, X)
         catch e
             printstyled(stderr,"ERROR: ", bold=true, color=:red)
             printstyled(stderr,sprint(showerror,e), color=:light_red)
             println(stderr)            
-            dfs[i] = DataFrame()
         end
         GC.gc()
     end
