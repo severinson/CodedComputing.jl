@@ -24,6 +24,9 @@ function update_argsettings!(s::ArgParseSettings)
         "--variancereduced"
             help = "Compute a variance-reduced gradient in each iteration"
             action = :store_true
+        "--nostale"
+            help = "If set, do not store stale gradients (to conform with SAG)"
+            action = :store_true
     end
 end
 
@@ -235,7 +238,7 @@ function update_gradient_sgd!(∇, recvbufs, epoch::Integer, repochs::Vector{<:I
     uepochs
 end
 
-function update_gradient_vr!(∇, recvbufs, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, nreplicas::Integer, pfraction::Real, nsubpartitions::Integer, kwargs...)
+function update_gradient_vr!(∇, recvbufs, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, nostale::Bool, nreplicas::Integer, pfraction::Real, nsubpartitions::Integer, kwargs...)
     length(recvbufs) == length(repochs) || throw(DimensionMismatch("recvbufs has dimension $(length(recvbufs)), but repochs has dimension $(length(repochs))"))
     0 < pfraction <= 1 || throw(DomainError(pfraction, "pfraction must be in (0, 1]"))
     0 < nreplicas || throw(DomainError(nreplicas, "nreplicas must be positive"))
@@ -284,6 +287,11 @@ function update_gradient_vr!(∇, recvbufs, epoch::Integer, repochs::Vector{<:In
         end
         replica_index = ceil(Int, worker_index/nreplicas)
         partition_index = (replica_index-1)*nsubpartitions + subpartition_index
+
+        # discard stale gradients if the nostale option is set
+        if nostale && repochs[worker_index] != epoch
+            continue
+        end
 
         # skip updates that contain no new information
         if repochs[worker_index] <= uepochs[partition_index]

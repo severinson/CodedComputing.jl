@@ -1,8 +1,13 @@
-using HDF5, DataFrames, CSV, Glob
+using HDF5, DataFrames, CSV, Glob, Dates, Random
 using CodedComputing
 
-function parse_output_file(filename::AbstractString, inputmatrix)    
-    println("parsing $filename")    
+"""
+
+Parse an output file and record everything in a DataFrame.
+"""
+function df_from_output_file(filename::AbstractString, inputmatrix)    
+    t = now()
+    println("[$(Dates.format(now(), "HH:MM"))] parsing $filename")
 
     # return a memoized result if one exists
     df_filename = filename * ".csv"
@@ -33,12 +38,22 @@ function parse_output_file(filename::AbstractString, inputmatrix)
             end
         end
 
-        # compute mse
+        # compute mse using multiple threads (it's by far the most time-consuming part of the parsing)
         mses = Vector{Union{Missing,Float64}}(missing, niterations)
         if "iterates" in keys(fid)
-            iterates = [fid["iterates"][:, :, i] for i in 1:niterations]        
+            l = ReentrantLock() # HDF5 read isn't thread-safe
+            cache = zeros(eltype(fid["iterates"]), size(fid["iterates"], 1), size(fid["iterates"], 2), min(Threads.nthreads(), niterations))
             Threads.@threads for i in 1:niterations
-                mses[i] = explained_variance(inputmatrix, iterates[i])
+                j = Threads.threadid()                
+                begin
+                    lock(l)
+                    try
+                        cache[:, :, j] .= fid["iterates"][:, :, i]
+                    finally
+                        unlock(l)
+                    end
+                end
+                mses[i] = explained_variance(inputmatrix, view(cache, :, :, j))
             end
         end
 
@@ -48,6 +63,12 @@ function parse_output_file(filename::AbstractString, inputmatrix)
             row["mse"] = mses[i]
             row["t_compute"] = fid["benchmark/t_compute"][i]
             row["t_update"] = fid["benchmark/t_update"][i]
+
+            # add worker response epochs
+            for j in 1:nworkers
+                row["repoch_worker_$j"] = fid["benchmark/responded"][j, i]
+            end
+
             push!(rv, row, cols=:union)
         end
     end    
@@ -60,10 +81,23 @@ end
 
 """
 
-Read all output files from a given directory and write summary statistics (e.g., iteration time 
-and convergence) to a DataFrame.
+Aggregate all DataFrames in `dir` into a single DataFrame.
 """
-function aggregate_benchmark_data(;dir="/shared/201124/3/", inputfile="/shared/201124/ratings.h5", inputname="X", prefix="output", dfname="df.csv")
+function aggregate_benchmark_dataframes(;dir::AbstractString, prefix::AbstractString="output", dfname::AbstractString="df.csv")
+    dfs = [DataFrame(CSV.File(filename)) for filename in glob("$(prefix)*.csv", dir)]
+    for (i, df) in enumerate(dfs)
+        df[:jobid] = i # store a unique ID for each file read
+    end
+    df = vcat(dfs..., cols=:union)
+    CSV.write(joinpath(dir, dfname), df)
+    df
+end
+
+"""
+
+Read all output files from `dir` and write summary statistics (e.g., iteration time and convergence) to DataFrames.
+"""
+function parse_benchmark_files(;dir::AbstractString, inputfile::AbstractString, inputname="X", prefix="output", dfname="df.csv")
 
     # read input matrix (used to measure convergence)
     iscsc = false
@@ -77,78 +111,24 @@ function aggregate_benchmark_data(;dir="/shared/201124/3/", inputfile="/shared/2
     end
 
     # process output files
-    filenames = glob("$(prefix)*.h5", dir)    
-    dfs = Vector{DataFrame}(undef, length(filenames))
-    for (i, filename) in collect(enumerate(filenames))
+    filenames = glob("$(prefix)*.h5", dir)
+    shuffle!(filenames) # randomize the order to minimize overlap when using multiple concurrent processes
+    for filename in filenames
         try
-            dfs[i] = parse_output_file(filename, X)
-            dfs[i][:jobid] = i # store a unique ID for each file read
+            df_from_output_file(filename, X) # the result is memoized on disk
         catch e
             printstyled(stderr,"ERROR: ", bold=true, color=:red)
             printstyled(stderr,sprint(showerror,e), color=:light_red)
             println(stderr)            
-            dfs[i] = DataFrame()
         end
+        GC.gc()
     end
-
-    # concatenate, write to disk, and return
-    df = vcat(dfs..., cols=:union)
-    CSV.write(joinpath(dir, dfname), df)
-    df
+    aggregate_benchmark_dataframes(;dir, prefix, dfname)
 end
 
-"""
-
-Return a matrix of size `n` by `m`, with `dimension` singular values of value `σ1` and 
-`m-dimension` singular values of value `σ2`.
-"""
-function pca_test_matrix1(n::Integer, m::Integer, dimension::Integer; σ1=1.0, σ2=0.1)
-    n > 0 || throw(DomainError(n, "n must positive"))
-    0 < m <= n || throw(DomainError(m, "m must be in [1, n]"))
-    dimension > 0 || throw(DomainError(dimension, "dimension must positive"))
-    dimension <= m || throw(DimensionMismatch("dimension is $dimension, but m is $m"))
-    U = orthogonal!(randn(n, m))
-    V = orthogonal!(randn(m, m))
-    S = append!(repeat([σ1], dimension), repeat([σ2], m-dimension))
-    U*Diagonal(S)*V'
-end
-
-"""
-
-Return a matrix of size `n` by `m`, where the rows correspond to points embedded in a hyperplane
-of dimension `dimension`.
-"""
-function pca_test_matrix2(n::Integer, m::Integer, dimension::Integer)
-    n > 0 || throw(DomainError(n, "n must positive"))
-    0 < m <= n || throw(DomainError(m, "m must be in [1, n]"))
-    dimension > 0 || throw(DomainError(dimension, "dimension must positive"))
-    dimension <= m || throw(DimensionMismatch("dimension is $dimension, but m is $m"))    
-    G = orthogonal!(randn(m, dimension))
-    P = G*G' # projection matrix
-    randn(n, m)*P .+ randn(n, m) .* σ
-end
-
-"""
-
-Convert a DataFrame containing MovieLens ratings into a ratings matrix, where rows correspond to
-users, columns to movies, and the `[i, j]`-th entry is the rating given by user `i` to movie `j`.
-"""
-function movielens_rating_matrix(df::DataFrame)
-    movieIds = unique(df.movieId)
-    userIds = unique(df.userId)
-    nmovies = length(movieIds)
-    nusers = length(userIds)
-    movie_perm = collect(1:maximum(df.movieId))
-    user_perm = collect(1:maximum(df.userId))
-    movie_perm[movieIds] .= 1:nmovies
-    user_perm[userIds] .= 1:nusers
-    Is = user_perm[df.userId]
-    Js = movie_perm[df.movieId]
-    Vs = Int8.(df.rating .* 2)
-    sparse(Is, Js, Vs, nusers, nmovies)    
-end
-
-function movielens_rating_matrix(filename="/shared/MovieLens/ml-25m/ratings.csv")
-    df = DataFrame(CSV.File(filename, normalizenames=true))
-    movielens_rating_matrix(df)
+# if run as a script
+if abspath(PROGRAM_FILE) == @__FILE__
+    dir = ARGS[1]
+    inputfile = ARGS[2]
+    parse_benchmark_files(;dir, inputfile)
 end
