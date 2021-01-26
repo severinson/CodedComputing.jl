@@ -4,6 +4,8 @@ using PyCall
 tikzplotlib = pyimport("tikzplotlib")
 
 # linear model parameters
+get_βs() = [0.011292726710870777, 8.053097269359726e-8, 1.1523850574475912e-16]
+get_γs() = [0.037446901552194996, 3.1139078757476455e-8, 6.385299464228732e-16]
 get_offset(σ) = 0.011292726710870777 .+ 8.053097269359726e-8σ + 1.1523850574475912e-16σ.^2
 get_slope(σ, nworkers) = 0.037446901552194996 .+ 3.1139078757476455e-8(σ./nworkers) + 6.385299464228732e-16(σ./nworkers).^2
 
@@ -117,12 +119,12 @@ function communication_from_df(df)
     2 .* df.ncolumns .* df.ncomponents
 end
 
-function read_df(filename="C:/Users/albin/Dropbox/Eigenvector project/data/pca/1000genomes/aws12/210114_v11.csv"; nworkers=nothing)
+function read_df(filename="C:/Users/albin/Dropbox/Eigenvector project/data/pca/1000genomes/aws12/210114_v12.csv"; nworkers=nothing)
     df = DataFrame(CSV.File(filename, normalizenames=true))
     df[:nostale] = Missings.replace(df.nostale, false)
     df[:kickstart] = Missings.replace(df.kickstart, false)
     df = df[.!ismissing.(df.nworkers), :]
-    df = df[df.nostale .== false, :]
+    # df = df[df.nostale .== false, :]
     df = df[df.kickstart .== false, :]
     if !isnothing(nworkers)
         df = df[df.nworkers .== nworkers, :]
@@ -160,51 +162,91 @@ end
 
 """
 
+Return the number of workers that minimizes t_compute, when the workload is `σ`,
+and the coordinator waits for the fastest `f` fraction of workers.
+"""
+function optimize_nworkers(σ0, f)
+    βs = get_βs()
+    γs = get_γs()
+    c1 = γs[1]*f
+    c2 = (βs[2] + γs[2]*f)*σ0
+    # c3 = 2*βs[3]*σ0^2
+    # c4 = 3*γs[3]*f*σ0^2
+    sqrt(c2) / sqrt(c1)    
+end
+
+"""
+
 Plot t_compute as a function of Nn for some value of σ0
-
-Let's plot for a couple of different σ0
-It should correspond to different levels of sub-partitioning
-
-The results I have in front of now tell me at what point straggler mitigation starks making sense
-Basically, the point at which the derivative with respect to nworkers is 0
-Since beyond that the iteration time increases with nworkers
-
-There are two scenarios
-Either I have a fixed total problem size
-Or I have a fixed workload
-
-
 σ0=1.393905852e9 is the workload associated with processing all data on 1 worker
 """
-function plot_predictions(σ0=1.393905852e9/10)
+function plot_predictions(σ0=1.393905852e9)
 
     nworkers_all = 1:200
     f = 1.0
+    σ0s = 10.0.^range(5, 12, length=20)    
 
-    # fix workload
-    # plt.figure()
-    # for nsubpartitions in [6, 12, 18, 24]
-    #     σ = σ0 / nsubpartitions
-    #     ts = get_offset(σ) .+ get_slope(σ, nworkers_all) .* f .* nworkers_all
-    #     plt.plot(nworkers_all, ts, label="Np: $nsubpartitions")        
+    # plot the speedup due to waiting for fewer workers    
+    # for fi in [0.1, 0.5]
+    #     f1 = fi
+    #     f2 = f
+    #     nws1 = optimize_nworkers.(σ0s, f1)
+    #     nws2 = optimize_nworkers.(σ0s, f2)
+    #     ts1 = get_offset.(σ0s./nws1) .+ get_slope.(σ0s./nws1, nws1) .* f1 .* nws1
+    #     ts2 = get_offset.(σ0s./nws2) .+ get_slope.(σ0s./nws2, nws2) .* f2 .* nws2
+    #     plt.semilogx(σ0s, ts2 ./ ts1, label="f: $fi")
     # end
-    # plt.xlabel("Nn")
-    # plt.ylabel("T_compute [s]")
-    # plt.title("Fix workload")
+    # plt.xlabel("σ0")
+    # plt.ylabel("speedup")
     # plt.grid()
-    # plt.legend()
-    
-    βs = [0.011292726710870777, 8.053097269359726e-8, 1.1523850574475912e-16]
-    γs = [0.037446901552194996, 3.1139078757476455e-8, 6.385299464228732e-16]
+    # plt.legend()          
 
+    # plot the optimized t_compute as a function of σ0
+    plt.figure()    
+    for f in [0.1, 0.5, 1.0]
+        nws = optimize_nworkers.(σ0s, f)
+        ts = get_offset.(σ0s ./ nws) .+ get_slope.(σ0s./nws, nws) .* f .* nws
+        plt.loglog(σ0s, ts, label="f: $f")
+
+        # nws .*= 1.1
+        # ts = get_offset.(σ0s./nws) .+ get_slope.(σ0s./nws, nws) .* f .* nws
+        # plt.loglog(σ0s, ts, "--", label="f: $f") 
+
+        println("f: $f")
+        for i in 1:length(nws)
+            println("$(σ0s[i]) $(ts[i])")
+        end                
+    end
+    # plt.ylim(0, 10)
+    plt.xlabel("σ0")
+    plt.ylabel("T_compute*")
+    plt.grid()
+    plt.legend()
+    return
     
-    
+    # plot the optimized number of workers as a function of σ0
+    plt.figure()
+    for f in [0.1, 0.5, 1.0]
+        nws = optimize_nworkers.(σ0s, f)
+        plt.loglog(σ0s, nws, label="f: $f")
+
+        println("f: $f")
+        for i in 1:length(nws)
+            println("$(σ0s[i]) $(nws[i])")
+        end        
+    end
+    # plt.ylim(0, 10)
+    plt.xlabel("σ0")
+    plt.ylabel("Nn*")
+    plt.grid()
+    plt.legend()    
+    return  
 
     # fix total amount of work    
     plt.figure()    
-    for nsubpartitions in [1, 2, 3, 4]
+    for nsubpartitions in [1/2, 1, 3, 20]
         npartitions = nworkers_all .* nsubpartitions
-        ts = get_offset(σ0 ./ npartitions) .+ get_slope(σ0 ./ npartitions, nworkers_all) .* f .* nworkers_all
+        ts = get_offset.(σ0 ./ npartitions) .+ get_slope.(σ0 ./ npartitions, nworkers_all) .* f .* nworkers_all
         plt.plot(nworkers_all, ts, label="Np: $nsubpartitions")
 
         # println("nsubpartitions: $nsubpartitions")
@@ -214,20 +256,17 @@ function plot_predictions(σ0=1.393905852e9/10)
 
         # # point at which the derivative with respect to nworkers is zero
         σ = σ0/nsubpartitions
-        c1 = γs[1]*f
-        c2 = (βs[2] + γs[2]*f)*σ
-        c3 = 2*βs[3]*σ^2
-        c4 = 3*γs[3]*f*σ^2
-        x = sqrt(c2) / sqrt(c1)
-        # plt.plot([x, x], [0, 10])        
+        x = optimize_nworkers(σ, f)
+
+        plt.plot([x], ts[round(Int, x)], "o")
+        println("Np: $nsubpartitions, x: $x, t: $(ts[round(Int, x)])")        
+        # plt.plot([x, x], [0, 10])
     end
 
     # expression for α1 + α2*(f*nworkers)
     # (to make sure it's correct)
     # ts = [βs[1] + γs[1]*f*nworkers + (βs[2]+γs[2]*f)*σ0/nworkers + βs[3]*(σ0/nworkers)^2 + γs[3]*f*σ0^2/nworkers^3 for nworkers in nworkers_all]
     # plt.plot(nworkers_all, ts, "--")
-
-
 
     plt.ylim(0, 10)
     plt.xlabel("Nn")
@@ -1000,7 +1039,7 @@ function get_best_timeseries(df, ts=range(minimum(df.t_total), maximum(df.t_tota
         j = argmax(df_t.mse)
         xs[i] = df_t.t_total[j]
         ys[i] = df_t.mse[j]
-        println("Best for t <= $(t): $(df_t.jobid[j]) (nsubpartitions = $(df_t.nsubpartitions[j]), nwait = $(df_t.nwait[j]))")
+        println("Best for t <= $(t): $(df_t.jobid[j]) (Np: $(df_t.nsubpartitions[j]), Nw: $(df_t.nwait[j]), η: $(df_t.stepsize[j])")
     end
     xs, ys
 end
@@ -1036,7 +1075,7 @@ function plot_timeseries_best(dct; opt=nothing)
     return
 end
 
-plot_timeseries_best(df::AbstractDataFrame) = plot_timeseries_best(Dict("df"=>df))
+plot_timeseries_best(df::AbstractDataFrame; kwargs...) = plot_timeseries_best(Dict("df"=>df); kwargs...)
 
 """
 
@@ -1357,6 +1396,72 @@ function plot_genome_convergence(df, nworkers=unique(df.nworkers)[1], opt=maximu
 
     plt.figure()
 
+    # Nn: 18
+    
+    # Np: 1 (Nw=16 best)
+    ## Nw: 1
+    # η: 0.2 to 0.6
+    ## Nw: 3
+    # η: 0.2
+    ## Nw: 9
+    # η: 0.1-0.9
+    ## Nw: 16
+    # η: 0.9    
+
+    # Np: 2 (Nw=16 is best)
+    ## Nw: 1
+    # η: 0.3
+    ## Nw: 3
+    # η: 0.2
+    ## Nw: 9
+    # η: 0.6
+    ## Nw: 16
+    # η: 0.9
+
+    # Np: 3 (Nw=16 is best)
+    ## Nw: 1
+    # η: 0.2, 0.7
+    ## Nw: 3
+    # η: 0.5
+    ## Nw: 9
+    # η: 0.3, 0.7
+    ## Nw: 16
+    # η: 0.9
+
+    # Np: 4 (Nw=16 is best)
+    ## Nw: 1
+    # η: 0.4, 0.7
+    ## Nw: 3
+    # η: 0.7
+    ## Nw: 9
+    # η: 0.8
+    ## Nw: 16
+    # η: 0.8
+
+    # Takeaway:
+    # Using more partitions is better for the first few iterations
+    # But at some point they cross, and using fewer partitions is better
+    # (it makes the gradient more stable)
+    # Having Nw < Nn gives no advantage whatsoever
+    # It's better to just wait for all workers
+    # Which is dispointing
+    # I'd like to have a scenario where not waiting for all workers gives some advantage
+    # In the data I have, there's no need for straggler mitigation
+    # Which is actually what my data has been telling me
+    # I know the point at which using more workers will slow you down
+    # And I'm below that point
+    # I've made it difficult for myself by having an iterate that's so enormous
+    # And I don't have time to re-do the simulations for other datasets
+    # So I need to do something clever
+    # I could increase the amount of straggling just so that I get to a point where straggler mitigation makes sense
+    # That'd be easy
+    # Just say that there's no need for straggler mitigation, since we're below the limit
+    # And then show what happens if you up the slope
+    # At least that's what I should be doing for now
+    # Since I need to wrap up this paper
+    # So, first one plot showing that we don't need straggler mitigation
+    # Then, another with increased slope
+
     # (nwait, nsubpartitions, stepsize)
     if nworkers == 6
         params = [
@@ -1375,11 +1480,27 @@ function plot_genome_convergence(df, nworkers=unique(df.nworkers)[1], opt=maximu
             (1, 5, 0.9),
         ]
     elseif nworkers == 18
+        Nw = 16
+        Np = 4
         params = [
-            (nworkers, 1, 0.9), 
-            (1, 1, 0.9),
-            (nworkers, 4, 0.9),
-            (1, 4, 0.9),
+            (nworkers, 1, 0.9),
+            (nworkers, Np, 0.9),
+            (16, 1, 0.9),
+            (16, 2, 0.9),
+            (16, 3, 0.9),
+            (16, 4, 0.8),
+            (9, 4, 0.4),
+            # (Nw, Np, 0.1),
+            # (Nw, Np, 0.2),
+            # (Nw, Np, 0.3),
+            # (Nw, Np, 0.4),
+            # (Nw, Np, 0.5),
+            # (Nw, Np, 0.6),            
+            # (Nw, Np, 0.7),
+            # (Nw, Np, 0.8),
+            # (Nw, Np, 0.9),
+            # (nworkers, 4, 0.9),
+            # (1, 4, 0.9),
         ]        
     elseif nworkers == 24
         params = [
@@ -1395,23 +1516,21 @@ function plot_genome_convergence(df, nworkers=unique(df.nworkers)[1], opt=maximu
     df = df[df.nreplicas .== 1, :]
 
     # plot the bound
-    α1(σ) = 0.011292726710870777 .+ 8.053097269359726e-8.*σ .+ 1.1523850574475912e-16.*σ.^2
-    α2(σ, nworkers) = 0.037446901552194996 .+ 3.1139078757476455e-8 .* (σ./nworkers) .+ 6.385299464228732e-16 .* (σ./nworkers)
-    r = 1
-    Nw = 1
-    # for nworkers in sort!(unique(df.nworkers))
-    dfi = df
-    dfi = dfi[dfi.nworkers .== nworkers, :]
-    dfi = dfi[dfi.nsubpartitions .== 1, :]
-    @assert length(unique(dfi.worker_flops)) == 1
-    dfj = combine(groupby(dfi, :iteration), :mse => mean, :t_total => mean)
-    worker_flops = unique(dfi.worker_flops)
-    offset = α1(r*worker_flops)
-    slope = α2(r*worker_flops, nworkers)
-    xs = (offset + slope*Nw) .* (1:maximum(dfj.iteration))
-    ys = dfj.mse_mean
-    plt.semilogy(xs, opt.-ys, "s-k", label="Bound r: $r, Nw: $Nw")        
-    # end
+    # α1(σ) = 0.011292726710870777 .+ 8.053097269359726e-8.*σ .+ 1.1523850574475912e-16.*σ.^2
+    # α2(σ, nworkers) = 0.037446901552194996 .+ 3.1139078757476455e-8 .* (σ./nworkers) .+ 6.385299464228732e-16 .* (σ./nworkers)
+    # r = 1
+    # Nw = 1
+    # dfi = df
+    # dfi = dfi[dfi.nworkers .== nworkers, :]
+    # dfi = dfi[dfi.nsubpartitions .== 1, :]
+    # @assert length(unique(dfi.worker_flops)) == 1
+    # dfj = combine(groupby(dfi, :iteration), :mse => mean, :t_total => mean)
+    # worker_flops = unique(dfi.worker_flops)
+    # offset = α1(r*worker_flops)
+    # slope = α2(r*worker_flops, nworkers)
+    # xs = (offset + slope*Nw) .* (1:maximum(dfj.iteration))
+    # ys = dfj.mse_mean
+    # plt.semilogy(xs, opt.-ys, "s-k", label="Bound r: $r, Nw: $Nw")
 
     for (nwait, nsubpartitions, stepsize) in params
         dfi = df
@@ -1426,19 +1545,19 @@ function plot_genome_convergence(df, nworkers=unique(df.nworkers)[1], opt=maximu
         if size(dfj, 1) > 0
             dfj = combine(groupby(dfj, :iteration), :mse => mean, :t_total => mean)
             if size(dfj, 1) > 0
-                plt.semilogy(dfj.t_total_mean, opt.-dfj.mse_mean, "o-", label="SAG (nwait: $nwait, nsubpartitions: $nsubpartitions)")
+                plt.semilogy(dfj.t_total_mean, opt.-dfj.mse_mean, "o-", label="SAG (Nw: $nwait, Np: $nsubpartitions, η: $stepsize)")
             end
         end
 
-        ### SGD
-        dfj = dfi[dfi.variancereduced .== false, :]
-        println("SGD: $(length(unique(dfj.jobid))) jobs")
-        if size(dfj, 1) > 0
-            dfj = combine(groupby(dfj, :iteration), :mse => mean, :t_total => mean)    
-            if size(dfj, 1) > 0
-                plt.semilogy(dfj.t_total_mean, opt.-dfj.mse_mean, "s-", label="SGD (nwait: $nwait, nsubpartitions: $nsubpartitions)")
-            end
-        end
+        # ### SGD
+        # dfj = dfi[dfi.variancereduced .== false, :]
+        # println("SGD: $(length(unique(dfj.jobid))) jobs")
+        # if size(dfj, 1) > 0
+        #     dfj = combine(groupby(dfj, :iteration), :mse => mean, :t_total => mean)    
+        #     if size(dfj, 1) > 0
+        #         plt.semilogy(dfj.t_total_mean, opt.-dfj.mse_mean, "s-", label="SGD (Nw: $nwait, Np: $nsubpartitions, η: $stepsize)")
+        #     end
+        # end
         println()
     end
 
@@ -1449,6 +1568,6 @@ function plot_genome_convergence(df, nworkers=unique(df.nworkers)[1], opt=maximu
     plt.xlabel("Time [s]")
     plt.ylabel("Explained Variance Sub-optimality Gap")
 
-    tikzplotlib.save("./plots/genome_convergence_2.0.tex")
+    # tikzplotlib.save("./plots/genome_convergence_2.0.tex")
     return
 end
