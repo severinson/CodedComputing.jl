@@ -1,7 +1,11 @@
-using CSV, DataFrames, PyPlot, Statistics
+using CSV, DataFrames, PyPlot, Statistics, Polynomials
 
 using PyCall
 tikzplotlib = pyimport("tikzplotlib")
+
+# linear model parameters
+get_offset(σ) = 0.011292726710870777 .+ 8.053097269359726e-8σ + 1.1523850574475912e-16σ.^2
+get_slope(σ, nworkers) = 0.037446901552194996 .+ 3.1139078757476455e-8(σ./nworkers) + 6.385299464228732e-16(σ./nworkers).^2
 
 """
 
@@ -113,11 +117,18 @@ function communication_from_df(df)
     2 .* df.ncolumns .* df.ncomponents
 end
 
-function read_df(filename="data/pca/1000genomes/aws12/210114_v5.csv")
+function read_df(filename="C:/Users/albin/Dropbox/Eigenvector project/data/pca/1000genomes/aws12/210114_v11.csv"; nworkers=nothing)
     df = DataFrame(CSV.File(filename, normalizenames=true))
+    df[:nostale] = Missings.replace(df.nostale, false)
     df[:kickstart] = Missings.replace(df.kickstart, false)
+    df = df[.!ismissing.(df.nworkers), :]
+    df = df[df.nostale .== false, :]
+    df = df[df.kickstart .== false, :]
+    if !isnothing(nworkers)
+        df = df[df.nworkers .== nworkers, :]
+    end
     df = remove_initialization_delay!(df)    
-    df = genome_cleanup_tcompute!(df, samp=2.0) # only for 1000 genomes chromosome 20
+    # df = genome_cleanup_tcompute!(df, samp=2.0) # only for 1000 genomes chromosome 20
     df[:t_total] = cumulative_time_from_df(df)
     df[:worker_flops] = worker_flops_from_df(df)
     df[:communication] = communication_from_df(df)
@@ -149,6 +160,86 @@ end
 
 """
 
+Plot t_compute as a function of Nn for some value of σ0
+
+Let's plot for a couple of different σ0
+It should correspond to different levels of sub-partitioning
+
+The results I have in front of now tell me at what point straggler mitigation starks making sense
+Basically, the point at which the derivative with respect to nworkers is 0
+Since beyond that the iteration time increases with nworkers
+
+There are two scenarios
+Either I have a fixed total problem size
+Or I have a fixed workload
+
+
+σ0=1.393905852e9 is the workload associated with processing all data on 1 worker
+"""
+function plot_predictions(σ0=1.393905852e9/10)
+
+    nworkers_all = 1:200
+    f = 1.0
+
+    # fix workload
+    # plt.figure()
+    # for nsubpartitions in [6, 12, 18, 24]
+    #     σ = σ0 / nsubpartitions
+    #     ts = get_offset(σ) .+ get_slope(σ, nworkers_all) .* f .* nworkers_all
+    #     plt.plot(nworkers_all, ts, label="Np: $nsubpartitions")        
+    # end
+    # plt.xlabel("Nn")
+    # plt.ylabel("T_compute [s]")
+    # plt.title("Fix workload")
+    # plt.grid()
+    # plt.legend()
+    
+    βs = [0.011292726710870777, 8.053097269359726e-8, 1.1523850574475912e-16]
+    γs = [0.037446901552194996, 3.1139078757476455e-8, 6.385299464228732e-16]
+
+    
+    
+
+    # fix total amount of work    
+    plt.figure()    
+    for nsubpartitions in [1, 2, 3, 4]
+        npartitions = nworkers_all .* nsubpartitions
+        ts = get_offset(σ0 ./ npartitions) .+ get_slope(σ0 ./ npartitions, nworkers_all) .* f .* nworkers_all
+        plt.plot(nworkers_all, ts, label="Np: $nsubpartitions")
+
+        # println("nsubpartitions: $nsubpartitions")
+        # for i in 1:length(ts)
+        #     println("$(nworkers_all[i]) $(ts[i])")
+        # end
+
+        # # point at which the derivative with respect to nworkers is zero
+        σ = σ0/nsubpartitions
+        c1 = γs[1]*f
+        c2 = (βs[2] + γs[2]*f)*σ
+        c3 = 2*βs[3]*σ^2
+        c4 = 3*γs[3]*f*σ^2
+        x = sqrt(c2) / sqrt(c1)
+        # plt.plot([x, x], [0, 10])        
+    end
+
+    # expression for α1 + α2*(f*nworkers)
+    # (to make sure it's correct)
+    # ts = [βs[1] + γs[1]*f*nworkers + (βs[2]+γs[2]*f)*σ0/nworkers + βs[3]*(σ0/nworkers)^2 + γs[3]*f*σ0^2/nworkers^3 for nworkers in nworkers_all]
+    # plt.plot(nworkers_all, ts, "--")
+
+
+
+    plt.ylim(0, 10)
+    plt.xlabel("Nn")
+    plt.ylabel("T_compute [s]")
+    plt.title("Fix total amount of work")    
+    plt.grid()
+    plt.legend()        
+    return
+end
+
+"""
+
 Plot the CCDF of the iteration time for all values of `nwait` for the given number of workers.
 """
 function plot_iterationtime_cdf(df; nworkers::Integer=12)
@@ -176,12 +267,19 @@ workers waited for in each iteration.
 function plot_iterationtime_quantiles(dct)
     plt.figure()
     for (label, df) in dct
-        for (nreplicas, worker_flops) in Iterators.product(unique(df.nreplicas), unique(df.worker_flops))
+        df = df[df.nreplicas .== 1, :]
+
+        df.nwait = df.nwait ./ df.nworkers
+
+        offsets = Vector{Float64}()
+        slopes = Vector{Float64}()
+        flops = Vector{Float64}()
+        for (nreplicas, nsubpartitions, worker_flops) in Iterators.product(unique(df.nreplicas), unique(df.nsubpartitions), unique(df.worker_flops))
             dfi = df
             dfi = dfi[dfi.nreplicas .== nreplicas, :]
+            dfi = dfi[dfi.nsubpartitions .== nsubpartitions, :]
             dfi = dfi[dfi.worker_flops .== worker_flops, :]
             # dfi = dfi[dfi.kickstart .!= true, :]
-            dfi = dfi[Missings.replace(dfi.kickstart, false) .== false, :]
             if size(dfi, 1) == 0
                 continue
             end
@@ -200,26 +298,92 @@ function plot_iterationtime_quantiles(dct)
                 push!(mins, quantile(dfj.t_compute, 0.1))
                 push!(maxes, quantile(dfj.t_compute, 0.9))
             end
-            l = label * " nrep=$nreplicas, nflops=$(round(worker_flops, sigdigits=3))"            
+            l = label * " nrep: $nreplicas, nsubp: $nsubpartitions, nflops: $(round(worker_flops, sigdigits=3))"            
             yerr = zeros(2, length(xs))
             yerr[1, :] .= ys .- mins
             yerr[2, :] .= maxes .- ys
             plt.errorbar(xs, ys, yerr=yerr, fmt=".", label=l)
 
             # plot a linear model fit to the data
-            offset, slope = linear_model(xs, ys)
-            plt.plot([0, maximum(xs)], offset .+ [0, maximum(xs)*slope])
-            @assert length(unique(dfi.nrows)) == 1
-            nrows = unique(dfi.nrows)[1]
+            poly = Polynomials.fit(float.(dfi.nwait), float.(dfi.t_compute), 1)
+            offset, slope = poly.coeffs
+            t = range(0.0, maximum(xs), length=100)
+            plt.plot(t, poly.(t))
 
-            println("[nreplicas: $nreplicas, nflops: $worker_flops] offset: $(round(offset, digits=5)) ($(offset / worker_flops)), slope: $(round(slope, digits=5)) ($(slope / worker_flops))")
+            push!(offsets, offset)
+            push!(slopes, slope)
+            push!(flops, worker_flops)
+
+            println("[nreplicas: $nreplicas, nsubp: $nsubpartitions, nflops: $worker_flops] offset: $(round(offset, digits=5)) ($(offset / worker_flops)), slope: $(round(slope, digits=5)) ($(slope / worker_flops))")
         end
+
+        plt.grid()
+        plt.legend()
+        plt.xlabel("nwait")
+        plt.ylabel("Compute time [s]")        
+
+        # offset
+        plt.figure()
+        p = sortperm(flops)
+        plt.plot(flops[p], offsets[p], "o")
+
+        poly = Polynomials.fit(flops, offsets, 2)
+        t = range(0.0, maximum(df.worker_flops), length=100)
+        plt.plot(t, poly.(t))
+
+        plt.grid()
+        plt.legend()
+        plt.xlabel("flops")
+        plt.ylabel("offset")     
+
+        # # print the parameters
+        # for i in 1:length(flops)        
+        #     println("$(flops[i]) $(offsets[i])")
+        # end
+
+        # # print the fitted line
+        # println()
+        # for i in 1:length(t)        
+        #     println("$(t[i]) $(poly(t[i]))")
+        # end        
+
+        # print the quadratic parameters
+        p = poly.coeffs
+        println("offset")
+        println("$(p[1]) & $(p[2]) & $(p[3])")
+        
+        # slope
+        plt.figure()
+        p = sortperm(flops)
+        plt.plot(flops[p], slopes[p], "o")
+
+        poly = Polynomials.fit(flops, slopes, 2)
+        t = range(0.0, maximum(flops), length=100)
+        plt.plot(t, poly.(t))          
+
+        # # print the parameters
+        # for i in 1:length(flops)        
+        #     println("$(flops[i]) $(slopes[i])")
+        # end
+
+        # # print the fitted line
+        # println()
+        # for i in 1:length(t)        
+        #     println("$(t[i]) $(poly(t[i]))")
+        # end                
+
+        # print the quadratic parameters
+        println("slope")
+        p = poly.coeffs
+        println("$(p[1]) & $(p[2]) & $(p[3]) \\")        
+
+        plt.grid()
+        plt.legend()
+        plt.xlabel("flops")
+        plt.ylabel("slope")             
     end
 
-    plt.grid()
-    plt.legend()
-    plt.xlabel("nwait")
-    plt.ylabel("Compute time [s]")
+
 
     # tikzplotlib.save("./plots/tcompute.tex")
     
@@ -228,23 +392,348 @@ end
 
 plot_iterationtime_quantiles(df::AbstractDataFrame) = plot_iterationtime_quantiles(Dict("df"=>df))
 
+
+"""
+
+Return a DataFrame of linear model parameters for t_compute fit to the data
+"""
+function linear_model_df(df)
+    df = df[df.kickstart .== false, :]
+    df = df[df.nreplicas .== 1, :]
+    rv = DataFrame()    
+    for (nworkers, worker_flops) in Iterators.product(unique(df.nworkers), unique(df.worker_flops))
+        dfi = df
+        dfi = dfi[dfi.nworkers .== nworkers, :]
+        dfi = dfi[dfi.worker_flops .== worker_flops, :]
+        if size(dfi, 1) < 2
+            continue
+        end
+        poly = Polynomials.fit(float.(dfi.nwait), float.(dfi.t_compute), 1)
+        # println(poly)
+        offset, slope = poly.coeffs
+        row = Dict("nworkers" => nworkers, "worker_flops" => worker_flops, "offset" => offset, "slope" => slope)
+        push!(rv, row, cols=:union)
+    end
+    sort!(rv, [:nworkers, :worker_flops])
+    rv
+end
+
+"""
+
+Plot the linear model parameters 
+"""
+function plot_compute_time_model(df)
+    df = df[df.kickstart .== false, :]
+    df = df[df.nreplicas .== 1, :]
+    dfm = linear_model_df(df)
+
+    # offset
+    plt.figure()
+    for nworkers in unique(dfm.nworkers)
+        dfi = dfm
+        dfi = dfi[dfi.nworkers .== nworkers, :]        
+        plt.semilogx(dfi.worker_flops, dfi.offset, "o", label="Nn: $nworkers")        
+
+        # print parameters
+        # println("Nn: $nworkers")
+        # sort!(dfi, [:worker_flops])
+        # for i in 1:size(dfi, 1)
+        #     println("$(dfi.worker_flops[i]) $(dfi.offset[i])")
+        # end
+    end    
+
+    # quadratic fit
+    poly = Polynomials.fit(float.(dfm.worker_flops), float.(dfm.offset), 2)    
+    t = range(0, maximum(dfm.worker_flops), length=100)
+    plt.semilogx(t, poly.(t))
+
+    # print fit line
+    println(poly.coeffs)
+    # for i in 1:length(t)
+    #     println("$(t[i]) $(poly(t[i]))")
+    # end
+
+    plt.grid()
+    plt.xlabel("flops")
+    plt.ylabel("offset")
+    plt.legend()
+
+    # slope
+    plt.figure()
+    for nworkers in unique(dfm.nworkers)
+        dfi = dfm
+        dfi = dfi[dfi.nworkers .== nworkers, :]
+        x = dfi.worker_flops ./ dfi.nworkers # mysterious normalization
+        plt.semilogx(x, dfi.slope, "o", label="Nn: $nworkers")
+
+        # print parameters
+        # println("Nn: $nworkers")
+        # sort!(dfi, [:worker_flops])
+        # for i in 1:size(dfi, 1)
+        #     println("$(x[i]) $(dfi.slope[i])")
+        # end        
+    end
+
+    # quadratic fit
+    poly = Polynomials.fit(float.(dfm.worker_flops ./ dfm.nworkers), float.(dfm.slope), 2)    
+    t = range(0, maximum(dfm.worker_flops ./ dfm.nworkers), length=100)
+    plt.semilogx(t, poly.(t))
+
+    # print fit line
+    println(poly.coeffs)
+    # for i in 1:length(t)
+    #     println("$(t[i]) $(poly(t[i]))")
+    # end    
+
+    plt.grid()
+    plt.xlabel("flops / Nn")
+    plt.ylabel("slope")
+    plt.legend()
+    return
+end
+
+"""
+
+"""
+function plot_compute_time(df)
+    df = df[df.kickstart .== false, :]
+    df = df[df.nreplicas .== 1, :]
+
+    # plot the slope of the compute time
+    for nworkers in sort!(unique(df.nworkers))
+
+        if nworkers == 36
+            continue
+        end        
+
+        dfi = df
+        dfi = dfi[dfi.nworkers .== nworkers, :]
+        xs = Vector{Float64}()
+        ys = Vector{Float64}()
+        for worker_flops in sort!(unique(dfi.worker_flops))
+            dfj = dfi
+            dfj = dfj[dfj.worker_flops .== worker_flops, :]
+            if size(dfj, 1) == 0
+                continue
+            end
+            dfk = combine(groupby(dfj, :nwait), :t_compute => mean)
+            if size(dfk, 1) == 0
+                continue
+            end
+            sort!(dfk, :nwait)
+        
+            # slope between adjacent points
+            x = zeros(size(dfk, 1)-1)
+            for i in 2:size(dfk, 1)
+                x[i-1] = (dfk.t_compute_mean[i] - dfk.t_compute_mean[i-1]) / (dfk.nwait[i] - dfk.nwait[i-1])
+            end
+            x .*= nworkers # normalize slope by number of workers
+
+            # plt.plot(fill(worker_flops, length(x)), x, ".", label="$((nworkers, worker_flops))")        
+            # plt.plot(worker_flops, mean(x[2:end]), "o")
+            # push!(xs, worker_flops)
+            # push!(ys, mean(x))
+
+            append!(xs, fill(worker_flops, length(x)))
+            append!(ys, x)
+        end
+
+        # plot all data points
+        plt.plot(xs, ys, "o", label="Nn: $nworkers")
+
+        # plot the average for each value of worker_flops
+
+
+
+        # quadratic fit
+        if length(xs) > 2
+            poly = Polynomials.fit(xs, ys, 2)
+            println(poly)
+            t = range(0.0, maximum(df.worker_flops), length=100)
+            plt.plot(t, poly.(t))        
+        end
+
+        # mean fit
+        # m = mean(ys)
+        # plt.plot([0, maximum(df.worker_flops)], [m, m])
+    end    
+    plt.xlabel("flops")
+    plt.ylabel("Slope between adjacent points")
+    plt.grid()
+    plt.legend()    
+    return
+
+    # plot the time for the first worker to respond
+    for nworkers in sort!(unique(df.nworkers))
+        dfi = df
+        dfi = dfi[dfi.nworkers .== nworkers, :]
+        dfi = dfi[dfi.nwait .== 1, :]
+        if size(dfi, 1) == 0
+            continue
+        end
+        dfj = combine(groupby(dfi, :worker_flops), :t_compute => mean)
+        if size(dfj, 1) <= 1
+            continue
+        end                
+        sort!(dfj, :worker_flops)            
+
+        plt.plot(dfj.worker_flops, dfj.t_compute_mean, "o-", label="Nn: $nworkers")
+
+        # quadratic fit
+        poly = Polynomials.fit(dfj.worker_flops, dfj.t_compute_mean, 2)
+        println(poly)
+        t = range(0.0, maximum(dfj.worker_flops), length=100)
+        plt.plot(t, poly.(t))
+    end
+    plt.title("Time until the fastest worker responds")
+    plt.xlabel("nflops")
+    plt.ylabel("Compute time [s]")
+    plt.grid()
+    plt.legend()
+    return
+
+    # fix nworkers, nwait
+    plt.figure()
+    for (nworkers, nwait) in Iterators.product(unique(df.nworkers), unique(df.nwait))
+        dfi = df
+        dfi = dfi[dfi.nworkers .== nworkers, :]
+        dfi = dfi[dfi.nwait .== nwait, :]
+        if size(dfi, 1) == 0
+            continue
+        end
+        dfj = combine(groupby(dfi, :worker_flops), :t_compute => mean)
+        if size(dfj, 1) == 0
+            continue
+        end        
+        sort!(dfj, :worker_flops)
+        plt.plot(dfj.worker_flops, dfj.t_compute_mean, ".-", label="Nn: $nworkers, Nw: $nwait")
+    end
+    plt.grid()
+    plt.legend()
+    plt.xlabel("worker_flops")
+    plt.ylabel("Compute time [s]")
+
+    # fix nworkers, worker_flops
+    plt.figure()
+    for (nworkers, worker_flops) in Iterators.product(unique(df.nworkers), unique(df.worker_flops))
+        dfi = df
+        dfi = dfi[dfi.nworkers .== nworkers, :]
+        dfi = dfi[dfi.worker_flops .== worker_flops, :]
+        if size(dfi, 1) == 0
+            continue
+        end
+        dfj = combine(groupby(dfi, :nwait), :t_compute => mean)
+        if size(dfj, 1) == 0
+            continue
+        end        
+        sort!(dfj, :nwait)
+        plt.plot(dfj.nwait, dfj.t_compute_mean, ".-", label="Nn: $nworkers, flops: $worker_flops")
+    end
+    plt.grid()
+    plt.legend()
+    plt.xlabel("Nw")
+    plt.ylabel("Compute time [s]")    
+
+    # fix nwait, worker_flops
+    plt.figure()
+    for (nwait, worker_flops) in Iterators.product(unique(df.nwait), unique(df.worker_flops))
+        dfi = df
+        dfi = dfi[dfi.nwait .== nwait, :]
+        dfi = dfi[dfi.worker_flops .== worker_flops, :]
+        if size(dfi, 1) == 0
+            continue
+        end
+        dfj = combine(groupby(dfi, :nworkers), :t_compute => mean)
+        if size(dfj, 1) == 0
+            continue
+        end        
+        sort!(dfj, :nworkers)
+        plt.plot(dfj.nworkers, dfj.t_compute_mean, ".-", label="Nw: $nwait, flops: $worker_flops")
+    end
+    plt.grid()
+    plt.legend()
+    plt.xlabel("Nn")
+    plt.ylabel("Compute time [s]")    
+
+
+    # tikzplotlib.save("./plots/tcompute.tex")
+    
+    return
+end
+
 """
 
 Plot the update time at the master against the number of sub-partitions.
 """
-function plot_updatetime(dct)
+function plot_update_time(dct)
 
-    plt.figure()
+    # SAG
+    plt.figure()    
+    df = dct["pcavr"]
+    df = df[df.kickstart .== false, :]
+    df = df[df.nreplicas .== 1, :]
+    df = df[df.nostale .== false, :]
+    npartitions = df.nworkers .* df.nsubpartitions
+    # df.cost = min.(npartitions, 2df.nwait)
+    df.cost = df.nsubpartitions
+    # df.cost = df.nwait .+ min.(npartitions, 2df.nwait)
+    for nworkers in sort!(unique(df.nworkers))
+        dfi = df
+        dfi = dfi[dfi.nworkers .== nworkers, :]
+        # plt.plot(dfi.cost, dfi.t_update, "o", label="Nn: $nworkers")
+
+        dfj = combine(groupby(dfi, :cost), :t_update => mean)
+        sort!(dfj, :cost)
+        plt.plot(dfj.cost, dfj.t_update_mean, "o", label="Nn: $nworkers")
+
+        # print values
+        # println("Nn=$nworkers")
+        # for i in 1:size(dfj, 1)
+        #     println("$(dfj.cost[i]) $(dfj.t_update_mean[i])")
+        # end
+    end
+    plt.legend()
+    plt.grid()
+    plt.xlabel("p / Nn")
+    plt.ylabel("Update time [s]")
+
+    # SGD
+    plt.figure()    
+    df = dct["pca"]
+    df = df[df.kickstart .== false, :]
+    df = df[df.nreplicas .== 1, :]
+    npartitions = df.nworkers .* df.nsubpartitions
+    # df.cost = min.(npartitions, 2df.nwait)
+    # df.cost = npartitions
+    df.cost = df.nwait
+    for nworkers in sort!(unique(df.nworkers))
+        dfi = df
+        dfi = dfi[dfi.nworkers .== nworkers, :]
+        # plt.plot(dfi.cost, dfi.t_update, "o", label="Nn: $nworkers")
+
+        dfj = combine(groupby(dfi, :cost), :t_update => mean)
+        sort!(dfj, :cost)
+        plt.plot(dfj.cost, dfj.t_update_mean, "o", label="Nn: $nworkers")
+
+        # print values
+        println("Nn=$nworkers")
+        for i in 1:size(dfj, 1)
+            println("$(dfj.cost[i]) $(dfj.t_update_mean[i])")
+        end        
+    end
+    plt.legend()
+    plt.grid()
+    plt.xlabel("Nw")
+    plt.ylabel("Update time [s]")
+
+    return 
+
     for (label, df) in dct
+        df = df[df.nreplicas .== 1, :]
 
         for (nreplicas, nsubpartitions) in Iterators.product(unique(df.nreplicas), unique(df.nsubpartitions))
 
-            if nreplicas != 1
-                continue
-            end
-            # if nsubpartitions != 1
-            #     continue
-            # end
+        
 
             dfi = df
             dfi = dfi[dfi.nreplicas .== nreplicas, :]
@@ -323,26 +812,89 @@ function plot_updatetime(dct)
     # return    
 end
 
-plot_updatetime(df::AbstractDataFrame) = plot_updatetime(Dict("df"=>df))
+plot_update_time(df::AbstractDataFrame) = plot_update_time(Dict("df"=>df))
 
-"""
+function plot_compute_time_3d(df)
 
-Plot the time per iteration against the iteration index.
-"""
-function plot_iterationtime_traces(dct)
-    plt.figure()
-    for (label, df) in dct
-        for (nreplicas, nwait) in Iterators.product(unique(df.nreplicas), unique(df.nwait))
-            dfi = df
-            dfi = dfi[dfi.nreplicas .== nreplicas, :]
-            dfi = dfi[dfi.nwait .== nwait, :]
-            if size(dfi, 1) == 0
-                continue
-            end
-            l = label * " nrep=$nreplicas, nwait=$nwait" 
-            plt.plot(dfi.iteration, dfi.t_compute, ".", label=l)
+    df = df[df.kickstart .== false, :]
+    df = df[df.nreplicas .== 1, :]
+
+    colors = Iterators.cycle(["r", "b", "g", "k", "m"])
+
+    # fix nworkers
+    fig = plt.figure()
+    ax = fig[:add_subplot](111, projection="3d")    
+    for nworkers in unique(df.nworkers)
+        dfi = df
+        dfi = dfi[dfi.nworkers .== nworkers, :]
+        if size(dfi, 1) == 0
+            continue
         end
+        ax[:plot](dfi.nwait, dfi.worker_flops, dfi.t_compute, ".", label="Nn: $nworkers")
     end
+    plt.xlabel("nwait")
+    plt.ylabel("nflops")
+    ax[:set_zlabel]("Compute time [s]")
+    plt.grid()
+    plt.legend()    
+
+    # fix nwait
+    fig = plt.figure()
+    ax = fig[:add_subplot](111, projection="3d")        
+    for nwait in unique(df.nwait)
+        dfi = df
+        dfi = dfi[dfi.nwait .== nwait, :]
+        if size(dfi, 1) == 0
+            continue
+        end
+        ax[:plot](dfi.nworkers, dfi.worker_flops, dfi.t_compute, ".", label="Nw: $nwait")
+    end    
+    plt.xlabel("nworkers")
+    plt.ylabel("nflops")
+    ax[:set_zlabel]("Compute time [s]")
+    plt.grid()
+    plt.legend()
+
+    # fix worker_flops
+    fig = plt.figure()
+    ax = fig[:add_subplot](111, projection="3d")        
+    for nflops in unique(df.worker_flops)
+        dfi = df
+        dfi = dfi[dfi.worker_flops .== nflops, :]
+        if size(dfi, 1) == 0
+            continue
+        end
+        ax[:plot](dfi.nworkers, dfi.nwait, dfi.t_compute, ".", label="flops: $nflops")
+    end    
+    plt.xlabel("nworkers")
+    plt.ylabel("nwait")
+    ax[:set_zlabel]("Compute time [s]")
+    plt.grid()
+    plt.legend()    
+
+
+    return
+end
+
+"""
+
+Plot the compute time per iteration against the iteration index.
+"""
+function plot_compute_time_traces(df)
+    plt.figure()
+    for (nreplicas, nworkers, nwait, worker_flops) in Iterators.product(unique(df.nreplicas), unique(df.nworkers), unique(df.nwait), unique(df.worker_flops))
+        dfi = df
+        dfi = dfi[dfi.nreplicas .== nreplicas, :]
+        dfi = dfi[dfi.nworkers .== nworkers, :]
+        dfi = dfi[dfi.nwait .== nwait, :]
+        dfi = dfi[dfi.worker_flops .== worker_flops, :]
+        if size(dfi, 1) == 0
+            continue
+        end
+        label = "$((nreplicas, nworkers, nwait, worker_flops))"
+        plt.plot(dfi.iteration, dfi.t_compute, ".", label=label)
+    end
+
     plt.grid()
     plt.legend()
     plt.xlabel("Iteration")
@@ -491,7 +1043,6 @@ plot_timeseries_best(df::AbstractDataFrame) = plot_timeseries_best(Dict("df"=>df
 Plot the MSE as a function of time (or iteration) separately for each unique job.
 """
 function plot_timeseries(df; time=true, filters=Dict{String,Any}(), prune=false, opt=nothing)
-    df = dropmissing(df)
     for (key, value) in filters
         df = df[df[key] .== value, :]
     end
@@ -651,44 +1202,6 @@ end
 
 plot_linear_model(df::AbstractDataFrame, args...; kwargs...) = plot_linear_model(Dict("df"=>df), args...; kwargs...)
 
-function plot_iterationtime_combined(df)
-    colors = Iterators.cycle(["r", "b", "g", "k", "m"])
-    # plt.figure()
-    fig = plt.figure()
-    ax = fig[:add_subplot](111, projection="3d")    
-    for (color, (nworkers, nwait)) in zip(colors, Iterators.product(unique(df.nworkers), unique(df.nwait)))
-        if !(nwait in [1, 24, 47])
-            continue
-        end
-
-        dfi = df
-        dfi = dfi[dfi.nworkers .== nworkers, :]
-        dfi = dfi[dfi.nwait .== nwait, :]
-        if size(dfi, 1) == 0
-            continue
-        end
-
-        gd = groupby(dfi, [:worker_flops, :communication])
-        xs = [mean(df.worker_flops) for df in gd]
-        ys = [mean(df.communication) for df in gd]
-        zs = [mean(df.t_compute) for df in gd]
-        ax[:plot](xs, ys, zs, "o", label="$((nworkers, nwait))")
-
-        # ax[:plot](dfi.worker_flops, dfi.communication, dfi.t_compute, ".", label="$((nworkers, nwait))")
-    end
-    # ax[:set_xlabel]("Flops")
-    plt.xlabel("Flops")
-    plt.ylabel("Communication")
-    ax[:set_zlabel]("Iteration time [s]")
-    # plt.zlabel("Iteration time [s]")
-    plt.title("Time per iteration")
-    plt.grid()
-    plt.legend()
-    # println("offsets: $offsets")
-    # println("slopes: $slopes")
-    return
-end
-
 """
 
 Plot iteration time against the number of elements processed
@@ -839,178 +1352,95 @@ function plot_diggavi_convergence(coderates=range(0.1, 1, length=10))
     plt.title("Diggavi bound (randn matrix)")
 end
 
-function foo(df)
+function plot_genome_convergence(df, nworkers=unique(df.nworkers)[1], opt=maximum(df.mse))
+    println("nworkers: $nworkers, opt: $opt")
+
     plt.figure()
 
-    # SAG
-    for jobid in [2, 10, 17]
-        dfi = df[df.jobid .== jobid, :]
-        t_compute = mean(dfi.t_compute)
-        t_update = mean(dfi.t_update)
-        println("[SAG nwait=1] compute:\t$t_compute, update: $t_update")
-        plt.plot(dfi.t_total, dfi.mse, "-o", label="VR, nwait=1, jobid=$jobid (ours)")
+    # (nwait, nsubpartitions, stepsize)
+    if nworkers == 6
+        params = [
+            (nworkers, 1, 1), 
+            (1, 1, 0.9),
+            (nworkers, 10, 0.9),
+            # (1, 10, 0.9),
+            (2, 10, 0.9),        
+            # (4, 10, 0.9),     
+        ]        
+    elseif nworkers == 12
+        params = [
+            (nworkers, 1, 1), 
+            (1, 1, 0.9),
+            (nworkers, 5, 0.9),
+            (1, 5, 0.9),
+        ]
+    elseif nworkers == 18
+        params = [
+            (nworkers, 1, 0.9), 
+            (1, 1, 0.9),
+            (nworkers, 4, 0.9),
+            (1, 4, 0.9),
+        ]        
+    elseif nworkers == 24
+        params = [
+            (nworkers, 1, 1), 
+            (1, 1, 1),
+            (nworkers, 3, 0.9),
+            (1, 3, 0.9),
+        ]    
     end
 
-    dfi = df[df.jobid .== 19, :]
-    t_compute = mean(dfi.t_compute)
-    t_update = mean(dfi.t_update)
-    println("[SAG nwait=2] compute:\t$t_compute, update: $t_update")
-    plt.plot(dfi.t_total, dfi.mse, "-o", label="VR, nwait=2 (ours)")
+    df = df[df.kickstart .== false, :]
+    df = df[df.nostale .== false, :]
+    df = df[df.nreplicas .== 1, :]
 
-    dfi = df[df.jobid .== 4, :]
-    t_compute = mean(dfi.t_compute)
-    t_update = mean(dfi.t_update)
-    println("[SAG nwait=10] compute:\t$t_compute, update: $t_update")
-    plt.plot(dfi.t_total, dfi.mse, "-o", label="VR, nwait=10 (ours)")
-
-    dfi = df[df.jobid .== 6, :]
-    t_compute = mean(dfi.t_compute)
-    t_update = mean(dfi.t_update)
-    println("[SAG nwait=11] compute:\t$t_compute, update: $t_update")    
-    plt.plot(dfi.t_total, dfi.mse, "-o", label="VR, nwait=11 (ours)")
-
-    dfi = df[df.jobid .== 8, :]
-    t_compute = mean(dfi.t_compute)
-    t_update = mean(dfi.t_update)
-    println("[SAG nwait=12] compute:\t$t_compute, update: $t_update")    
-    plt.plot(dfi.t_total, dfi.mse, "-o", label="VR, nwait=12 (ours)")
-
-    # # SGD
-    # dfi = df[df.jobid .== 3, :]
-    # t_compute = mean(dfi.t_compute)
-    # t_update = mean(dfi.t_update)
-    # println("[SGD nwait=10] compute:\t$t_compute, update: $t_update")        
-    # plt.plot(dfi.t_total, dfi.mse, "-s", label="SGD, nwait=10")
-
-    # dfi = df[df.jobid .== 5, :]
-    # t_compute = mean(dfi.t_compute)
-    # t_update = mean(dfi.t_update)
-    # println("[SGD nwait=11] compute:\t$t_compute, update: $t_update")        
-    # plt.plot(dfi.t_total, dfi.mse, "-s", label="SGD, nwait=11")
-
-    # dfi = df[df.jobid .== 7, :]
-    # t_compute = mean(dfi.t_compute)
-    # t_update = mean(dfi.t_update)
-    # println("[SGD nwait=12] compute:\t$t_compute, update: $t_update")        
-    # plt.plot(dfi.t_total, dfi.mse, "-s", label="SGD, nwait=12") 
-
-    plt.xlabel("Time [s]")
-    plt.ylabel("Explained variance")
-    plt.grid()
-    plt.title("AWS, 12 workers, genomics dataset, 3 components")
-    plt.legend()
-    # plt.ylim(0.6351, 0.6355)
-    # plt.xlim(20, 90)
-    return
-end
-
-function plot_genome_convergence(df)
-
-    opt = maximum(df.mse)
-    println("opt: $opt")
-
-    plt.figure()
-
-    ## nwait=12, nsubpartitions=1
+    # plot the bound
+    α1(σ) = 0.011292726710870777 .+ 8.053097269359726e-8.*σ .+ 1.1523850574475912e-16.*σ.^2
+    α2(σ, nworkers) = 0.037446901552194996 .+ 3.1139078757476455e-8 .* (σ./nworkers) .+ 6.385299464228732e-16 .* (σ./nworkers)
+    r = 1
+    Nw = 1
+    # for nworkers in sort!(unique(df.nworkers))
     dfi = df
-    dfi = dfi[dfi.nreplicas .== 1, :]
-    dfi = dfi[dfi.nsubpartitions .== 1, :]    
-    dfi = dfi[dfi.nwait .== 12, :]
-    dfi = dfi[dfi.stepsize .== 1.0, :]
-    dfi = dfi[Missings.replace(dfi.kickstart, false) .== false, :]
+    dfi = dfi[dfi.nworkers .== nworkers, :]
+    dfi = dfi[dfi.nsubpartitions .== 1, :]
+    @assert length(unique(dfi.worker_flops)) == 1
+    dfj = combine(groupby(dfi, :iteration), :mse => mean, :t_total => mean)
+    worker_flops = unique(dfi.worker_flops)
+    offset = α1(r*worker_flops)
+    slope = α2(r*worker_flops, nworkers)
+    xs = (offset + slope*Nw) .* (1:maximum(dfj.iteration))
+    ys = dfj.mse_mean
+    plt.semilogy(xs, opt.-ys, "s-k", label="Bound r: $r, Nw: $Nw")        
+    # end
 
-    ### SAG
-    dfj = dfi[dfi.variancereduced .== true, :]
-    dfj = combine(groupby(dfj, :iteration), :mse => mean, :t_total => mean)
-    plt.semilogy(dfj.t_total_mean, opt.-dfj.mse_mean, "o-", label="SAG (nwait: 12, nsubpartitions: 1)")
+    for (nwait, nsubpartitions, stepsize) in params
+        dfi = df
+        dfi = dfi[dfi.nwait .== nwait, :]
+        dfi = dfi[dfi.nsubpartitions .== nsubpartitions, :]    
+        dfi = dfi[dfi.stepsize .== stepsize, :]
+        println("nwait: $nwait, nsubpartitions: $nsubpartitions, stepsize: $stepsize")
 
-    ### SGD    
-    dfj = dfi[dfi.variancereduced .== false, :]
-    dfj = combine(groupby(dfj, :iteration), :mse => mean, :t_total => mean)
-    plt.semilogy(dfj.t_total_mean, opt.-dfj.mse_mean, "s-", label="SGD (nwait: 12, nsubpartitions: 1)")
+        ### SAG
+        dfj = dfi[dfi.variancereduced .== true, :]
+        println("SAG: $(length(unique(dfj.jobid))) jobs")
+        if size(dfj, 1) > 0
+            dfj = combine(groupby(dfj, :iteration), :mse => mean, :t_total => mean)
+            if size(dfj, 1) > 0
+                plt.semilogy(dfj.t_total_mean, opt.-dfj.mse_mean, "o-", label="SAG (nwait: $nwait, nsubpartitions: $nsubpartitions)")
+            end
+        end
 
-    ## nwait=1, nsubpartitions=1
-    dfi = df
-    dfi = dfi[dfi.nreplicas .== 1, :]
-    dfi = dfi[dfi.nsubpartitions .== 1, :]    
-    dfi = dfi[dfi.nwait .== 1, :]
-    dfi = dfi[Missings.replace(dfi.kickstart, false) .== false, :]
-
-    ### SAG
-    dfj = dfi
-    dfj = dfj[dfj.variancereduced .== true, :]
-    dfj = dfj[dfj.stepsize .== 0.9, :]
-    dfj = combine(groupby(dfj, :iteration), :mse => mean, :t_total => mean)
-    plt.semilogy(dfj.t_total_mean, opt.-dfj.mse_mean, "o-", label="SAG (nwait: 1, nsubpartitions: 1)")
-
-    ### SGD    
-    dfj = dfi
-    dfj = dfi[dfj.variancereduced .== false, :]
-    dfj = dfj[dfj.stepsize .== 0.9, :]
-    dfj = combine(groupby(dfj, :iteration), :mse => mean, :t_total => mean)
-    plt.semilogy(dfj.t_total_mean, opt.-dfj.mse_mean, "s-", label="SGD (nwait: 1, nsubpartitions: 1)")
-
-    ## nwait=12, nsubpartitions=5
-    dfi = df
-    dfi = dfi[dfi.nreplicas .== 1, :]
-    dfi = dfi[dfi.nsubpartitions .== 5, :]    
-    dfi = dfi[dfi.nwait .== 12, :]
-    dfi = dfi[Missings.replace(dfi.kickstart, false) .== false, :]
-
-    ### SAG
-    dfj = dfi
-    dfj = dfj[dfj.variancereduced .== true, :]
-    dfj = dfj[dfj.stepsize .== 0.9, :]
-    # for jobid in unique(dfj.jobid)
-    #     dfk = dfj
-    #     dfk = dfk[dfk.jobid .== jobid, :]
-    #     plt.semilogy(dfk.t_total, opt.-dfk.mse, ".-", label="SAG (nwait: 12, nsubpartitions: 5)")
-    # end    
-    dfj = combine(groupby(dfj, :iteration), :mse => mean, :t_total => mean)
-    plt.semilogy(dfj.t_total_mean, opt.-dfj.mse_mean, "o-", label="SAG (nwait: 12, nsubpartitions: 5)")
-
-    ### SGD    
-    dfj = dfi
-    dfj = dfi[dfj.variancereduced .== false, :]
-    dfj = dfj[dfj.stepsize .== 0.9, :]
-    # for jobid in unique(dfj.jobid)
-    #     dfk = dfj
-    #     dfk = dfk[dfk.jobid .== jobid, :]
-    #     plt.semilogy(dfk.t_total, opt.-dfk.mse, ".-", label="SGD (nwait: 12, nsubpartitions: 5)")        
-    # end        
-    dfj = combine(groupby(dfj, :iteration), :mse => mean, :t_total => mean)
-    plt.semilogy(dfj.t_total_mean, opt.-dfj.mse_mean, "s-", label="SGD (nwait: 12, nsubpartitions: 5)")      
-
-    ## nwait=1, nsubpartitions=5
-    dfi = df
-    dfi = dfi[dfi.nreplicas .== 1, :]
-    dfi = dfi[dfi.nsubpartitions .== 5, :]    
-    dfi = dfi[dfi.nwait .== 1, :]
-    dfi = dfi[Missings.replace(dfi.kickstart, false) .== false, :]
-
-    ### SAG
-    dfj = dfi
-    dfj = dfj[dfj.variancereduced .== true, :]
-    dfj = dfj[dfj.stepsize .== 0.9, :]
-    # for jobid in unique(dfj.jobid)
-    #     dfk = dfj
-    #     dfk = dfk[dfk.jobid .== jobid, :]
-    #     plt.semilogy(dfk.t_total, opt.-dfk.mse, ".-", label="SAG (nwait: 1, nsubpartitions: 5)")        
-    # end    
-    dfj = combine(groupby(dfj, :iteration), :mse => mean, :t_total => mean)
-    plt.semilogy(dfj.t_total_mean, opt.-dfj.mse_mean, "o-", label="SAG (nwait: 1, nsubpartitions: 5)")
-
-    ### SGD    
-    dfj = dfi
-    dfj = dfi[dfj.variancereduced .== false, :]
-    dfj = dfj[dfj.stepsize .== 0.9, :]
-    # for jobid in unique(dfj.jobid)
-    #     dfk = dfj
-    #     dfk = dfk[dfk.jobid .== jobid, :]
-    #     plt.semilogy(dfk.t_total, opt.-dfk.mse, ".-", label="SAG (nwait: 1, nsubpartitions: 5)")        
-    # end        
-    dfj = combine(groupby(dfj, :iteration), :mse => mean, :t_total => mean)
-    plt.semilogy(dfj.t_total_mean, opt.-dfj.mse_mean, "s-", label="SGD (nwait: 1, nsubpartitions: 5)")        
+        ### SGD
+        dfj = dfi[dfi.variancereduced .== false, :]
+        println("SGD: $(length(unique(dfj.jobid))) jobs")
+        if size(dfj, 1) > 0
+            dfj = combine(groupby(dfj, :iteration), :mse => mean, :t_total => mean)    
+            if size(dfj, 1) > 0
+                plt.semilogy(dfj.t_total_mean, opt.-dfj.mse_mean, "s-", label="SGD (nwait: $nwait, nsubpartitions: $nsubpartitions)")
+            end
+        end
+        println()
+    end
 
     plt.grid()
     plt.legend()
