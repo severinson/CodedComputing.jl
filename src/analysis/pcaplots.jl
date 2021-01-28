@@ -35,49 +35,19 @@ end
 
 """
 
-Set t_compute to globally averaged values to minimize the effect of between-run variations.
-These values are only valid for 1000 genomes chromosome 20 results.
+Return t_compute, computed from the model fit to the 1000 genomes chromosome 20 data.
 Set `samp` to a value larger than 1 to increase the effect of straggling, and to a value in [0, 1) to reduce the effect.
 """
-function genome_cleanup_tcompute!(df; samp=1.0)
+function model_tcompute_from_df(df; samp=1.0)
+    
+    # t_compute for everything but kickstart iterations
+    rv = get_offset.(df.worker_flops) .+ samp.*get_slope.(df.worker_flops, df.nworkers) .* df.nwait
 
-    # There are 4 variations of t_compute
-    # I also need to handle kickstart
+    # handle kickstart
+    mask = df.kickstart .== true .& df.iteration .== 1
+    rv[mask] .= get_offset.(df[mask, :worker_flops]) .+ samp.*get_slope.(df[mask, :worker_flops], df[mask, :nworkers]) .* df[mask, :nworkers]
 
-    # npartitions: 1
-    offset, slope = 10.64949, 0.39459 * samp
-    mask = (df.nsubpartitions .== 1) .& (df.nreplicas .== 1)
-    df[mask, "t_compute"] .= offset .+ slope.*df[mask, "nwait"]
-    mask .&= df.kickstart .== true .& df.iteration .== 1
-    df[mask, "t_compute"] .= offset .+ slope.*df[mask, "nworkers"]
-
-    # npartitions: 2
-    offset, slope = 4.89508, 0.19334 * samp
-    mask = (df.nsubpartitions .== 2) .& (df.nreplicas .== 1)
-    df[mask, "t_compute"] .= offset .+ slope.*df[mask, "nwait"]
-    mask .&= df.kickstart .== true .& df.iteration .== 1
-    df[mask, "t_compute"] .= offset .+ slope.*df[mask, "nworkers"]    
-
-    # npartitions: 3
-    offset, slope = 3.25924, 0.12786 * samp
-    mask = (df.nsubpartitions .== 3) .& (df.nreplicas .== 1)
-    df[mask, "t_compute"] .= offset .+ slope.*df[mask, "nwait"]   
-    mask .&= df.kickstart .== true .& df.iteration .== 1
-    df[mask, "t_compute"] .= offset .+ slope.*df[mask, "nworkers"]      
-
-    # npartitions: 5
-    offset, slope = 2.03563, 0.08969 * samp
-    mask = (df.nsubpartitions .== 5) .& (df.nreplicas .== 1)
-    df[mask, "t_compute"] .= offset .+ slope.*df[mask, "nwait"]
-    mask .&= df.kickstart .== true .& df.iteration .== 1
-    df[mask, "t_compute"] .= offset .+ slope.*df[mask, "nworkers"]    
-
-    # [nreplicas: 1, nflops: 1.16158821e8] offset: 10.64949 (9.168043193980956e-8), slope: 0.39459 (3.3969998701485833e-9)
-    # [nreplicas: 1, nflops: 5.80794105e7] offset: 4.89508 (8.428249381362707e-8), slope: 0.19334 (3.3288744194546834e-9)    
-
-    # [nreplicas: 1, nflops: 3.8719607e7] offset: 3.25924 (8.417531955098812e-8), slope: 0.12786 (3.302232136648561e-9)    
-    # [nreplicas: 1, nflops: 2.32317642e7] offset: 2.03563 (8.762258491098293e-8), slope: 0.08969 (3.860868172267541e-9)
-    df
+    return rv
 end
 
 """
@@ -85,6 +55,7 @@ end
 Return a vector composed of the cumulative compute time for each job.
 """
 function cumulative_time_from_df(df)
+    sort!(df, [:jobid, :iteration])
     rv = zeros(size(df, 1))
     for jobid in unique(df.jobid)
         mask = df.jobid .== jobid
@@ -119,7 +90,7 @@ function communication_from_df(df)
     2 .* df.ncolumns .* df.ncomponents
 end
 
-function read_df(filename="C:/Users/albin/Dropbox/Eigenvector project/data/pca/1000genomes/aws12/210114_v12.csv"; nworkers=nothing)
+function read_df(filename="C:/Users/albin/Dropbox/Eigenvector project/data/pca/1000genomes/aws12/210114_v13.csv"; nworkers=nothing)
     df = DataFrame(CSV.File(filename, normalizenames=true))
     df[:nostale] = Missings.replace(df.nostale, false)
     df[:kickstart] = Missings.replace(df.kickstart, false)
@@ -129,11 +100,11 @@ function read_df(filename="C:/Users/albin/Dropbox/Eigenvector project/data/pca/1
     if !isnothing(nworkers)
         df = df[df.nworkers .== nworkers, :]
     end
-    df = remove_initialization_delay!(df)    
-    # df = genome_cleanup_tcompute!(df, samp=2.0) # only for 1000 genomes chromosome 20
-    df[:t_total] = cumulative_time_from_df(df)
+    df = remove_initialization_delay!(df)
     df[:worker_flops] = worker_flops_from_df(df)
+    # df[:t_compute] .= model_tcompute_from_df(df, samp=1)
     df[:communication] = communication_from_df(df)
+    df[:t_total] = cumulative_time_from_df(df)    
     df, split_df_by_algorithm(df)
 end
 
@@ -158,6 +129,32 @@ function split_df_by_algorithm(df)
         rv[label] = dfi
     end
     rv
+end
+
+"""
+
+Fit a shifted exponential latency model to the data.
+"""
+function fit_shiftexp_model(df; nworkers, nwait, nsubpartitions=1)
+    # df = df[df.nwait .== nwait, :]
+    df = df[df.nsubpartitions .== nsubpartitions, :]
+    df = df[df.nreplicas .== 1, :]
+    df = df[df.kickstart .== false, :]    
+    for nworkers in sort!(unique(df.nworkers))
+        println("Nn: $nworkers")
+        dfi = df
+        dfi = dfi[dfi.nworkers .== nworkers, :]        
+        for nwait in sort!(unique(dfi.nwait))
+            println("Nw: $nwait")
+            dfj = dfi
+            dfj = dfj[dfj.nwait .== nwait, :]
+            σ = var(df.t_compute)
+            μ = mean(df.t_compute) - quantile(df.t_compute, 0.04)
+            β1 = sqrt(σ / sum(1/i^2 for i in (nworkers-nwait+1):nworkers))
+            β2 = μ / sum(1/i for i in (nworkers-nwait+1):nworkers)
+            println((β1, β2))        
+        end
+    end
 end
 
 """
@@ -208,14 +205,11 @@ function plot_predictions(σ0=1.393905852e9)
         ts = get_offset.(σ0s ./ nws) .+ get_slope.(σ0s./nws, nws) .* f .* nws
         plt.loglog(σ0s, ts, label="f: $f")
 
-        # nws .*= 1.1
-        # ts = get_offset.(σ0s./nws) .+ get_slope.(σ0s./nws, nws) .* f .* nws
-        # plt.loglog(σ0s, ts, "--", label="f: $f") 
-
-        println("f: $f")
-        for i in 1:length(nws)
-            println("$(σ0s[i]) $(ts[i])")
-        end                
+        # print values
+        # println("f: $f")
+        # for i in 1:length(nws)
+        #     println("$(σ0s[i]) $(ts[i])")
+        # end                
     end
     # plt.ylim(0, 10)
     plt.xlabel("σ0")
@@ -230,17 +224,17 @@ function plot_predictions(σ0=1.393905852e9)
         nws = optimize_nworkers.(σ0s, f)
         plt.loglog(σ0s, nws, label="f: $f")
 
-        println("f: $f")
-        for i in 1:length(nws)
-            println("$(σ0s[i]) $(nws[i])")
-        end        
+        # print values
+        # println("f: $f")
+        # for i in 1:length(nws)
+        #     println("$(σ0s[i]) $(nws[i])")
+        # end        
     end
     # plt.ylim(0, 10)
     plt.xlabel("σ0")
     plt.ylabel("Nn*")
     plt.grid()
     plt.legend()    
-    return  
 
     # fix total amount of work    
     plt.figure()    
@@ -260,7 +254,6 @@ function plot_predictions(σ0=1.393905852e9)
 
         plt.plot([x], ts[round(Int, x)], "o")
         println("Np: $nsubpartitions, x: $x, t: $(ts[round(Int, x)])")        
-        # plt.plot([x, x], [0, 10])
     end
 
     # expression for α1 + α2*(f*nworkers)
@@ -1391,10 +1384,18 @@ function plot_diggavi_convergence(coderates=range(0.1, 1, length=10))
     plt.title("Diggavi bound (randn matrix)")
 end
 
+function write_table(xs::AbstractVector, ys::AbstractVector, filename::AbstractString)
+    length(xs) == length(ys) || throw(DimensionMismatch("xs has dimension $(length(xs)), but ys has dimension $(length(ys))"))
+    open(filename, "w") do io
+        for i in 1:length(xs)
+            write(io, "$(xs[i]) $(ys[i])\n")
+        end
+    end
+    return
+end
+
 function plot_genome_convergence(df, nworkers=unique(df.nworkers)[1], opt=maximum(df.mse))
     println("nworkers: $nworkers, opt: $opt")
-
-    plt.figure()
 
     # Nn: 18
     
@@ -1465,11 +1466,11 @@ function plot_genome_convergence(df, nworkers=unique(df.nworkers)[1], opt=maximu
     # (nwait, nsubpartitions, stepsize)
     if nworkers == 6
         params = [
-            (nworkers, 1, 1), 
-            (1, 1, 0.9),
-            (nworkers, 10, 0.9),
+            (nworkers, 1, 1),  # full GD
+            (nworkers, 10, 0.9), # sub-partitioning            
+            (1, 1, 0.9), # straggler mitigation
             # (1, 10, 0.9),
-            (2, 10, 0.9),        
+            (2, 10, 0.9), # straggler mitigation + sub-partititoning
             # (4, 10, 0.9),     
         ]        
     elseif nworkers == 12
@@ -1483,13 +1484,17 @@ function plot_genome_convergence(df, nworkers=unique(df.nworkers)[1], opt=maximu
         Nw = 16
         Np = 4
         params = [
-            (nworkers, 1, 0.9),
-            (nworkers, Np, 0.9),
-            (16, 1, 0.9),
-            (16, 2, 0.9),
-            (16, 3, 0.9),
-            (16, 4, 0.8),
-            (9, 4, 0.4),
+            (nworkers, 1, 1.0), # full GD
+            (nworkers, 4, 0.9), # sub-partitioning
+            (1, 1, 0.2), # straggler mitigation
+            (3, 4, 0.7),
+            # (nworkers, 3, 0.9),
+            # (nworkers, 4, 0.9),
+            # (16, 1, 0.9),
+            # (16, 2, 0.9),
+            # (16, 3, 0.9),
+            # (16, 4, 0.8),
+            # (9, 4, 0.4),
             # (Nw, Np, 0.1),
             # (Nw, Np, 0.2),
             # (Nw, Np, 0.3),
@@ -1511,26 +1516,48 @@ function plot_genome_convergence(df, nworkers=unique(df.nworkers)[1], opt=maximu
         ]    
     end
 
+    df = df[df.nworkers .== nworkers, :]    
     df = df[df.kickstart .== false, :]
-    df = df[df.nostale .== false, :]
+    # df = df[df.nostale .== false, :]
     df = df[df.nreplicas .== 1, :]
 
     # plot the bound
-    # α1(σ) = 0.011292726710870777 .+ 8.053097269359726e-8.*σ .+ 1.1523850574475912e-16.*σ.^2
-    # α2(σ, nworkers) = 0.037446901552194996 .+ 3.1139078757476455e-8 .* (σ./nworkers) .+ 6.385299464228732e-16 .* (σ./nworkers)
-    # r = 1
-    # Nw = 1
-    # dfi = df
-    # dfi = dfi[dfi.nworkers .== nworkers, :]
-    # dfi = dfi[dfi.nsubpartitions .== 1, :]
-    # @assert length(unique(dfi.worker_flops)) == 1
-    # dfj = combine(groupby(dfi, :iteration), :mse => mean, :t_total => mean)
-    # worker_flops = unique(dfi.worker_flops)
-    # offset = α1(r*worker_flops)
-    # slope = α2(r*worker_flops, nworkers)
-    # xs = (offset + slope*Nw) .* (1:maximum(dfj.iteration))
-    # ys = dfj.mse_mean
-    # plt.semilogy(xs, opt.-ys, "s-k", label="Bound r: $r, Nw: $Nw")
+    r = 2
+    Nw = nworkers * (1/6)
+
+    # get the convergence per iteration for batch GD
+    dfi = df
+    dfi = dfi[dfi.nsubpartitions .== 1, :]    
+    dfi = dfi[dfi.nwait .== nworkers, :]
+    dfi = dfi[dfi.stepsize .== 1, :]
+    dfi = dfi[dfi.variancereduced .== false, :]
+    dfi = dfi[dfi.kickstart .== false, :]
+    dfi = dfi[dfi.nostale .== false, :]
+    dfj = combine(groupby(dfi, :iteration), :mse => mean)
+    ys = opt .- dfj.mse_mean
+
+    # compute the iteration time for a scheme with a factor r replication
+    @assert length(unique(dfi.worker_flops)) == 1
+    worker_flops = r*unique(dfi.worker_flops)[1]
+    x0 = get_offset(worker_flops) .+ get_slope(worker_flops, nworkers) * Nw
+    xs = x0 .* (1:maximum(dfi.iteration))
+
+    # make the plot
+    plt.figure()        
+    plt.semilogy(xs, ys, "--k", label="Bound r: $r, Nw: $Nw")
+    write_table(xs, ys, "./data/bound_$(nworkers)_$(Nw)_$(r).csv")
+    # plt.semilogy([x0, x0], [1, 0], "--k", label="Bound r: $r, Nw: $Nw")
+
+    # What I want to plot
+    # Let's have two plots for the regular data and two for more straggling
+    # For each scenario, 1 plot for 6 workers and 1 for 18 workers
+    # Since I want to show the spread
+    # I need to carefully choose which lines to plot
+    # Regular batch GD
+    # Waiting for all workers, but with sub-partitioning
+    # Waiting for a subset of the workers, no sub-partitioning
+    # Waiting for a subset of the workers, with sub-partitioning
+    # DSAG, SAG, SGD, 
 
     for (nwait, nsubpartitions, stepsize) in params
         dfi = df
@@ -1539,32 +1566,69 @@ function plot_genome_convergence(df, nworkers=unique(df.nworkers)[1], opt=maximu
         dfi = dfi[dfi.stepsize .== stepsize, :]
         println("nwait: $nwait, nsubpartitions: $nsubpartitions, stepsize: $stepsize")
 
-        ### SAG
-        dfj = dfi[dfi.variancereduced .== true, :]
+        ### DSAG
+        dfj = dfi
+        dfj = dfj[dfj.variancereduced .== true, :]
+        dfj = dfj[dfj.nostale .== false, :]
+        filename = "./data/dsag_$(nworkers)_$(nwait)_$(nsubpartitions)_$(stepsize).csv"
         println("SAG: $(length(unique(dfj.jobid))) jobs")
         if size(dfj, 1) > 0
             dfj = combine(groupby(dfj, :iteration), :mse => mean, :t_total => mean)
             if size(dfj, 1) > 0
-                plt.semilogy(dfj.t_total_mean, opt.-dfj.mse_mean, "o-", label="SAG (Nw: $nwait, Np: $nsubpartitions, η: $stepsize)")
+                xs = dfj.t_total_mean
+                ys = opt.-dfj.mse_mean
+                plt.semilogy(xs, ys, "o-", label="DSAG (Nw: $nwait, Np: $nsubpartitions, η: $stepsize)")                
+                write_table(xs, ys, filename)
             end
         end
 
-        # ### SGD
-        # dfj = dfi[dfi.variancereduced .== false, :]
-        # println("SGD: $(length(unique(dfj.jobid))) jobs")
-        # if size(dfj, 1) > 0
-        #     dfj = combine(groupby(dfj, :iteration), :mse => mean, :t_total => mean)    
-        #     if size(dfj, 1) > 0
-        #         plt.semilogy(dfj.t_total_mean, opt.-dfj.mse_mean, "s-", label="SGD (Nw: $nwait, Np: $nsubpartitions, η: $stepsize)")
-        #     end
-        # end
+        ### SAG
+        dfj = dfi
+        dfj = dfj[dfj.variancereduced .== true, :]
+        dfj = dfj[dfj.nostale .== true, :]
+        filename = "./data/sag_$(nworkers)_$(nwait)_$(nsubpartitions)_$(stepsize).csv"
+        println("SAG: $(length(unique(dfj.jobid))) jobs")
+        if size(dfj, 1) > 0
+            dfj = combine(groupby(dfj, :iteration), :mse => mean, :t_total => mean)
+            if size(dfj, 1) > 0
+                xs = dfj.t_total_mean
+                ys = opt.-dfj.mse_mean                
+                plt.semilogy(xs, ys, "^-", label="SAG (Nw: $nwait, Np: $nsubpartitions, η: $stepsize)")
+                write_table(xs, ys, filename)                
+            end
+        end
+
+        ### SGD
+        dfj = dfi
+        dfj = dfj[dfj.variancereduced .== false, :]
+        filename = "./data/sgd_$(nworkers)_$(nwait)_$(nsubpartitions)_$(stepsize).csv"
+        println("SGD: $(length(unique(dfj.jobid))) jobs")
+        if size(dfj, 1) > 0
+            dfj = combine(groupby(dfj, :iteration), :mse => mean, :t_total => mean)    
+            if size(dfj, 1) > 0
+                xs = dfj.t_total_mean
+                ys = opt.-dfj.mse_mean                
+                plt.semilogy(xs, ys, "s-", label="SGD (Nw: $nwait, Np: $nsubpartitions, η: $stepsize)")
+                write_table(xs, ys, filename)
+            end
+        end
         println()
     end
 
     plt.grid()
     plt.legend()
-    plt.ylim(1e-7, 1e-1)
-    plt.xlim(0, 80)
+
+    if nworkers == 6
+        plt.xlim(0, 120)
+        # plt.xlim(0, 240)
+        plt.ylim(1e-5, 1e-1) 
+    elseif nworkers == 18
+        plt.xlim(0, 60)
+        plt.ylim(1e-5, 1e-1)         
+    else
+        plt.xlim(0, 80)
+        plt.ylim(1e-7, 1e-1)        
+    end
     plt.xlabel("Time [s]")
     plt.ylabel("Explained Variance Sub-optimality Gap")
 
