@@ -817,31 +817,7 @@ function plot_update_time(dct)
 
     # tikzplotlib.save("./plots/tupdate.tex")
     
-    return
-
-    # plt.figure()
-    # for (label, df) in dct
-    #     xs = Vector{Float64}()
-    #     ys = Vector{Float64}()
-    #     for nsubpartitions in unique(df.nsubpartitions)
-    #         dfi = df
-    #         dfi = dfi[dfi.nsubpartitions .== nsubpartitions, :]
-    #         if size(dfi, 1) == 0
-    #             continue
-    #         end
-    #         push!(xs, nsubpartitions)
-    #         push!(ys, mean(dfi.t_update))
-    #         l = label * " partitions: $nsubpartitions"
-    #         plt.plot(dfi.nsubpartitions, dfi.t_update, ".", label=l)
-    #     end
-    #     p = sortperm(xs)        
-    #     plt.plot(xs[p], ys[p], ".-", label=label)
-    # end
-    # plt.grid()
-    # plt.legend()
-    # plt.xlabel("Number of sub-partitions")
-    # plt.ylabel("Update time [s]")
-    # return    
+    return  
 end
 
 plot_update_time(df::AbstractDataFrame) = plot_update_time(Dict("df"=>df))
@@ -937,7 +913,7 @@ end
 
 For a given job id, plot traces indicating which workers responded in each iteration.
 """
-function plot_response_traces(df; jobid=nothing)
+function plot_stragglers(df; jobid=362)
     if isnothing(jobid) || !(jobid in df.jobid)
         println("jobid must be one of:")
         println(unique(df.jobid))
@@ -945,17 +921,24 @@ function plot_response_traces(df; jobid=nothing)
     end
     df = df[df.jobid .== jobid, :]
     nworkers = df.nworkers[1]
+    # niterations = maximum(df.nworkers)
     plt.figure()
     for i in 1:nworkers
-        x = findall(df["worker_$(i)_responded"])
+        x = findall(df["repoch_worker_$(i)"] .< df.iteration)
         y = repeat([i], length(x))
         plt.plot(x, y, "ro")
+
+        # print values
+        for i in 1:length(x)
+            println("$(x[i]) $(y[i])")
+        end
     end
-    plt.title("Markers indicate which workers responded in each iteration")
+    println("Total time: $(maximum(df.t_total))")
+    plt.title("Markers indicate which workers are stragglers")
     plt.ylabel("Worker index")
     plt.xlabel("Iteration")
     plt.xlim(0, size(df, 1))
-    plt.ylim(1, nworkers)
+    plt.ylim(0, nworkers)
     plt.grid()
 end
 
