@@ -2,7 +2,7 @@
 # Run 
 #SBATCH --job-name=parse.jl
 #SBATCH --output=parse.out
-#SBATCH --nodes=10
+#SBATCH --nodes=19
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=4
 #SBATCH --time=600:00
