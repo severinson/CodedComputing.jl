@@ -5,6 +5,7 @@ using LinearAlgebra, SparseArrays, HDF5
 include("Linalg.jl")
 include("Datasets.jl")
 include("HDF5Sparse.jl")
+include("OrderStats.jl")
 
 include("encoding/diggavi.jl")
 include("analysis/pca.jl")
