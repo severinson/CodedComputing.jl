@@ -1,5 +1,6 @@
+# Code for parsing the .h5 files resulting from experiments into .csv files for analysis
+
 using HDF5, DataFrames, CSV, Glob, Dates, Random
-using CodedComputing
 
 """
 
@@ -68,6 +69,13 @@ function df_from_output_file(filename::AbstractString, inputmatrix)
             for j in 1:nworkers
                 row["repoch_worker_$j"] = fid["benchmark/responded"][j, i]
             end
+
+            # add worker latency
+            if "latency" in names(fid["benchmark"])
+                for j in 1:nworkers
+                    row["latency_worker_$j"] = fid["benchmark/latency"][j, i]
+                end
+            end            
 
             push!(rv, row, cols=:union)
         end
