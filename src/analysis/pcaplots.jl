@@ -10,11 +10,6 @@ get_γs() = [0.03725188744901591, 3.109510011653974e-8, 6.399147477943208e-16]
 get_offset(w) = 0.005055059937837611 .+ 8.075122937312302e-8w .+ 1.1438758464435006e-16w.^2
 get_slope(w, nworkers) = 0.03725188744901591 .+ 3.109510011653974e-8(w./nworkers) .+ 6.399147477943208e-16(w./nworkers).^2
 
-# get_βs() = [0.011292726710870777, 8.053097269359726e-8, 1.1523850574475912e-16]
-# get_γs() = [0.037446901552194996, 3.1139078757476455e-8, 6.385299464228732e-16]
-# get_offset(σ) = 0.011292726710870777 .+ 8.053097269359726e-8σ + 1.1523850574475912e-16σ.^2
-# get_slope(σ, nworkers) = 0.037446901552194996 .+ 3.1139078757476455e-8(σ./nworkers) + 6.385299464228732e-16(σ./nworkers).^2
-
 # shifted exponential model
 get_shift(w) = 0.2514516116132241 .+ 6.687583396247953e-8w .+ 2.0095825408761404e-16w.^2
 get_scale(w) = 0.23361469930191084 .+ 7.2464826067975726e-9w .+ 5.370433628859458e-17w^2
@@ -100,7 +95,7 @@ function communication_from_df(df)
     2 .* df.ncolumns .* df.ncomponents
 end
 
-function read_df(filename="C:/Users/albin/Dropbox/Eigenvector project/data/pca/1000genomes/aws12/210114_v29.csv"; nworkers=nothing)
+function read_df(filename="C:/Users/albin/Dropbox/Eigenvector project/data/dataframes/210208/210208_v4.csv"; nworkers=nothing)
     df = DataFrame(CSV.File(filename, normalizenames=true))
     df[:nostale] = Missings.replace(df.nostale, false)
     df[:kickstart] = Missings.replace(df.kickstart, false)
@@ -348,30 +343,13 @@ function plot_predictions(σ0=1.393905852e9; df=nothing)
     dfi = dfi[dfi.nsubpartitions .== 3, :]
     dfi = dfi[dfi.nwait .== round.(Int, f.*dfi.nworkers), :]
     dfj = combine(groupby(dfi, :nworkers), :t_compute => mean)
-    # dfi = dfi[dfi.nworkers .== 24, :]
-    # dfi = dfi[dfi.nwait .== 12, :]
     plt.plot(dfj.nworkers, dfj.t_compute_mean, "s")
     plt.plot(dfi.nworkers, dfi.t_compute, ".")
     for i in 1:size(dfj, 1)
         println("$(dfj.nworkers[i]) $(dfj.t_compute_mean[i])")
     end
     println()
-    println((minimum(dfi.worker_flops.*dfi.nworkers), maximum(dfi.worker_flops.*dfi.nworkers)))    
-
-    # Np = 20
-    # f = 1/24
-    # dfi = df
-    # dfi = dfi[dfi.kickstart .== false, :]
-    # dfi = dfi[dfi.nreplicas .== 1, :]
-    # dfi = dfi[dfi.pfraction .== 1, :]
-    # dfi = dfi[dfi.nsubpartitions .== 20, :]
-    # dfi = dfi[dfi.nwait .== round.(Int, f.*dfi.nworkers), :]
-    # dfj = combine(groupby(dfi, :nworkers), :t_compute => mean)
-    # # dfi = dfi[dfi.nworkers .== 24, :]
-    # # dfi = dfi[dfi.nwait .== 12, :]
-    # plt.plot(dfj.nworkers, dfj.t_compute_mean, "s")
-    # plt.plot(dfi.nworkers, dfi.t_compute, ".")
-    # println((minimum(dfi.worker_flops), maximum(dfi.worker_flops)))
+    println((minimum(dfi.worker_flops.*dfi.nworkers), maximum(dfi.worker_flops.*dfi.nworkers)))
 
     # expression for α1 + α2*(f*nworkers)
     # (to make sure it's correct)
@@ -644,75 +622,77 @@ end
 
 """
 
-Pick nworkers and the workload
-Plot empiric delay (points and average)
-Plot predicted delay
+Plots:
+- Empirical latency (samples and sample average)
+- Latency predicted by the proposed linear model
+- Latency predicted by the i.i.d. shifted exponential model
 
 """
-function plot_compute_time(dfi, nworkers=12, nsubpartitions=1)
-    dfii = dfi
-    dfii = dfi[dfi.kickstart .== false, :]
-    dfi = dfi[dfi.nreplicas .== 1, :]
-    dfi = dfi[dfi.pfraction .== 1, :]    
-    dfi = dfi[dfi.nworkers .== nworkers, :]
-    dfi = dfi[dfi.nsubpartitions .== nsubpartitions, :]
-    @assert length(unique(dfi.worker_flops)) == 1    
-    w = unique(dfi.worker_flops)[1]    
+function plot_compute_time(df, nworkers=18)
+    df = df[df.kickstart .== false, :]
+    df = df[df.nreplicas .== 1, :]
+    df = df[df.pfraction .== 1, :]    
+    df = df[df.nworkers .== nworkers, :]
 
-    # scatter plot of the samples
-    plt.plot(dfi.nwait, dfi.t_compute, ".")    
-    write_table(dfi.nwait, dfi.t_compute, "./data/model_raw.csv")
+    for nsubpartitions in sort!(unique(df.nsubpartitions))
+        dfi = df
+        dfi = dfi[dfi.nsubpartitions .== nsubpartitions, :]
+        @assert length(unique(dfi.worker_flops)) == 1    
+        w = unique(dfi.worker_flops)[1]    
 
-    # compute average delay and quantiles
-    # and plot it
-    dfj = combine(
-        groupby(dfi, :nwait), 
-        :t_compute => mean, 
-        :t_compute => ((x)->quantile(x, 0.1)) => :q1,
-        :t_compute => ((x)->quantile(x, 0.9)) => :q9,
-        )
-    sort!(dfj, :nwait)
-    plt.plot(dfj.nwait, dfj.t_compute_mean, "o")
-    write_table(dfj.nwait, dfj.t_compute_mean, "./data/model_means.csv")    
+        # scatter plot of the samples
+        plt.plot(dfi.nwait, dfi.t_compute, ".")    
+        write_table(dfi.nwait, dfi.t_compute, "./data/model_raw.csv")
 
-    println("Latency average p: $nworkers * $nsubpartitions, w: $w")
-    for i in 1:size(dfj, 1)
-        println("$(dfj[i, :nwait]) $(dfj[i, :t_compute_mean])")
+        # compute average delay and quantiles
+        # and plot it
+        dfj = combine(
+            groupby(dfi, :nwait), 
+            :t_compute => mean, 
+            :t_compute => ((x)->quantile(x, 0.1)) => :q1,
+            :t_compute => ((x)->quantile(x, 0.9)) => :q9,
+            )
+        sort!(dfj, :nwait)
+        plt.plot(dfj.nwait, dfj.t_compute_mean, "o")
+        write_table(dfj.nwait, dfj.t_compute_mean, "./data/model_means.csv")    
+
+        println("Latency average p: $nworkers * $nsubpartitions, w: $w")
+        for i in 1:size(dfj, 1)
+            println("$(dfj[i, :nwait]) $(dfj[i, :t_compute_mean])")
+        end
+
+        # plot predicted delay (by a local model)
+        # return float.(dfi.nwait), float.(dfi.t_compute)
+        poly = Polynomials.fit(float.(dfi.nwait), float.(dfi.t_compute), 1)
+        xs = [0, nworkers]        
+        plt.plot(xs, poly.(xs), "--", label="Local model")            
+        println(poly)
+
+        # offset, slope = linear_model(float.(dfi.nwait), float.(dfi.t_compute))
+        # ys = offset .+ slope .* xs
+        # plt.plot(xs, ys, "--", label="Local model")    
+
+        # # print values
+        # println("local model")
+        # for i in 1:length(xs)
+        #     println("$(xs[i]) $(ys[i])")
+        # end
+
+        # plot predicted delay (by the global model)
+        println("w: $w")
+        xs = 1:nworkers
+        ys = get_offset(w) .+ get_slope(w, nworkers) .* xs
+        plt.plot(xs, ys)
+        # write_table(xs, ys, "./data/model_linear.csv")
+
+        # # plot delay predicted by the shifted exponential order statistics model
+        # # shift, β = fit_shiftexp_model(df, w)
+        # shift = get_shift(w)
+        # scale = get_scale(w)
+        # ys = [mean(ExponentialOrder(scale, nworkers, nwait)) for nwait in xs] .+ shift
+        # plt.plot(xs, ys, "--")
+        # # write_table(xs, ys, "./data/model_shiftexp.csv")
     end
-
-    # plot predicted delay (by a local model)
-    # foo = float.(dfi.nwait)
-    # bar = float.(dfi.t_compute)
-    # return foo, bar
-    # println(sum(foo ./ bar))
-    # poly = Polynomials.fit(foo, bar, 1)
-    # println(poly)
-
-    offset, slope = linear_model(dfi.nwait, dfi.t_compute)
-    xs = [0, nworkers]
-    ys = offset .+ slope .* xs
-    plt.plot(xs, ys, "--", label="Local model")    
-
-    println("local model")
-    for i in 1:length(xs)
-        println("$(xs[i]) $(ys[i])")
-    end
-
-    # plot predicted delay (by the global model)
-    println("w: $w")
-    xs = 1:nworkers
-    ys = get_offset(w) .+ get_slope(w, nworkers) .* xs
-    plt.plot(xs, ys)
-    write_table(xs, ys, "./data/model_linear.csv")
-
-    # plot delay predicted by the shifted exponential order statistics model
-    # shift, β = fit_shiftexp_model(df, w)
-    shift = get_shift(w)
-    scale = get_scale(w)
-    println((shift, scale))
-    ys = [mean(ExponentialOrder(scale, nworkers, nwait)) for nwait in xs] .+ shift
-    plt.plot(xs, ys, "--")
-    write_table(xs, ys, "./data/model_shiftexp.csv")
 
     plt.grid()
     plt.xlabel("Nw")
@@ -1191,12 +1171,11 @@ function plot_straggler_ac(df; f=0.5)
 
     # plot for different nworkers
     plt.figure()    
-    for (nworkers, nbins) in zip([6, 12, 18], [30, 30, 60])
+    for nworkers in [6, 12, 18]
         nwait = round(Int, nworkers*f)
         dfi = df
         dfi = dfi[dfi.nworkers .== nworkers, :]
         dfi = dfi[dfi.nwait .== nwait, :]
-        # nbins = nothing
         nbins = round(Int, maximum(dfi.t_total) / 10)
         edges, values, counts = straggler_prob_timeseries_from_df(dfi; nbins)
         plt.plot(edges[1:end-1], values, ".-", label="Nn: $nworkers")
@@ -1534,39 +1513,6 @@ function plot_response_fraction(df; jobid=nothing)
     plt.title("nworkers: $nworkers, nwait: $nwait")
 end
 
-"""
-
-Plot the MSE at `niterations` against the fraction of the matrix processed per iteration. Plots
-results for each unique `stepsize` separately.
-"""
-function plot_convergence_rate(df, iteration::Integer=10; filters=Dict{String,Any}())
-    df = dropmissing(df)
-    df = df[df.variancereduced .== true, :]
-    df = df[df.iteration .== iteration, :]
-
-    # apply filters
-    for (key, value) in filters
-        df = df[df[key] .== value, :]
-    end    
-
-    # compute what fraction of the matrix was processed in each iteration
-    # TODO: doesn't account for replicas
-    df[:fraction] = 1 ./ df.nsubpartitions .* df.pfraction
-        
-    plt.figure()
-    for nwait in unique(df.nwait)
-        df_nwait = df[df.nwait .== nwait, :]
-        for stepsize in unique(df_nwait.stepsize)
-            df_stepsize = df_nwait[df_nwait.stepsize .≈ stepsize, :]
-            plt.plot(df_stepsize.fraction, df_stepsize.mse, "o", label="nwait $nwait, stepsize $stepsize")
-        end
-    end
-    plt.grid()
-    plt.xlabel("Fraction of local data processed per iteration")
-    plt.ylabel("Explained variance at iteration $iteration")
-    plt.legend()
-end
-
 function get_best_timeseries(df, ts=range(minimum(df.t_total), maximum(df.t_total), length=50))
     xs = zeros(length(ts))
     ys = zeros(length(ts))
@@ -1662,62 +1608,6 @@ end
 
 """
 
-Plot the time (or number of iterations) until the explained variance has converged to within
-`atol + rtol*opt` of `opt` as a function of `nsubpartitions` separately for each unique 
-(`nworkers`, `nwait`) pair. Use this plot to select optimal values for `nwait` and `nsubpartitions` 
-for a given number of workers.
-"""
-function plot_convergence_time(df; opt=maximum(df.mse), atol=0, rtol=1e-2, time=true)
-    println("Target explained variance: $opt")
-    plt.figure()
-    for nworkers in unique(df.nworkers)
-        df_nworkers = df[df.nworkers .== nworkers, :]
-        for nwait in unique(df_nworkers.nwait)
-            if nwait < 6
-                continue
-            end
-            df_nwait = df_nworkers[df_nworkers.nwait .== nwait, :]
-            xs = zeros(0)
-            ys = zeros(0)   
-            ys .= -1         
-            for nsubpartitions in unique(df_nwait.nsubpartitions)
-                df_nsubpartitions = df_nwait[df_nwait.nsubpartitions .== nsubpartitions, :]   
-                v = 0.0         
-                for jobid in unique(df_nsubpartitions.jobid)
-                    df_jobid = df_nsubpartitions[df_nsubpartitions.jobid .== jobid, :]
-                    sort!(df_jobid, "iteration")
-                    i = findfirst((v)->v >= atol+opt*(1-rtol), df_nsubpartitions.mse)
-                    if isnothing(i)
-                        continue
-                    end
-                    if time
-                        v += df_jobid.t_total[i]
-                    else
-                        v += df_jobid.iteration[i]
-                    end
-                end
-                if iszero(v)
-                    v = -1
-                end
-                push!(xs, nsubpartitions)
-                push!(ys, v)
-            end
-            plt.plot(xs, ys, "-o", label="($nworkers, $nwait)")
-        end
-    end    
-    plt.grid()
-    plt.legend()    
-    plt.xlabel("nsubpartitions")
-    if time
-        plt.ylabel("convergence time")
-    else    
-        plt.ylabel("iterations until convergence")        
-    end
-    return
-end
-
-"""
-
 Fit a linear model (i.e., a line) to the data X, y.
 """
 function linear_model(X::AbstractMatrix, y::AbstractVector)
@@ -1729,103 +1619,6 @@ end
 
 linear_model(x::AbstractVector, y::AbstractVector) = linear_model(reshape(x, length(x), 1), y)
 
-"""
-
-Plot iteration time against the number of elements processed
-"""
-function plot_iterationtime_flops(df)
-    offsets = zeros(0)
-    slopes = zeros(0)
-
-    colors = Iterators.cycle(["r", "b", "g", "k", "m"])
-
-    plt.figure()
-    for (color, (nworkers, nwait, comm)) in zip(colors, Iterators.product(unique(df.nworkers), unique(df.nwait), unique(df.communication)))
-        if nwait != 1
-            continue
-        end
-
-        dfi = df
-        dfi = dfi[dfi.nworkers .== nworkers, :]
-        dfi = dfi[dfi.nwait .== nwait, :]
-        dfi = dfi[dfi.communication .≈ comm, :]
-        if size(dfi, 1) == 0
-            continue
-        end
-
-        plt.plot(dfi.worker_flops, dfi.t_compute, "$(color).", label="Comm. $comm, $((nworkers, nwait))")
-        gd = groupby(dfi, :worker_flops)
-        ys = [mean(df.t_compute) for df in gd]
-        xs = [mean(df.worker_flops) for df in gd]
-        plt.plot(xs, ys, "$(color)s")
-
-        # fit a line to the data
-        nflops = dfi.worker_flops
-        offset, slope = linear_model(dfi.worker_flops, dfi.t_compute)
-        start, stop = 0, maximum(nflops)
-        plt.plot(
-            [start, stop],
-            [start, stop].*slope .+ offset,
-            "$(color)-"
-        )
-
-        # print the parameters            
-        push!(offsets, offset)
-        push!(slopes, slope)
-        println("[nworkers: $nworkers, nwait: $nwait, communication: $comm] => offset: $offset, slope: $slope")
-    end
-    plt.xlabel("Flops")
-    plt.ylabel("Iteration time [s]")
-    plt.title("Time per iteration")
-    plt.grid()
-    plt.legend()
-    # println("offsets: $offsets")
-    # println("slopes: $slopes")
-    return
-end
-
-"""
-
-Plot the iteration time (compute) as a function of the amount of communication
-"""
-function plot_iterationtime_comm(df)
-    offsets = zeros(0)
-    slopes = zeros(0)
-
-    plt.figure()
-    for (nworkers, nwait, flops) in Iterators.product(unique(df.nworkers), unique(df.nwait), unique(df.worker_flops)[1:3])
-        dfi = df
-        dfi = dfi[dfi.nworkers .== nworkers, :]
-        dfi = dfi[dfi.nwait .== nwait, :]
-        dfi = dfi[dfi.worker_flops .≈ flops, :]
-        if size(dfi, 1) == 0
-            continue
-        end                    
-        plt.plot(dfi.communication, dfi.t_compute, ".", label="($nworkers, $nwait, $flops)")
-
-        # fit a line to the data
-        offset, slope = linear_model(dfi.communication, dfi.t_compute)
-        start, stop = 0, maximum(dfi.communication)
-        plt.plot(
-            [start, stop],
-            [start, stop].*slope .+ offset,
-        )
-
-        # print the parameters            
-        push!(offsets, offset)
-        push!(slopes, slope)
-        println("[nworkers: $nworkers, nwait: $nwait, nflops: $flops] => offset: $offset, slope: $slope")            
-    end
-    plt.xlabel("Communicated elements / iteration")
-    plt.ylabel("Iteration time [s]")
-    plt.title("Time per iteration")
-    plt.grid()
-    plt.legend()
-    # println("offsets: $offsets")
-    # println("slopes: $slopes")
-    return
-end
-
 function write_table(xs::AbstractVector, ys::AbstractVector, filename::AbstractString)
     length(xs) == length(ys) || throw(DimensionMismatch("xs has dimension $(length(xs)), but ys has dimension $(length(ys))"))
     open(filename, "w") do io
@@ -1835,6 +1628,59 @@ function write_table(xs::AbstractVector, ys::AbstractVector, filename::AbstractS
     end
     return
 end
+
+# Let's figure out if the straggling is explained by the varying density
+# First, let's check if the workers storing more dense partitions are consistently the slowest
+
+function plot_straggler_density(df)
+    nworkers = 18
+    nsubpartitions = 1
+    nwait = 9
+    dfi = df
+    dfi = dfi[dfi.nworkers .== nworkers, :]
+    dfi = dfi[dfi.nsubpartitions .== nsubpartitions, :]
+    dfi = dfi[dfi.nwait .== nwait, :]
+    dfi = dfi[dfi.nreplicas .== 1, :]
+    dfi = dfi[dfi.pfraction .== 1, :]
+
+    # for original data matrix
+    vs = [0.04688062471391655, 0.04749676843908486, 0.04941002489203347, 0.04862445444082279, 0.048793894574690695, 0.04943647884363674, 0.051972915153795755, 0.05602539385691622, 0.059106140262184935, 0.05671962158324654, 0.04848918053618723, 0.04840049669933181, 0.04903849489666922, 0.0502636980261616, 0.05460620642087488, 0.056018742668364305, 0.05186742079503943,
+    0.04808694236837983]
+
+    # for shuffled data matrix
+    vs = [0.05140742522974717, 0.05067826288956093, 0.05122862096280494, 0.050645562535343865, 0.05099657254820253, 0.05138775739534186, 0.050901895214905575, 0.050316781109837165, 0.05188810059429005, 0.051392694196391135, 0.05082197380306366, 0.050276556499358506, 0.05169503754425293, 0.051862277178989835, 0.05151591182965395, 0.05201310404786811, 0.05083756996715019, 0.05134404845100367]
+    vs ./= maximum(vs)
+
+    # foo = zeros(maximum(dfi.iteration))
+    # bar = zeros(maximum(dfi.iteration))
+
+    for jobid in unique(dfi.jobid)
+        dfj = dfi
+        dfj = dfj[dfj.jobid .== jobid, :]
+        if ismissing(dfj[1, "repoch_worker_1"])
+            continue
+        end
+        M, ts = straggler_matrix_from_jobid(dfi, jobid, nworkers)
+        replace!(M, -1 => 0)
+        
+        foo = round.(sum(M, dims=1) ./ size(M, 1) .+ eps(Float64), digits=3)
+        bar = round.(vs, digits=3)
+
+        p = sortperm(bar)
+        foo = foo[p]
+        bar = bar[p]
+        for i in 1:length(foo)
+            println("$(foo[i])\t$(bar[i])")
+        end    
+        println("===========")        
+        println()
+
+        # return M
+    end
+
+
+end
+
 
 function plot_genome_convergence(df, nworkers=unique(df.nworkers)[1], opt=maximum(skipmissing(df.mse)))
     println("nworkers: $nworkers, opt: $opt")
