@@ -158,7 +158,7 @@ function worker_main()
     end
 end
 
-function shutdown(pool::StragglerPool)
+function shutdown(pool::AsyncPool)
     for i in pool.ranks
         MPI.Isend(zeros(1), i, control_tag, comm)
     end
@@ -186,7 +186,7 @@ function coordinator_main()
     0 < nwait <= npartitions || throw(DomainError(nwait, "nwait must be in [1, npartitions]"))
 
     # worker pool and communication buffers
-    pool = StragglerPool(nworkers)
+    pool = AsyncPool(nworkers)
     V, recvbuf, sendbuf = coordinator_setup(nworkers; parsed_args...)
     mod(length(recvbuf), nworkers) == 0 || error("the length of recvbuf must be divisible by the number of workers")
     ∇ = similar(V)
@@ -207,6 +207,9 @@ function coordinator_main()
 
     # store which workers responded in each iteration
     responded = zeros(Int, nworkers, niterations)
+
+    # store latency for each worker and iteration
+    latency = zeros(nworkers, niterations)
 
     # to record iteration time
     ts_compute = zeros(niterations)
@@ -233,7 +236,7 @@ function coordinator_main()
     # run 1 dummy iteration, where we wait for all workers, to trigger compilation
     # (this is only necessary when benchmarking)
     epoch = 1
-    repochs = kmap!(sendbuf, recvbuf, isendbuf, irecvbuf, nworkers, epoch, pool, comm; tag=data_tag)
+    repochs = asyncmap!(pool, sendbuf, recvbuf, isendbuf, irecvbuf, comm, nwait=nworkers, epoch=epoch, tag=data_tag)
     state = coordinator_task!(deepcopy(V), deepcopy(∇), recvbufs, deepcopy(sendbuf), epoch, repochs; parsed_args...)
     GC.gc() # reduce the probability that we run out of memory due to making too many copies
     epoch = 2
@@ -242,7 +245,7 @@ function coordinator_main()
     state = nothing # so that we can release the memory
 
     # create a new pool to reset the epochs
-    pool = StragglerPool(nworkers)
+    pool = AsyncPool(nworkers)
 
     # manually call the GC now to avoid pauses later during execution
     # (this is only necessary when benchmarking)
@@ -259,9 +262,10 @@ function coordinator_main()
     # first (real) iteration (initializes state)
     epoch = 1
     ts_compute[epoch] = @elapsed begin
-        repochs = kmap!(sendbuf, recvbuf, isendbuf, irecvbuf, fwait, epoch, pool, comm; tag=data_tag)
+        repochs = asyncmap!(pool, sendbuf, recvbuf, isendbuf, irecvbuf, comm, nwait=fwait, epoch=epoch, tag=data_tag)
     end
     responded[:, epoch] .= repochs
+    latency[:, epoch] .= pool.latency
     ts_update[epoch] = @elapsed begin
         state = coordinator_task!(V, ∇, recvbufs, sendbuf, epoch, repochs; parsed_args...)    
     end
@@ -275,9 +279,10 @@ function coordinator_main()
     # remaining iterations
     for epoch in 2:niterations
         ts_compute[epoch] = @elapsed begin
-            repochs = kmap!(sendbuf, recvbuf, isendbuf, irecvbuf, fwait, epoch, pool, comm; tag=data_tag)
+            repochs = asyncmap!(pool, sendbuf, recvbuf, isendbuf, irecvbuf, comm, nwait=fwait, epoch=epoch, tag=data_tag)
         end
         responded[:, epoch] .= repochs
+        latency[:, epoch] .= pool.latency
         ts_update[epoch] = @elapsed begin
             state = coordinator_task!(V, ∇, recvbufs, sendbuf, epoch, repochs; state, parsed_args...)    
         end
@@ -309,6 +314,7 @@ function coordinator_main()
         fid["benchmark/t_compute"] = ts_compute
         fid["benchmark/t_update"] = ts_update
         fid["benchmark/responded"] = responded
+        fid["benchmark/latency"] = latency
     end
     return
 end
