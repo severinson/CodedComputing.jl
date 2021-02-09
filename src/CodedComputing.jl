@@ -9,7 +9,6 @@ include("OrderStats.jl")
 
 include("encoding/diggavi.jl")
 include("analysis/parse.jl")
-include("analysis/pcaplots.jl")
 include("pca/benchmark.jl")
 
 end
