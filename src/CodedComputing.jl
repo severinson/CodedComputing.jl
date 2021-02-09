@@ -8,7 +8,7 @@ include("HDF5Sparse.jl")
 include("OrderStats.jl")
 
 include("encoding/diggavi.jl")
-include("analysis/pca.jl")
+include("analysis/parse.jl")
 include("analysis/pcaplots.jl")
 include("pca/benchmark.jl")
 
