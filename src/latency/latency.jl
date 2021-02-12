@@ -51,7 +51,7 @@ function parse_commandline(isroot::Bool)
             help = "Number of bytes communicated in each direction per iteration"
             required = true
             arg_type = Int            
-            range_tester = (x) -> x >= 1            
+            range_tester = (x) -> x >= 8 # to fit a Float64
         "--nrows"
             help = "Number of rows of the data matrix"
             required = true
@@ -117,6 +117,7 @@ function worker_main()
     # communication setup
     recvbuf = zeros(UInt8, parsed_args[:nbytes])
     sendbuf = zeros(UInt8, parsed_args[:nbytes])
+    tbuf = reinterpret(Float64, view(sendbuf, 1:8))
 
     # worker task setup
     X = sprand(parsed_args[:nrows], parsed_args[:ncols], parsed_args[:density])
@@ -126,7 +127,7 @@ function worker_main()
     # main loop (niterations+1 to account for the dummy iteration)
     for i in 1:(parsed_args[:niterations]+1)
         rreq = MPI.Irecv!(recvbuf, root, data_tag, comm)
-        worker_task!(V, W, X)
+        tbuf[1] = @elapsed worker_task!(V, W, X)
         MPI.Isend(sendbuf, root, data_tag, comm)        
     end
     return
@@ -152,10 +153,16 @@ function coordinator_main()
     sendbuf = zeros(UInt8, parsed_args[:nbytes])
     irecvbuf = similar(recvbuf)    
     isendbuf = similar(sendbuf, nworkers*length(sendbuf))
+    
+    # views into recvbuf for each worker
+    n = div(length(recvbuf), nworkers)
+    recvbufs = [view(recvbuf, (i-1)*n+1:i*n) for i in 1:nworkers]
+    tbufs = [reinterpret(Float64, view(buf, 1:8)) for buf in recvbufs]
 
     # store which workers responded in each iteration
     worker_repochs = zeros(Int, nworkers, niterations) # receive epoch for each worker and iteration
     worker_latency = zeros(nworkers, niterations) # latency of individual workers
+    worker_compute_latency = zeros(nworkers, niterations) # compute latency recorded by the worker
     timestamps = zeros(UInt64, niterations)
     latency = zeros(niterations)
 
@@ -178,6 +185,9 @@ function coordinator_main()
         end
         worker_repochs[:, i] .= repochs
         worker_latency[:, i] .= pool.latency
+        for j in 1:nworkers
+            worker_compute_latency[j, i] = tbufs[j][1]
+        end
         if timeout > 0
             sleep(timeout)
         end
@@ -193,6 +203,7 @@ function coordinator_main()
         end        
         fid["worker_repochs"] = worker_repochs
         fid["worker_latency"] = worker_latency
+        fid["worker_compute_latency"] = worker_compute_latency
         fid["timestamps"] = timestamps
         fid["latency"] = latency
     end
