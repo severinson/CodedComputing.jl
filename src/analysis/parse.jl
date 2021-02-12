@@ -124,6 +124,7 @@ function parse_benchmark_files(;dir::AbstractString, inputfile::AbstractString, 
     for filename in filenames
         try
             df_from_output_file(filename, X) # the result is memoized on disk
+            rm(filename)
         catch e
             printstyled(stderr,"ERROR: ", bold=true, color=:red)
             printstyled(stderr,sprint(showerror,e), color=:light_red)
@@ -132,6 +133,14 @@ function parse_benchmark_files(;dir::AbstractString, inputfile::AbstractString, 
         GC.gc()
     end
     aggregate_benchmark_dataframes(;dir, prefix, dfname)
+end
+
+function parse_loop(args...; kwargs...)
+    while true
+        GC.gc()
+        parse_benchmark_files(args...; kwargs...)        
+        sleep(60)        
+    end
 end
 
 # if run as a script
