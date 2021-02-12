@@ -16,7 +16,7 @@ function test_load_pca_iterates(outputfile::AbstractString, name::AbstractString
 end
 
 @testset "latency.jl" begin
-    kernel = "../src/latency/latency.jl"
+    kernel = "../src/latency/kernel.jl"
     nwait = 1
     nworkers = 3
     niterations = 10

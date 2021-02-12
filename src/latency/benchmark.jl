@@ -1,7 +1,7 @@
 export latency_benchmark
 
 function latency_benchmark()
-    kernel = "src/latency/latency.jl"
+    kernel = "src/latency/kernel.jl"
     nwait = 1
     nworkers = 3
     niterations = 10
