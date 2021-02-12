@@ -123,8 +123,8 @@ function worker_main()
     V = randn(parsed_args[:ncols], parsed_args[:ncomponents])
     W = zeros(parsed_args[:nrows], parsed_args[:ncomponents])
 
-    # main loop
-    for i in 1:parsed_args[:niterations]
+    # main loop (niterations+1 to account for the dummy iteration)
+    for i in 1:(parsed_args[:niterations]+1)
         rreq = MPI.Irecv!(recvbuf, root, data_tag, comm)
         worker_task!(V, W, X)
         MPI.Isend(sendbuf, root, data_tag, comm)        
@@ -158,6 +158,17 @@ function coordinator_main()
     worker_latency = zeros(nworkers, niterations) # latency of individual workers
     timestamps = zeros(UInt64, niterations)
     latency = zeros(niterations)
+
+    # dummy iteration to force compilation
+    timestamps[1] = time_ns()
+    latency[1] = @elapsed begin
+        repochs = asyncmap!(pool, sendbuf, recvbuf, isendbuf, irecvbuf, comm, nwait=nworkers, tag=data_tag)
+    end
+    worker_repochs[:, 1] .= repochs
+    worker_latency[:, 1] .= pool.latency
+    if timeout > 0
+        sleep(timeout)
+    end    
 
     # main loop
     for i in 1:parsed_args[:niterations]
