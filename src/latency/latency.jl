@@ -80,8 +80,8 @@ function parse_commandline(isroot::Bool)
         "--timeout"
             help = "Amount of time to sleep between iterations"
             required = true
-            arg_type = Int
-            range_tester = (x) -> x >= 1            
+            arg_type = Float64
+            range_tester = (x) -> 0 <= x
     end
 
     # optionally add implementation-specific arguments
@@ -110,9 +110,9 @@ end
 Receive from the coordinator, perform a matrix-matrix multiplication, and respond with some bytes.
 """
 function worker_main()
-    nworkers = MPI.Comm_size(comm) - 1
-    parsed_args[:nworkers] = nworkers    
     parsed_args = parse_commandline(isroot)
+    nworkers = MPI.Comm_size(comm) - 1    
+    parsed_args[:nworkers] = nworkers    
 
     # communication setup
     recvbuf = zeros(UInt8, parsed_args[:nbytes])
@@ -136,18 +136,19 @@ end
 
 Send some bytes to the workers, wait for their response, sleep for a bit, and repeat.
 """
-function coordinator_main()
-    nworkers = MPI.Comm_size(comm) - 1    
+function coordinator_main()    
     parsed_args = parse_commandline(isroot)
+    nworkers = MPI.Comm_size(comm) - 1        
+    parsed_args[:nworkers] = nworkers
     niterations::Int = parsed_args[:niterations]
     niterations > 0 || throw(DomainError(niterations, "The number of iterations must be non-negative"))
     nwait::Int = isnothing(parsed_args[:nwait]) ? nworkers : parsed_args[:nwait]    
     0 < nwait <= nworkers || throw(DomainError(nwait, "nwait must be in [1, nworkers]"))    
-    timeout:Float64 = parsed_args[:timeout]
+    timeout::Float64 = parsed_args[:timeout]
 
     # communication setup
     pool = AsyncPool(nworkers)    
-    recvbuf = zeros(UInt8, parsed_args[:nbytes])
+    recvbuf = zeros(UInt8, nworkers*parsed_args[:nbytes])
     sendbuf = zeros(UInt8, parsed_args[:nbytes])
     irecvbuf = similar(recvbuf)    
     isendbuf = similar(sendbuf, nworkers*length(sendbuf))
@@ -156,7 +157,7 @@ function coordinator_main()
     worker_repochs = zeros(Int, nworkers, niterations) # receive epoch for each worker and iteration
     worker_latency = zeros(nworkers, niterations) # latency of individual workers
     timestamps = zeros(UInt64, niterations)
-    latency = zeros(UInt64, niterations)
+    latency = zeros(niterations)
 
     # main loop
     for i in 1:parsed_args[:niterations]
@@ -164,8 +165,8 @@ function coordinator_main()
         latency[i] = @elapsed begin
             repochs = asyncmap!(pool, sendbuf, recvbuf, isendbuf, irecvbuf, comm, nwait=nwait, tag=data_tag)
         end
-        worker_repochs[:, epoch] .= repochs
-        worker_latency[:, epoch] .= pool.latency
+        worker_repochs[:, i] .= repochs
+        worker_latency[:, i] .= pool.latency
         if timeout > 0
             sleep(timeout)
         end
