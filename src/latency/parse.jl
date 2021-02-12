@@ -46,6 +46,7 @@ function df_from_latency_file(filename::AbstractString)
             for j in 1:nworkers
                 row["repoch_worker_$j"] = fid["worker_repochs"][j, i]
                 row["latency_worker_$j"] = fid["worker_latency"][j, i]
+                row["compute_latency_worker_$j"] = fid["worker_compute_latency"][j, i]
             end
             push!(rv, row, cols=:union)
         end
