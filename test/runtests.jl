@@ -39,7 +39,7 @@ end
             --timeout $timeout            
     ```))
     df = df_from_latency_file(outputfile)
-    println(df)    
+    @test all(diff(df.timestamp) .>= timeout)
 end
 
 @testset "Linalg.jl" begin
