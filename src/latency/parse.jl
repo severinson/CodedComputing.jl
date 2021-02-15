@@ -7,13 +7,6 @@ Parse an output file and record everything in a DataFrame.
 """
 function df_from_latency_file(filename::AbstractString)
 
-
-    # return a memoized result if one exists
-    # df_filename = filename * ".csv"
-    # if isfile(df_filename)
-    #     return DataFrame(CSV.File(df_filename))
-    # end
-
     # skip non-existing/non-hdf5 files
     rv = DataFrame()
     if !HDF5.ishdf5(filename)
@@ -51,9 +44,36 @@ function df_from_latency_file(filename::AbstractString)
             push!(rv, row, cols=:union)
         end
     end    
-
-    # memoize the resulting df
-    # CSV.write(df_filename, rv)
-
     rv
+end
+
+"""
+
+Read all output files from `dir` and write summary statistics (e.g., iteration time and convergence) to DataFrames.
+"""
+function parse_latency_files(;dir::AbstractString, prefix="output", dfname="df.csv")
+
+    # process output files
+    filenames = glob("$(prefix)*.h5", dir)
+    for filename in filenames
+        try
+            df = df_from_latency_file(filename) # the result is memoized on disk
+            CSV.write(filename*".csv", df)
+            # rm(filename)
+        catch e
+            printstyled(stderr,"ERROR: ", bold=true, color=:red)
+            printstyled(stderr,sprint(showerror,e), color=:light_red)
+            println(stderr)            
+        end
+        GC.gc()
+    end
+    aggregate_dataframes(;dir, prefix, dfname)
+end
+
+function latency_parse_loop(args...; kwargs...)
+    while true
+        GC.gc()
+        parse_latency_files(args...; kwargs...)
+        sleep(60)        
+    end
 end

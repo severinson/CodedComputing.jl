@@ -91,7 +91,7 @@ end
 
 Aggregate all DataFrames in `dir` into a single DataFrame.
 """
-function aggregate_benchmark_dataframes(;dir::AbstractString, prefix::AbstractString="output", dfname::AbstractString="df.csv")
+function aggregate_dataframes(;dir::AbstractString, prefix::AbstractString="output", dfname::AbstractString="df.csv")
     dfs = [DataFrame(CSV.File(filename)) for filename in glob("$(prefix)*.csv", dir)]
     for (i, df) in enumerate(dfs)
         df[:jobid] = i # store a unique ID for each file read
@@ -132,7 +132,7 @@ function parse_benchmark_files(;dir::AbstractString, inputfile::AbstractString, 
         end
         GC.gc()
     end
-    aggregate_benchmark_dataframes(;dir, prefix, dfname)
+    aggregate_dataframes(;dir, prefix, dfname)
 end
 
 function parse_loop(args...; kwargs...)
