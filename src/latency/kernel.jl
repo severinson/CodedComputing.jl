@@ -124,14 +124,26 @@ function worker_main()
     V = randn(parsed_args[:ncols], parsed_args[:ncomponents])
     W = zeros(parsed_args[:nrows], parsed_args[:ncomponents])
 
-    # main loop (niterations+1 to account for the dummy iteration)
-    for i in 1:(parsed_args[:niterations]+1)
+    # control channel, to tell the workers when to exit
+    crreq = MPI.Irecv!(zeros(1), root, control_tag, comm)    
+
+    # main loop
+    while true
         rreq = MPI.Irecv!(recvbuf, root, data_tag, comm)
-        MPI.Wait!(rreq)
+        index, _ = MPI.Waitany!([crreq, rreq])
+        if index == 1 # exit message on control channel
+            break
+        end
         tbuf[1] = @elapsed worker_task!(V, W, X)
         MPI.Isend(sendbuf, root, data_tag, comm)        
     end
     return
+end
+
+function shutdown(pool::AsyncPool)
+    for i in pool.ranks
+        MPI.Isend(zeros(1), i, control_tag, comm)
+    end
 end
 
 """
@@ -184,6 +196,7 @@ function coordinator_main()
         latency[i] = @elapsed begin
             repochs = asyncmap!(pool, sendbuf, recvbuf, isendbuf, irecvbuf, comm, nwait=nwait, tag=data_tag)
         end
+        println("Iteration $i completed in $(latency[i]) seconds")
         worker_repochs[:, i] .= repochs
         worker_latency[:, i] .= pool.latency
         for j in 1:nworkers
@@ -193,6 +206,7 @@ function coordinator_main()
             sleep(timeout)
         end
     end
+    shutdown(pool)    
 
     # write statistics to file
     h5open(parsed_args[:outputfile], "w") do fid
