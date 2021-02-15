@@ -127,6 +127,7 @@ function worker_main()
     # main loop (niterations+1 to account for the dummy iteration)
     for i in 1:(parsed_args[:niterations]+1)
         rreq = MPI.Irecv!(recvbuf, root, data_tag, comm)
+        MPI.Wait!(rreq)
         tbuf[1] = @elapsed worker_task!(V, W, X)
         MPI.Isend(sendbuf, root, data_tag, comm)        
     end
