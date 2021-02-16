@@ -1,5 +1,5 @@
 using Distributions
-export ExponentialOrder
+export ExponentialOrder, OrderStatistic
 
 """
     ExponentialOrder(scale::Real, total::Int, order::Int)
@@ -18,4 +18,22 @@ function ExponentialOrder(scale::Real, total::Int, order::Int)
     alpha = mean^2 / var # shape parameter
     theta = var / mean # scale
     return Gamma(alpha, theta)
+end
+
+struct OrderStatistic{S<:Sampleable{Univariate,Continuous},T} <: Sampleable{Univariate,Continuous}
+    s::S
+    k::Int
+    buffer::Vector{T}
+end
+
+Base.show(io::IO, s::OrderStatistic) = print(io, "OrderStatistic($(s.s), k=$(s.k), n=$(length(s.buffer)))")
+
+function OrderStatistic(s::Sampleable, order::Integer, nvariables::Integer)
+    OrderStatistic(s, order, Vector{eltype(s)}(undef, nvariables))
+end
+
+function Distributions.rand(rng::AbstractRNG, s::OrderStatistic)
+    Distributions.rand!(rng, s.s, s.buffer)
+    partialsort!(s.buffer, s.k)
+    s.buffer[s.k]
 end
