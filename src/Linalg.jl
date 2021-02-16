@@ -12,7 +12,7 @@ end
 minangle(w, v) = min(angle(w, v), angle(w, -v))
 
 """Compute PCA via the built-in SVD."""
-function pca(X, k::Integer=size(X, 2))
+function pca(X, k::Integer=min(size(X)...))
     F = svd(X)
     return F.V[:, 1:k]
 end
