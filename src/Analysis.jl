@@ -24,8 +24,12 @@ function fit_polynomial(xs::AbstractVector, ys::AbstractVector, d=1)
     for i in 1:d
         A[:, i+1] .= xs.^i
     end
-    coeffs = A\ys
-    (x) -> dot(coeffs, [x^i for i in 0:d]), coeffs
+    try
+        coeffs = A\ys
+        return (x) -> dot(coeffs, [x^i for i in 0:d]), coeffs        
+    catch SingularException
+        return (x) -> 0, fill(NaN, d+1)
+    end
 end
 
 linear_model(x::AbstractVector, y::AbstractVector) = linear_model(reshape(x, length(x), 1), y)

@@ -52,7 +52,7 @@ function cumulative_time_from_df(df)
         mask = df.jobid .== jobid
         df_jobid = df[mask, :]
         sort!(df_jobid, "iteration")
-        rv[mask] .= cumsum(df_jobid.t_compute .+ df_jobid.t_update)
+        rv[mask] .= cumsum(df_jobid.latency .+ df_jobid.t_update)
     end
     rv
 end
@@ -75,35 +75,37 @@ end
 
 """
 
-Return a vector composed of the number of floats communicated per iteration.
-"""
-function communication_from_df(df)
-    2 .* df.ncolumns .* df.ncomponents
-end
-
-"""
-
 Read a csv file into a DataFrame
 """
-function read_df(filename="C:/Users/albin/Dropbox/Eigenvector project/data/dataframes/210208/210208_v5.csv"; nworkers=nothing)
+function read_df(filename="C:/Users/albin/Dropbox/Eigenvector project/data/dataframes/pca/210208/210208_v11.csv")
     df = DataFrame(CSV.File(filename, normalizenames=true))
     df[:nostale] = Missings.replace(df.nostale, false)
     df[:kickstart] = Missings.replace(df.kickstart, false)
     df = df[.!ismissing.(df.nworkers), :]
     df = df[df.kickstart .== false, :]
-    if !isnothing(nworkers)
-        df = df[df.nworkers .== nworkers, :]
-    end
     df = remove_initialization_delay!(df)
     df[:worker_flops] = worker_flops_from_df(df)
+    df.npartitions = df.nworkers .* df.nsubpartitions
+    rename!(df, :t_compute => :latency)
 
     # scale up workload
     # df[:worker_flops] .*= 22
     # df[:t_compute] .= model_tcompute_from_df(df, samp=1)
 
-    df[:communication] = communication_from_df(df)
+    df[:nbytes] = df.ncolumns .* df.ncomponents .* 8
     df[:t_total] = cumulative_time_from_df(df)    
     df
+end
+
+"""
+
+Read a latency experiment csv file into a DataFrame
+"""
+function read_latency_df()
+    filename="C:/Users/albin/Dropbox/Eigenvector project/data/dataframes/latency/210215_v3/df_v1.csv"
+    df = DataFrame(CSV.File(filename, normalizenames=true))
+    df.worker_flops = 2 .* df.nrows .* df.ncols .* df.ncomponents .* df.density
+    df[df.ncols .== 1812842, :], df[df.ncols .== 2504, :]
 end
 
 """
