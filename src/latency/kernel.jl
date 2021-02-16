@@ -161,7 +161,7 @@ function coordinator_main()
     timeout::Float64 = parsed_args[:timeout]
 
     # communication setup
-    pool = AsyncPool(nworkers)    
+    pool = AsyncPool(nworkers, epoch0=-1)
     recvbuf = zeros(UInt8, nworkers*parsed_args[:nbytes])
     sendbuf = zeros(UInt8, parsed_args[:nbytes])
     irecvbuf = similar(recvbuf)    
@@ -196,7 +196,6 @@ function coordinator_main()
         latency[i] = @elapsed begin
             repochs = asyncmap!(pool, sendbuf, recvbuf, isendbuf, irecvbuf, comm, nwait=nwait, tag=data_tag)
         end
-        println("Iteration $i completed in $(latency[i]) seconds")
         worker_repochs[:, i] .= repochs
         worker_latency[:, i] .= pool.latency
         for j in 1:nworkers
