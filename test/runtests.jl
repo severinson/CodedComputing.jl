@@ -15,6 +15,33 @@ function test_load_pca_iterates(outputfile::AbstractString, name::AbstractString
     end
 end
 
+@testset "latency.jl" begin
+    kernel = "../src/latency/kernel.jl"
+    nwait = 1
+    nworkers = 3
+    niterations = 10
+    timeout = 0.1
+    nbytes = 100
+    nrows = 100
+    ncols = 100
+    ncomponents = 3
+    density = 0.1
+    outputfile = tempname()
+    mpiexec(cmd -> run(```
+        $cmd -n $(nworkers+1) julia --project $kernel $outputfile
+            --niterations $niterations
+            --nbytes $nbytes
+            --nrows $nrows
+            --ncols $ncols
+            --ncomponents $ncomponents
+            --density $density
+            --nwait $nwait
+            --timeout $timeout            
+    ```))
+    df = df_from_latency_file(outputfile)
+    @test all(diff(df.timestamp) .>= timeout)
+end
+
 @testset "Linalg.jl" begin
     Random.seed!(123)
     n, m = 100, 10
@@ -54,7 +81,7 @@ end
         --niterations $niterations 
         --ncomponents $k 
         --saveiterates
-        ```))    
+        ```))
     Vs = test_load_pca_iterates(outputfile, outputdataset)
     fs = [explained_variance(X, V) for V in Vs]    
     # println("SGD (exact) convergence: $fs")
