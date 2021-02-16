@@ -102,7 +102,7 @@ end
 Read a latency experiment csv file into a DataFrame
 """
 function read_latency_df()
-    filename="C:/Users/albin/Dropbox/Eigenvector project/data/dataframes/latency/210215_v3/df_v1.csv"
+    filename="C:/Users/albin/Dropbox/Eigenvector project/data/dataframes/latency/210215_v3/df_v4.csv"
     df = DataFrame(CSV.File(filename, normalizenames=true))
     df.worker_flops = 2 .* df.nrows .* df.ncols .* df.ncomponents .* df.density
     df[df.ncols .== 1812842, :], df[df.ncols .== 2504, :]

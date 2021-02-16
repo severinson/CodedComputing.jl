@@ -392,8 +392,8 @@ plot_iterationtime_quantiles(df::AbstractDataFrame) = plot_iterationtime_quantil
 Return a DataFrame of linear model parameters for t_compute fit to the data
 """
 function linear_model_df(df)
-    df = df[df.kickstart .== false, :]
-    df = df[df.nreplicas .== 1, :]
+    # df = df[df.kickstart .== false, :]
+    # df = df[df.nreplicas .== 1, :]
     rv = DataFrame()    
     for (nworkers, worker_flops) in Iterators.product(unique(df.nworkers), unique(df.worker_flops))
         dfi = df
@@ -408,7 +408,7 @@ function linear_model_df(df)
         # offset, slope = poly.coeffs
 
         # homemade polynomial fit
-        poly, coeffs = fit_polynomial(float.(dfi.nwait), float.(dfi.t_compute), 1)
+        poly, coeffs = fit_polynomial(float.(dfi.nwait), float.(dfi.latency), 1)
         offset, slope = coeffs
 
         row = Dict("nworkers" => nworkers, "worker_flops" => worker_flops, "intercept" => offset, "slope" => slope)
@@ -433,10 +433,10 @@ end
 Same as linear_model_df, except that the linear model parameters are fit to the average latency for each experiment.
 """
 function mean_linear_model_df(df)
-    df = df[df.kickstart .== false, :]
-    df = df[df.nreplicas .== 1, :]
+    # df = df[df.kickstart .== false, :]
+    # df = df[df.nreplicas .== 1, :]
     df = mean_latency_df(df)
-    df = by(df, [:nworkers, :worker_flops], [:nwait, :t_compute] => (x) -> NamedTuple{(:intercept, :slope)}(fit_polynomial(x.nwait, x.t_compute, 1)[2]))
+    df = by(df, [:nworkers, :worker_flops], [:nwait, :latency] => (x) -> NamedTuple{(:intercept, :slope)}(fit_polynomial(x.nwait, x.latency, 1)[2]))
     sort!(df, [:nworkers, :worker_flops])
 end
 
@@ -445,9 +445,9 @@ end
 Plot the linear model parameters 
 """
 function plot_linear_model(df)
-    df = df[df.kickstart .== false, :]
-    df = df[df.nreplicas .== 1, :]
-    df = df[df.pfraction .== 1, :]
+    # df = df[df.kickstart .== false, :]
+    # df = df[df.nreplicas .== 1, :]
+    # df = df[df.pfraction .== 1, :]
 
     # dfm = linear_model_df(df)
     dfm = mean_linear_model_df(df)
@@ -489,7 +489,7 @@ function plot_linear_model(df)
     for nworkers in unique(dfm.nworkers)
         dfi = dfm
         dfi = dfi[dfi.nworkers .== nworkers, :]
-        x = dfi.worker_flops ./ dfi.nworkers # mysterious normalization
+        x = dfi.worker_flops ./ dfi.nworkers
         # x = dfi.worker_flops
         plt.semilogx(x, dfi.slope, "o", label="Nn: $nworkers")
 
@@ -504,6 +504,7 @@ function plot_linear_model(df)
     # quadratic fit
     poly, coeffs = fit_polynomial(float.(dfm.worker_flops ./ dfm.nworkers), float.(dfm.slope), 2)
     t = range(0, maximum(dfm.worker_flops ./ dfm.nworkers), length=100)
+    # t = range(0, maximum(dfm.worker_flops), length=100)
     plt.semilogx(t, poly.(t))
 
     # print fit line
@@ -884,6 +885,10 @@ function orderstats_df(df)
     # compute the order of all workers
     sort!(joined, [:jobid, :iteration, :worker_latency])
     joined[:order] = by(joined, [:jobid, :iteration], :nworkers => ((x) -> collect(1:maximum(x))) => :order).order
+    if "compute_latency_worker_1" in names(df)
+        sort!(joined, [:jobid, :iteration, :worker_compute_latency])
+        joined[:compute_order] = by(joined, [:jobid, :iteration], :nworkers => ((x) -> collect(1:maximum(x))) => :order).order        
+    end
 
     return joined
 end
@@ -938,34 +943,41 @@ function plot_order_latency(df, order=1)
     return
 end
 
+
+
 """
 
 Plot
 - Latency order stats recorded individually for each worker for different w_target
 - Iteration latency for different w_target
 """
-function plot_orderstats(df, nworkers=18, work=1)
+function plot_orderstats(df, nworkers=18, work=1; onlycompute=true)
+    order_col = onlycompute ? :compute_order : :order
+    latency_col = onlycompute ? :compute_latency : :latency    
     df = df[df.nworkers .== nworkers, :]
 
     # filter by either number of partitions or worker_flops
     if typeof(work) <: Integer
         df = df[df.nsubpartitions .== work, :]
     elseif typeof(work) <: Real
-        df = df[isapprox.(df.worker_flops, work, atol=1e2), :]
+        df = df[isapprox.(df.worker_flops, work, rtol=0.1), :]
     else
         error()
     end    
-    println("worker_flops: $(unique(df.worker_flops))")
-    println("nbytes: $(unique(df.nbytes))\n")
+    println("worker_flops:\t$(unique(df.worker_flops))")
+    println("nbytes:\t$(unique(df.nbytes))\n")
     # return df.t_update
 
     dfo = orderstats_df(df)    
+    dfo.order = dfo.order ./ dfo.nworkers
+    dfo.compute_order = dfo.compute_order ./ dfo.nworkers
     # dfo = dfo[dfo.order .<= dfo.nwait, :]
 
     # latency order stats recorded for individual workers
     plt.figure()
-    for f in [3/nworkers, 0.5, 1.0]
-        nwait_target = round(Int, f*nworkers)        
+    for nwait_target in sort!(unique(dfo.nwait))
+        # for f in [3/nworkers, 0.5, 1.0]
+        # nwait_target = round(Int, f*nworkers)        
         
         dfi = dfo
         dfi = dfi[dfi.nwait .== nwait_target, :]
@@ -974,35 +986,33 @@ function plot_orderstats(df, nworkers=18, work=1)
             continue
         end            
         # plt.plot(dfi.order, dfi.worker_latency, ".", label="w_target: $nwait_target")
-        straggler_fraction = sum(dfi.isstraggler) / length(dfi.isstraggler)
-        dfi = dfi[dfi.isstraggler .== false, :]
+        # straggler_fraction = sum(dfi.isstraggler) / length(dfi.isstraggler)
+        straggler_fraction = sum(dfi[col] .< dfi.nwait) / size(dfi, 1)
+        dfi = dfi[dfi[col] .* dfi.nworkers .<= dfi.nwait, :]
+        # dfi = dfi[dfi.isstraggler .== false, :]
 
-        dfj = by(dfi, :order, :worker_latency => mean => :mean, :jobid => ((x) -> length(unique(x))) => :njobs)
-        sort!(dfj, :order)
-        plt.plot(dfj.order, dfj.mean, "o", label="w_target: $nwait_target")
+        dfj = by(dfi, col, :worker_compute_latency => mean => :mean, :jobid => ((x) -> length(unique(x))) => :njobs)
+        sort!(dfj, col)
+        plt.plot(dfj[col], dfj.mean, "o", label="w_target: $nwait_target")
 
         println("nwait_target: $nwait_target")
-        println(collect(zip(dfj.order, dfj.njobs)))
+        println(collect(zip(dfj.compute_order, dfj.njobs)))
         println("straggler_fraction: $straggler_fraction")
         println()
 
-        if size(dfj, 1) >= 3
-            p, coeffs = fit_polynomial(dfj.order, dfj.mean, 3)
-            ts = range(0, nwait_target, length=100)
-            plt.plot(ts, p.(ts))
-            # println(coeffs)   
-        end     
+        # if size(dfj, 1) >= 3
+        #     p, coeffs = fit_polynomial(dfj.order, dfj.mean, 3)
+        #     ts = range(0, nwait_target, length=100)
+        #     # plt.plot(ts, p.(ts))
+        #     # println(coeffs)   
+        # end     
     end
 
     # iteration latency for different nwait_target
-    # if "t_compute" in names(df)
-    #     df.latency = df.t_compute
-    # end
     # dfi = mean_latency_df(df)
-    dfi = df
-    # plt.plot(dfi.nwait, dfi.latency, ".")    
-    dfj = by(dfi, :nwait, :latency => mean => :mean)    
-    plt.plot(dfj.nwait, dfj.mean, "s", label="Iteration latency")
+    # plt.plot(dfi.nwait, dfi.latency, ".")
+    dfj = by(df, :nwait, :latency => mean => :mean)    
+    plt.plot(dfj.nwait ./ nworkers, dfj.mean, "s", label="Iteration latency")
     
     # p, coeffs = fit_polynomial(dfj.nwait, dfj.t_compute_mean, 3)
     # ts = range(0, nworkers, length=100)
@@ -1016,23 +1026,116 @@ function plot_orderstats(df, nworkers=18, work=1)
     return    
 end
 
-function plot_orderstats_derivative(df, nworkers=18, work=1)
-    # df = df[df.nworkers .== nworkers, :]
+# - The latency of each worker at a partiular point of time is characterized by a random variable with some distribution
+# - The parameters of that distribution are in turn drawn from some other distribution
+# - The parameters of that distribution may change over time, which is captured by the autocorrelation of those parameters
+# - Latency may be correlated between workers
+# - The latency of a particular iteration is equal to the latency of the w-th fastest worker
+# - Which is captured by the w-th order statistic of the random variables characterizing the latency of the individual workers
+# - To sample from the iteration latency distribution I need to first generate a set of distributions corresponding to the workers, then draw a sample from each of those distributions, and finally take the w-th largest value of out those samples
 
-    # filter by either number of partitions or worker_flops
-    # if typeof(work) <: Integer
-    #     df = df[df.nsubpartitions .== work, :]
-    # elseif typeof(work) <: Real
-    #     df = df[isapprox.(df.worker_flops, work, atol=1e-2), :]
-    # else
-    #     error()
-    # end    
-    # println("worker_flops: $(unique(df.worker_flops))")
-    # println("nbytes: $(unique(df.nbytes))\n")
-    # return df.t_update
+function plot_orderstats_flops(df, nworkers=18; onlycompute=true)
+    order_col = onlycompute ? :compute_order : :order
+    latency_col = onlycompute ? :worker_compute_latency : :worker_latency    
+    df = df[df.nworkers .== nworkers, :]
+    println("worker_flops:\t$(unique(df.worker_flops))")
+    println("nbytes:\t$(unique(df.nbytes))\n")
+    dfo = orderstats_df(df)    
 
-    df = orderstats_df(df)
-    df = df[df.order .<= df.nwait, :]
+    # latency order stats recorded for individual workers
+    plt.figure()
+    nwait_target = nworkers
+    for worker_flops in sort!(unique(dfo.worker_flops))
+        dfi = dfo
+        dfi = dfi[dfi.nwait .== nwait_target, :]
+        dfi = dfi[dfi.worker_flops .== worker_flops, :]
+        # dfi = dfi[dfi.order .<= dfi.nwait, :]       
+        # plt.plot(dfi.order, dfi.worker_latency, ".", label="w_target: $nwait_target")
+        straggler_fraction = sum(dfi.isstraggler) / length(dfi.isstraggler)
+        dfi = dfi[dfi.isstraggler .== false, :]
+
+        dfj = by(dfi, order_col, :worker_latency => mean => :mean, :jobid => ((x) -> length(unique(x))) => :njobs)
+        sort!(dfj, order_col)
+        plt.plot(dfj[order_col], dfj.mean, "o", label="w_target: $nwait_target ($worker_flops)")
+
+        println("nwait_target: $nwait_target")
+        println(collect(zip(dfj[order_col], dfj.njobs)))
+        println("straggler_fraction: $straggler_fraction")
+        println()
+
+        if size(dfj, 1) >= 3
+            p, coeffs = fit_polynomial(dfj[order_col], dfj.mean, 3)
+            ts = range(0, nwait_target, length=100)
+            # plt.plot(ts, p.(ts))
+            # println(coeffs)   
+        end     
+
+        # iteration latency for different nwait_target
+        dfi = df
+        dfi = dfi[dfi.worker_flops .== worker_flops, :]
+        # dfi = mean_latency_df(df)
+        # plt.plot(dfi.nwait, dfi.latency, ".")    
+        dfj = by(dfi, :nwait, :latency => mean => :mean)
+        plt.plot(dfj.nwait, dfj.mean, "s", label="Iteration latency ($worker_flops)")
+        
+        # p, coeffs = fit_polynomial(dfj.nwait, dfj.t_compute_mean, 3)
+        # ts = range(0, nworkers, length=100)
+        # plt.plot(ts, p.(ts))
+        # println(coeffs)    
+
+
+        # latency predicted by the order statistics of Normal random variables
+        meanp = Polynomial([2.3552983559702727e-17, 3.5452942951744024e-9, 6.963505495725266e-19])
+        varp = Polynomial([6.3248412362377695e-22, 9.520417443453858e-14, 3.2099667366421632e-21])
+        μ = meanp(worker_flops)
+        σ = sqrt(varp(worker_flops))
+        samples = zeros(1000)
+        vs = zeros(0)
+        for i in 1:nworkers
+            s = OrderStatistic(Normal(μ, σ), i, nworkers)
+            Distributions.rand!(s, samples)
+            push!(vs, mean(samples))
+        end
+        plt.plot(1:nworkers, vs, "--")
+    end
+
+    plt.legend()
+    plt.grid()
+    plt.xlabel("Order")
+    plt.ylabel("Latency [s]")
+    return  
+end
+
+"""
+
+Fix worker_flops
+Plot the difference in latency due to waiting for 1 more worker
+"""
+function plot_orderstats_derivative(df, worker_flops; onlycompute=true)
+    order_col = onlycompute ? :compute_order : :order
+    latency_col = onlycompute ? :worker_compute_latency : :worker_latency
+    df = df[isapprox.(df.worker_flops, worker_flops, rtol=1e-2), :]
+    dfo = orderstats_df(df)
+    dfo = dfo[dfo.order .<= dfo.nwait, :]
+    dfo.order = dfo.order ./ dfo.nworkers
+    dfo.compute_order = dfo.compute_order ./ dfo.nworkers
+
+    plt.figure()
+    for nworkers in sort!(unique(dfo.nworkers))
+        dfi = dfo
+        dfi = dfi[dfi.nworkers .== nworkers, :]
+        # return dfi
+
+        dfj = by(dfi, order_col, latency_col => mean => :mean, :jobid => ((x) -> length(unique(x))) => :njobs)
+        sort!(dfj, order_col)
+        ys = diff(dfj.mean)
+        plt.plot(dfj[order_col][1:end-1], ys, "-o", label="Nn: $nworkers")
+    end
+    plt.grid()
+    plt.legend()
+    plt.xlabel("w")
+    plt.ylabel("Diff")
+    return
 
     # dfo.npartitions = dfo.nworkers .* dfo.nsubpartitions
     df.order = df.order ./ df.nworkers
@@ -1065,6 +1168,90 @@ function plot_orderstats_derivative(df, nworkers=18, work=1)
     plt.legend()
     return  
 end
+
+"""
+
+Plot the distribution of the average worker latency
+"""
+function plot_mean_worker_latency(df; onlycompute=true)
+    order_col = onlycompute ? :compute_order : :order
+    latency_col = onlycompute ? :worker_compute_latency : :worker_latency
+    # df = df[isapprox.(df.worker_flops, worker_flops, rtol=1e-2), :]
+    dfo = orderstats_df(df)
+    dfo = dfo[dfo.order .<= dfo.nwait, :]
+    dfi = by(dfo, [:jobid, :worker_index, :worker_flops], latency_col => mean => :mean)
+
+    meanp = Polynomial([3.020008104166731e-17, 2.8011867905401972e-9, 3.5443625816981855e-18]) # for < 7e8
+    # meanp = Polynomial([2.3552983559702727e-17, 3.5452942951744024e-9, 6.963505495725266e-19])
+    varp = Polynomial([6.3248412362377695e-22, 9.520417443453858e-14, 3.2099667366421632e-21])
+
+    plt.figure()
+    for worker_flops in sort!(unique(dfi.worker_flops))
+        dfj = dfi
+        dfj = dfj[dfj.worker_flops .== worker_flops, :]
+
+        # empirical cdf
+        xs = sort(dfj.mean)
+        ys = range(0, 1, length=length(xs))    
+        plt.plot(xs, ys, label="c: $worker_flops")
+        
+        # normal distribution cdf fitted to the data
+        rv = Distributions.fit(Normal, dfj.mean)
+        xs = range(0.9*minimum(xs), 1.1*maximum(xs), length=100)    
+        plt.plot(xs, cdf.(rv, xs), "--")
+
+        # normal distribution predicted by the model
+        μ = meanp(worker_flops)
+        σ = sqrt(varp(worker_flops))
+        plt.plot(xs, cdf.(Normal(μ, σ), xs), "-.")
+
+        # println(((μ, σ), params(rv)))
+    end
+    plt.legend()
+    plt.grid()    
+
+    dfj = by(dfi, :worker_flops, :mean => mean => :mean, :mean => var => :var)
+
+    dfj = dfj[dfj.worker_flops .< 7e8, :] # TODO: remove
+
+    plt.figure()
+    plt.plot(dfj.worker_flops, dfj.mean, ".")
+    
+    p, coeffs = fit_polynomial(dfj.worker_flops, dfj.mean, 2)
+    println(coeffs)
+    xs = range(0, maximum(dfj.worker_flops), length=100)
+    plt.plot(xs, p.(xs))
+
+    plt.xlabel("c")
+    plt.ylabel("mean")
+    plt.grid()
+
+    plt.figure()
+    plt.plot(dfj.worker_flops, dfj.var, ".")
+
+    p, coeffs = fit_polynomial(dfj.worker_flops, dfj.var, 2)
+    println(coeffs)    
+    xs = range(0, maximum(dfj.worker_flops), length=100)
+    plt.plot(xs, p.(xs))
+
+    plt.xlabel("c")
+    plt.ylabel("var")    
+    plt.grid()
+
+    return
+end
+
+# """
+
+
+# """
+# function foo(df; onlycompute=true)
+#     dfo = orderstats_df(df)
+#     dfo = dfo[dfo.order .<= dfo.nwait, :]
+#     dfi = by(dfo, [:jobid, :worker_index], latency_col => mean => :mean)    
+#     order_col = onlycompute ? :compute_order : :order
+#     latency_col = onlycompute ? :worker_compute_latency : :worker_latency
+# end
 
 """
 
@@ -1122,7 +1309,7 @@ end
 
 Plot the latency of individual workers from fastest to slowest.
 """
-function plot_worker_latency(df, nworkers=12, nsubpartitions=5)
+function plot_worker_latency(df, nworkers=12, nsubpartitions=5)    
     df = df[df.nworkers .== nworkers, :]
     df = df[df.nsubpartitions .== nsubpartitions, :]
     df = df[df.nwait .== df.nworkers, :]

@@ -1,4 +1,4 @@
-using CSV, DataFrames, PyPlot, Statistics, Polynomials, LinearAlgebra
+using CSV, DataFrames, PyPlot, Statistics, Polynomials, LinearAlgebra, Distributions
 using StatsBase
 
 using PyCall
