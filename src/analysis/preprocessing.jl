@@ -1,4 +1,5 @@
 # Code for loading .csv files into a DataFrame and for pre-processing that data
+using Glob
 
 """
 
@@ -77,7 +78,9 @@ end
 
 Read a csv file into a DataFrame
 """
-function read_df(filename="C:/Users/albin/Dropbox/Eigenvector project/data/dataframes/pca/210208/210208_v11.csv")
+function read_df(directory="C:/Users/albin/Dropbox/Eigenvector project/data/dataframes/pca/210208/")
+    filename = sort!(glob("*.csv", directory))[end]
+    println("Reading $filename")
     df = DataFrame(CSV.File(filename, normalizenames=true))
     df[:nostale] = Missings.replace(df.nostale, false)
     df[:kickstart] = Missings.replace(df.kickstart, false)
@@ -101,8 +104,9 @@ end
 
 Read a latency experiment csv file into a DataFrame
 """
-function read_latency_df()
-    filename="C:/Users/albin/Dropbox/Eigenvector project/data/dataframes/latency/210215_v3/df_v4.csv"
+function read_latency_df(directory="C:/Users/albin/Dropbox/Eigenvector project/data/dataframes/latency/210215_v3/")
+    filename = sort!(glob("*.csv", directory))[end]
+    println("Reading $filename")
     df = DataFrame(CSV.File(filename, normalizenames=true))
     df.worker_flops = 2 .* df.nrows .* df.ncols .* df.ncomponents .* df.density
     df[df.ncols .== 1812842, :], df[df.ncols .== 2504, :]
