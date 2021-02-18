@@ -1173,18 +1173,25 @@ end
 
 Plot the distribution of the average worker latency
 """
-function plot_mean_worker_latency(df; onlycompute=true)
+function plot_worker_latency_moments(dfo; miniterations=1000, onlycompute=true, intervalsize=100)
     order_col = onlycompute ? :compute_order : :order
     latency_col = onlycompute ? :worker_compute_latency : :worker_latency
-    # df = df[isapprox.(df.worker_flops, worker_flops, rtol=1e-2), :]
-    dfo = orderstats_df(df)
+    dfo = dfo[dfo.niterations .>= miniterations, :]
+    # dfo = orderstats_df(df)
     dfo = dfo[dfo.order .<= dfo.nwait, :]
-    dfi = by(dfo, [:jobid, :worker_index, :worker_flops], latency_col => mean => :mean)
+    dfo.interval = ceil.(Int, dfo.iteration ./ intervalsize)
+    dfi = by(
+        dfo, [:jobid, :worker_index, :interval, :worker_flops],
+        latency_col => mean => :mean, 
+        latency_col => var => :var,
+        latency_col => minimum => :minimum,        
+        )
 
     meanp = Polynomial([3.020008104166731e-17, 2.8011867905401972e-9, 3.5443625816981855e-18]) # for < 7e8
     # meanp = Polynomial([2.3552983559702727e-17, 3.5452942951744024e-9, 6.963505495725266e-19])
     varp = Polynomial([6.3248412362377695e-22, 9.520417443453858e-14, 3.2099667366421632e-21])
 
+    # worker latency mean
     plt.figure()
     for worker_flops in sort!(unique(dfi.worker_flops))
         dfj = dfi
@@ -1192,23 +1199,97 @@ function plot_mean_worker_latency(df; onlycompute=true)
 
         # empirical cdf
         xs = sort(dfj.mean)
-        ys = range(0, 1, length=length(xs))    
-        plt.plot(xs, ys, label="c: $worker_flops")
+        ys = 1 .- range(0, 1, length=length(xs))    
+        plt.semilogy(xs, ys, label="c: $worker_flops")
         
         # normal distribution cdf fitted to the data
-        rv = Distributions.fit(Normal, dfj.mean)
+        rv = Distributions.fit(Normal, xs)
         xs = range(0.9*minimum(xs), 1.1*maximum(xs), length=100)    
-        plt.plot(xs, cdf.(rv, xs), "--")
+        plt.semilogy(xs, 1 .- cdf.(rv, xs), "k--")
 
         # normal distribution predicted by the model
-        μ = meanp(worker_flops)
-        σ = sqrt(varp(worker_flops))
-        plt.plot(xs, cdf.(Normal(μ, σ), xs), "-.")
+        # μ = meanp(worker_flops)
+        # σ = sqrt(varp(worker_flops))
+        # plt.plot(xs, cdf.(Normal(μ, σ), xs), "-.")
 
         # println(((μ, σ), params(rv)))
     end
     plt.legend()
     plt.grid()    
+    plt.xlabel("Mean")
+
+    # worker latency variance
+    plt.figure()
+    for worker_flops in sort!(unique(dfi.worker_flops))
+        dfj = dfi
+        dfj = dfj[dfj.worker_flops .== worker_flops, :]
+
+        # empirical cdf
+        xs = sort(dfj.var)
+        ys = range(0, 1, length=length(xs))    
+        plt.plot(xs, ys, ".", label="c: $worker_flops")
+
+        # exponential distribution fit to the data
+        # rv = Distributions.fit(Exponential, xs)
+        # ts = range(0, maximum(xs), length=100)
+        # plt.semilogy(ts, 1 .- cdf.(rv, ts), "--")
+    end
+    plt.legend()
+    plt.grid()
+    plt.xlabel("Variance")
+
+    # minimum worker latency
+    plt.figure()
+    for worker_flops in sort!(unique(dfi.worker_flops))
+        dfj = dfi
+        dfj = dfj[dfj.worker_flops .== worker_flops, :]
+
+        # empirical cdf
+        xs = sort(dfj.minimum)
+        ys = range(0, 1, length=length(xs))    
+        plt.plot(xs, ys, label="c: $worker_flops")
+
+        # normal distribution cdf fitted to the data
+        rv = Distributions.fit(Normal, xs)
+        xs = range(0.9*minimum(xs), 1.1*maximum(xs), length=100)    
+        plt.plot(xs, cdf.(rv, xs), "k--")
+
+        # exponential distribution fit to the data
+        # rv = Distributions.fit(Exponential, xs)
+        # ts = range(0, maximum(xs), length=100)
+        # plt.semilogy(ts, 1 .- cdf.(rv, ts), "--")
+    end
+    plt.legend()
+    plt.grid()
+    plt.xlabel("Minimum")    
+
+    # minimum latency vs. mean
+    plt.figure()
+    for worker_flops in sort!(unique(dfi.worker_flops))
+        dfj = dfi
+        dfj = dfj[dfj.worker_flops .== worker_flops, :]
+        plt.plot(dfj.mean, dfj.minimum, ".", label="c: $worker_flops")
+    end
+    plt.legend()
+    plt.grid()
+    plt.xlabel("Mean")    
+    plt.ylabel("Minimum")
+
+    return
+
+    # worker latency mean vs. variance
+    plt.figure()
+    for worker_flops in sort!(unique(dfi.worker_flops))
+        dfj = dfi
+        dfj = dfj[dfj.worker_flops .== worker_flops, :]
+        plt.plot(dfj.mean, dfj.var, ".", label="c: $worker_flops")
+    end
+    plt.legend()
+    plt.grid()
+    plt.xlabel("Mean")    
+    plt.ylabel("Variance")
+
+    return
 
     dfj = by(dfi, :worker_flops, :mean => mean => :mean, :mean => var => :var)
 
@@ -1416,37 +1497,182 @@ function plot_gamma_model(df)
 
 end
 
-function plot_worker_cdf(df, nworkers=18, nsubpartitions=5)
+function plot_worker_cdf(df, n=1; miniterations=10000, onlycompute=true)
+    order_col = onlycompute ? :compute_order : :order
+    latency_col = onlycompute ? :worker_compute_latency : :worker_latency
+    df = df[df.niterations .>= miniterations, :]
+    # df = orderstats_df(df)
 
-    df = df[df.jobid .== 146, :]    
-    @assert all(df.nwait .== df.nworkers)
-    println("$(size(df, 1)) samples")
+    # two-state: 602, 34
+    # single-state: 600, 17    
+
+    
+
     plt.figure()
-    for i in [1, 17]
-        xs = sort!(df["latency_worker_$i"])
-        ys = range(0, 1, length=length(xs))
-        println(mean(xs))
-        plt.semilogy(xs, 1 .- ys, "-k")
-        
+    for i in 1:n
 
-        # shift = minimum(xs)
-        shift = 0
-        rv = Distributions.fit(Gamma, float.(xs .- shift .+ eps(Float64)))
-        ts = range(0, maximum(xs), length=100)
-        plt.semilogy(ts.+shift, 1 .- cdf.(rv, ts), "--")
+        # if i == 1
+        #     jobid = 600
+        #     worker_index = 17
+        # elseif i == 2
+        #     jobid = 602
+        #     worker_index = 34
+        # end
+
+        jobid = 609
+        worker_index = 13
+
+        dfi = df
+        # jobid = rand(unique(dfi.jobid))
+        dfi = dfi[dfi.jobid .== jobid, :]
+        # worker_index = rand(unique(dfi.worker_index))
+        dfi = dfi[dfi.worker_index .== worker_index, :]
+        
+        # empirical cdf
+        xs = sort!(dfi[latency_col])
+        shift = minimum(xs) - eps(Float64)
+        xs .-= shift
+        ys = range(0, 1, length=length(xs))
+        plt.plot(xs, ys, "b-", label="Empirical")
+
+        # Gamma
+        rv = Distributions.fit(Gamma, float.(xs))
+        ts = range(0.9*minimum(xs), 1.1*maximum(xs), length=100)
+        plt.plot(ts, cdf.(rv, ts), "k--", label="Gamma")
+        println(params(rv))
+
+        # LogNormal
+        # rv = Distributions.fit(LogNormal, float.(xs))
+        # ts = range(0.9*minimum(xs), 1.1*maximum(xs), length=100)
+        # plt.semilogy(ts, 1 .- cdf.(rv, ts), "r--", label="LogNormal")   
+
+        # # Exponential
+        # rv = Distributions.fit(Exponential, float.(xs))
+        # ts = range(0.9*minimum(xs), 1.1*maximum(xs), length=100)        
+        # plt.semilogy(ts, 1 .- cdf.(rv, ts), "m-.")
+
+        # Erlang
+        # rv = Distributions.fit(Erlang, float.(xs))
+        # ts = range(0.9*minimum(xs), 1.1*maximum(xs), length=100)
+        # plt.semilogy(ts, 1 .- cdf.(rv, ts), "m--", label="Erlang")             
+
+        # Normal
+        # rv = Distributions.fit(Normal, float.(xs))
+        # ts = range(0.9*minimum(xs), 1.1*maximum(xs), length=100)
+        # plt.semilogy(ts, 1 .- cdf.(rv, ts), "m-")        
+        
     end
+    # plt.ylim(1e-1, 1)
+    plt.legend()
+    plt.grid()
+    plt.ylabel("CCDF")
+    plt.xlabel("Latency [s]")
+    return
+end
+
+function plot_worker_latency_timeseries(df, n=3; miniterations=10000, onlycompute=true, worker_flops=nothing, intervalsize=100)
+    order_col = onlycompute ? :compute_order : :order
+    latency_col = onlycompute ? :worker_compute_latency : :worker_latency
+    df = df[df.niterations .>= miniterations, :]
+    if !isnothing(worker_flops)
+        df = df[isapprox.(df.worker_flops, worker_flops, rtol=1e-2), :]
+    end
+    df.interval = ceil.(Int, df.iteration ./ intervalsize)
+    df = by(
+        df, [:jobid, :worker_index, :interval, :worker_flops],
+        latency_col => mean => :mean, 
+        latency_col => median => :median,
+        latency_col => var => :var,
+        latency_col => minimum => :minimum,        
+        )
+
+    plt.figure()
+    for _ in 1:n
+        dfi = df
+        jobid = rand(unique(dfi.jobid))
+        dfi = dfi[dfi.jobid .== jobid, :]
+        worker_index = rand(unique(dfi.worker_index))
+        dfi = dfi[dfi.worker_index .== worker_index, :]
+        plt.plot(dfi.mean, ".", label="job: $jobid, worker: $worker_index")
+    end
+    plt.legend()
+    plt.grid()
+    plt.xlabel("Iteration index")
+    plt.ylabel("Latency")
+end
+
+function plot_worker_latency_process(dfo, n=10; miniterations=10000, onlycompute=true, worker_flops=nothing, intervalsize=1)
+    order_col = onlycompute ? :compute_order : :order
+    latency_col = onlycompute ? :worker_compute_latency : :worker_latency
+    dfo = dfo[dfo.niterations .>= miniterations, :]
+    if !isnothing(worker_flops)
+        dfo = dfo[isapprox.(dfo.worker_flops, worker_flops, rtol=1e-2), :]
+    end
+    dfo.interval = ceil.(Int, dfo.iteration ./ intervalsize)
+    dfo = by(
+        dfo, [:jobid, :worker_index, :interval, :worker_flops],
+        latency_col => mean => :mean, 
+        latency_col => median => :median,
+        latency_col => var => :var,
+        latency_col => minimum => :minimum,        
+        )
+
+    plt.figure()
+    for worker_flops in sort!(unique(dfo.worker_flops))
+        dfi = dfo
+        dfi = dfi[dfi.worker_flops .== worker_flops, :]
+        dfi = by(dfi, [:jobid, :worker_index], :mean => diff => :diff)
+        xs = sort!(dfi.diff)
+        ys = 1 .- range(0, 1, length=length(xs))
+        # plt.semilogy(xs, ys, label="c: $worker_flops")
+
+        # Normal
+        # rv = Distributions.fit(Normal, xs)
+        # ts = range(0.9*minimum(xs), 1.1*maximum(xs), length=500)
+        # plt.plot(ts, cdf.(rv, ts), "k--")
+
+        # Cauchy
+        # rv = Distributions.fit(Normal, xs)
+        # ts = range(1.1*minimum(xs), 1.1*maximum(xs), length=1000)
+        # plt.semilogy(ts, 1 .- cdf.(rv, ts), "r--")        
+
+        # Tukey-Lambda
+        for λ in [-0.4]
+            rv = TukeyLambda(λ)
+
+            qs = range(0.05, 0.95, length=100)
+            xs = [quantile(xs, q) for q in qs]
+            xs ./= maximum(abs.(xs))
+            ys = [quantile(rv, q) for q in qs]
+            ys ./= maximum(abs.(ys))
+            plt.plot(xs, ys, label="λ: $λ")        
+
+            xs = quantile.(rv, [0.01, 0.99])
+            xs ./= maximum(abs.(xs))
+            ys = quantile.(rv, [0.01, 0.99])
+            ys ./= maximum(abs.(ys))
+            plt.plot(xs, ys, "k-")                    
+        end
+        # plt.plot([-1, 1], [-1, 1], "k-")
+    end
+    plt.xlabel("Data")
+    plt.ylabel("Theoretical distribution")
+    plt.axis("equal")
+    plt.grid()
+    plt.legend()
     return
 
-    df = df[df.nworkers .== nworkers, :]
-    df = df[df.nsubpartitions .== nsubpartitions, :]
-    df = df[df.nwait .== nworkers, :]
-
-    for jobid in unique(df.jobid)
-        dfi = df
+    plt.figure()
+    for _ in 1:n
+        dfi = dfo
+        jobid = rand(unique(dfi.jobid))
         dfi = dfi[dfi.jobid .== jobid, :]
-        if ismissing(dfi.latency_worker_1[1])
-            continue
-        end
-        println((jobid, size(dfi, 1)))
+        worker_index = rand(unique(dfi.worker_index))
+        dfi = dfi[dfi.worker_index .== worker_index, :]
+        plt.plot(diff(dfi.mean), ".", label="job: $jobid, worker: $worker_index")
     end
+    plt.legend()
+    plt.grid()
+    plt.xlabel("Iteration index")
+    plt.ylabel("Latency")
 end
