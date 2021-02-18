@@ -184,9 +184,77 @@ Modeling procedure
 - For the first I need to determine the number of states and so on
 - The second option doesn't have this limitation
 
+# 210216
+
+The goal for today is to develop a latency model
+The model should predict the expected latency of the w-th fastest worker
+The problem I had before was that I saw different latency for the w-th fastest worker depending on what w_target was
+So I first need to check if that problem has gone away after the changes I've made
+
+I'm considering two different scenarios
+The computational load is the same for both, but they differ by the amount of aommunication
+The first scenario requires a factor 724 more communication than the second
+For the first scenario there is a significant difference between the iteration latency and the latency of individual workers
+There's also a significant difference 
+(the iteration latency is higher)
+The only explanation I can come up with is that the difference is due to the time needed for the coordinator to store all the additional data
+The second scenario is much faster. And there's much less straggling
+Hence, straggling is mostly caused by communication
+I need a scenario where straggling is a major problem
+Apparently that means a scenario with lots of communication
+For now, let's focus on understanding and modeling
+
+Let's consider the following
+- How latency is affected by computational load
+- How latency is affected by the amount of communication
+- How latency is affected by the number of workers
+
+I actually record the compute latency separately
+Plotting the compute latency indicates that there's straggling going on even when only doing compute
+The latency as a function of w for compute latency looks like a degree 3 polynomial
+Let's see if I can capture the parameters of that polynomial
+
+The difference in latency due to waiting for one more worker looks constant except for at the edges, around w=1 and w=nworkers
+Not quite constant though
+Some workers are exceptionally slow and some and exceptionally fast
+And it looks quite symmetric, i.e., the number of fast workers is about the same as the number of slow workers
+What about if I looked at the average compute latency of individual workers for a given computational load?
+
+It looks like the compute latency of individual workers follows a Normal distribution
+The fit becomes better when workers do less work
+The normal distribution is parameterized by the mean and variance
+Let's capture the mean and variance as a function of worker_flops
+
+Feels like it's starting to be time to write some stuff down
+
+- The latency of each worker at a partiular point of time is characterized by a random variable with some distribution
+- The parameters of that distribution are in turn drawn from some other distribution
+- The parameters of that distribution may change over time, which is captured by the autocorrelation of those parameters
+- Latency may be correlated between workers
+- The latency of a particular iteration is equal to the latency of the w-th fastest worker
+- Which is captured by the w-th order statistic of the random variables characterizing the latency of the individual workers
+- To sample from the iteration latency distribution I need to first generate a set of distributions corresponding to the workers, then draw a sample from each of those distributions, and finally take the w-th largest value of out those samples
+
 # 210218
 
 - I used to think that each worker was characterized by a probability distribution with parameters drawn from some other probability distribution
 - It seems that it's more accurate to characterize workers by a stochastic process
 - Tukey-Lambda with lambda=-0.4 seems like a good fit
 - That means heavier tails than Normal, but not as heavy as Cauchy
+- I need the minimum latency and the scale and shape of the noise process
+- I think I can get the shape from the difference between any two quantiles
+- I have a model for latency. Now it's time to see how good it is
+  - Minimum latency drawn from a Normal distribution
+  - Shape parameter 0.4
+- Let's model the latency as the sum of several processes of different speed
+- Constant minimum latency, fast noise, some number of slow processes
+- I need to isolate the different processes
+- Let's just go from slowest to fastest
+- It anyway makes sense that latency is the sum of different processes operating at different time scales
+- Then I just need to identify the number of processes active and isolate them
+- FFT would be useful for that
+- Let's just figure out some heuristic for finding what state each worker is in
+- There are two independent random processes
+- I need to determine which state the Markov chain is in
+- Wtf am I doing? Who the fuck knows...
+- I want an automatic way to mark which samples correspond to which underlying Markov state
