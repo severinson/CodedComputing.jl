@@ -1026,14 +1026,6 @@ function plot_orderstats(df, nworkers=18, work=1; onlycompute=true)
     return    
 end
 
-# - The latency of each worker at a partiular point of time is characterized by a random variable with some distribution
-# - The parameters of that distribution are in turn drawn from some other distribution
-# - The parameters of that distribution may change over time, which is captured by the autocorrelation of those parameters
-# - Latency may be correlated between workers
-# - The latency of a particular iteration is equal to the latency of the w-th fastest worker
-# - Which is captured by the w-th order statistic of the random variables characterizing the latency of the individual workers
-# - To sample from the iteration latency distribution I need to first generate a set of distributions corresponding to the workers, then draw a sample from each of those distributions, and finally take the w-th largest value of out those samples
-
 function plot_orderstats_flops(df, nworkers=18; onlycompute=true)
     order_col = onlycompute ? :compute_order : :order
     latency_col = onlycompute ? :worker_compute_latency : :worker_latency    
@@ -1173,7 +1165,7 @@ end
 
 Plot the distribution of the average worker latency
 """
-function plot_worker_latency_moments(dfo; miniterations=1000, onlycompute=true, intervalsize=100)
+function plot_worker_latency_moments(dfo; miniterations=100000, onlycompute=true, intervalsize=100)
     order_col = onlycompute ? :compute_order : :order
     latency_col = onlycompute ? :worker_compute_latency : :worker_latency
     dfo = dfo[dfo.niterations .>= miniterations, :]
@@ -1261,7 +1253,7 @@ function plot_worker_latency_moments(dfo; miniterations=1000, onlycompute=true, 
     end
     plt.legend()
     plt.grid()
-    plt.xlabel("Minimum")    
+    plt.xlabel("Minimum")
 
     # minimum latency vs. mean
     plt.figure()
@@ -1570,94 +1562,242 @@ function plot_worker_cdf(df, n=1; miniterations=10000, onlycompute=true)
     return
 end
 
-function plot_worker_latency_timeseries(df, n=3; miniterations=10000, onlycompute=true, worker_flops=nothing, intervalsize=100)
+function plot_worker_latency_timeseries(df, n=3; miniterations=10000, onlycompute=true, worker_flops=nothing, intervalsize=1)
     order_col = onlycompute ? :compute_order : :order
     latency_col = onlycompute ? :worker_compute_latency : :worker_latency
     df = df[df.niterations .>= miniterations, :]
     if !isnothing(worker_flops)
         df = df[isapprox.(df.worker_flops, worker_flops, rtol=1e-2), :]
     end
-    df.interval = ceil.(Int, df.iteration ./ intervalsize)
+
+    # add absolute time to the df
+    sort!(df, [:jobid, :worker_index, :iteration])
+    df.time = by(df, [:jobid, :worker_index], :latency => cumsum => :time).time
+    df.interval = ceil.(Int, df.time ./ intervalsize)
     df = by(
         df, [:jobid, :worker_index, :interval, :worker_flops],
         latency_col => mean => :mean, 
         latency_col => median => :median,
         latency_col => var => :var,
-        latency_col => minimum => :minimum,        
+        latency_col => minimum => :minimum,
+        latency_col => maximum => :maximum,
         )
+    df.time = df.interval * intervalsize .- intervalsize/2
+
+
+    
+    # subtract the min
+    # compare the max in each interval with the globally smallest max
+
+    # df.state = 1
+    # df[df.minimum .> mean(df.mean), :state] .= 2
 
     plt.figure()
-    for _ in 1:n
+    for worker_flops in sort!(unique(df.worker_flops))
         dfi = df
+        dfi = dfi[dfi.worker_flops .== worker_flops, :]
         jobid = rand(unique(dfi.jobid))
         dfi = dfi[dfi.jobid .== jobid, :]
         worker_index = rand(unique(dfi.worker_index))
         dfi = dfi[dfi.worker_index .== worker_index, :]
-        plt.plot(dfi.mean, ".", label="job: $jobid, worker: $worker_index")
+
+        # shift = minimum(dfi.minimum)
+        # scale = minimum(dfi.median) .- shift
+
+        shift = mean(dfi.mean)
+        scale = minimum(dfi.maximum) .- shift
+        plt.plot(dfi.time, (dfi.median .- shift)./scale, ".", label="c: $worker_flops")
+        continue
+
+        plt.plot(dfi.time, (dfi.minimum .- shift)./scale, "s", label="min")
+        plt.plot(dfi.time, (dfi.median .- shift)./scale, "^", label="median")
+        plt.plot(dfi.time, (dfi.mean .- shift)./scale, "o", label="mean")
+        plt.plot(dfi.time, (dfi.maximum .- shift)./scale, ".", label="max")
+        continue
+
+        # compute Markov chain state
+        dfi.state = 1
+        
+        # vs = dfi.maximum .- minimum(dfi.minimum)
+        # m = minimum(vs)
+
+        # vs = dfi.median .- minimum(dfi.minimum)
+        # i = argmin(dfi.minimum)
+        # m = vs[i]
+
+        # vs_min = minimum(dfi.minimum)
+        vs = dfi.median .- minimum(dfi.median)
+        # # vsm = mean(vs)
+        dfi[vs .> 0.00025, :state] .= 2
+        dfi[vs .> 0.0015, :state] .= 3
+        # dfi[vs .> 4*m, :state] .= 4        
+
+        for state in [1, 2, 3]
+            dfj = dfi
+            dfj = dfj[dfj.state .== state, :]
+            plt.plot(dfj.time, dfj[:median], ".", label="$state")
+            # label="job: $jobid, worker: $worker_index"
+        end
+
+        # generate a fake process for comparison
+        # minimum = 0.15
+        # λ = -0.4
+        # scale = 0.00010282966170158503 / 100
+        # rv = TukeyLambda(λ)
+        # xs = zeros(length(dfi.mean))
+        # xs[1] = minimum
+        # for i in 2:length(xs)            
+        #     xs[i] = max(xs[i-1] + rand(rv)*scale, minimum)
+        # end
+        # plt.plot(xs, ".")
     end
     plt.legend()
     plt.grid()
-    plt.xlabel("Iteration index")
+    plt.xlabel("Time [s]")
     plt.ylabel("Latency")
 end
 
-function plot_worker_latency_process(dfo, n=10; miniterations=10000, onlycompute=true, worker_flops=nothing, intervalsize=1)
+function plot_worker_latency_fft(df, n=1; miniterations=10000, onlycompute=true, worker_flops)
+    order_col = onlycompute ? :compute_order : :order
+    latency_col = onlycompute ? :worker_compute_latency : :worker_latency
+    df = df[df.niterations .== miniterations, :]
+    
+    # df = df[isapprox.(df.worker_flops, worker_flops, rtol=1e-2), :]
+
+    tmax = 10
+    nbins = 1000
+    bins = zeros(nbins)
+    nsamples = zeros(Int, nbins)
+
+    for worker_flops in sort!(unique(df.worker_flops))
+        dfk = df
+        dfk = dfk[dfk.worker_flops .== worker_flops, :]
+
+        bins .= 0
+        nsamples .= 0        
+
+        for jobid in unique(df.jobid)
+            dfi = dfk
+            dfi = dfi[dfi.jobid .== jobid, :]        
+            for worker_index in unique(dfi.worker_index)
+                dfj = dfi
+                dfj = dfj[dfj.worker_index .== worker_index, :]
+                sort!(dfj, :iteration)
+
+                t = sum(dfj.latency)
+                sf = t / size(dfj, 1) # sampling frequency
+                ts = real.(dfj[latency_col]) # samples
+                # ts .-= mean(ts) # make it zero mean
+                ys = abs.(fft(ts)) # abs of DTFT
+                xs = 1/t .* (0:(length(ys)-1))
+                for (x, y) in zip(xs, ys)
+                    i = min(max(ceil(Int, x/tmax*nbins), 1), nbins)
+                    bins[i] += y
+                    nsamples[i] += 1
+                end
+            end
+        end
+        bins ./= nsamples
+        plt.plot(tmax/nbins .* (0:nbins-1), bins, ".-", label="c: $worker_flops")
+    end
+    plt.legend()
+
+    plt.grid()
+    return
+end
+
+function plot_worker_latency_process(dfo, n=10; miniterations=10000, onlycompute=true, worker_flops=nothing)
     order_col = onlycompute ? :compute_order : :order
     latency_col = onlycompute ? :worker_compute_latency : :worker_latency
     dfo = dfo[dfo.niterations .>= miniterations, :]
     if !isnothing(worker_flops)
         dfo = dfo[isapprox.(dfo.worker_flops, worker_flops, rtol=1e-2), :]
     end
-    dfo.interval = ceil.(Int, dfo.iteration ./ intervalsize)
+
+    # distribution of the minimum latency
+    dfi = by(
+        dfo, [:jobid, :worker_index, :worker_flops],
+        latency_col => minimum => :minimum
+        )
+    plt.figure()
+    for worker_flops in sort!(unique(dfo.worker_flops))    
+        dfj = dfi
+        dfj = dfj[dfj.worker_flops .== worker_flops, :]
+        xs = sort!(dfj.minimum)
+        ys = range(0, 1, length=length(xs))
+        plt.plot(xs, ys, label="c: $worker_flops")        
+    end        
+    plt.xlabel("Minimum latency")
+    plt.ylabel("CDF")
+    plt.legend()
+    plt.grid()
+    return
+
+    # distribution of the latency difference between subsequent iterations
+    dfi = by(
+        dfo, [:jobid, :worker_index, :worker_flops],
+        latency_col => diff => :diff
+        )
+    plt.figure()
+    for worker_flops in sort!(unique(dfo.worker_flops))    
+        dfj = dfi
+        dfj = dfj[dfj.worker_flops .== worker_flops, :]
+        xs = sort!(dfj.diff)
+        ys = range(0, 1, length=length(xs))
+        plt.plot(xs, ys, label="c: $worker_flops")        
+    end
+
+    plt.xlabel("Latency diff")
+    plt.ylabel("CDF")
+    plt.grid()
+    plt.legend()
+    return    
+end
+
+function plot_worker_latency_qq(dfo, n=10; miniterations=100000, onlycompute=true, worker_flops)
+    order_col = onlycompute ? :compute_order : :order
+    latency_col = onlycompute ? :worker_compute_latency : :worker_latency
+    dfo = dfo[dfo.niterations .>= miniterations, :]
+    dfo = dfo[isapprox.(dfo.worker_flops, worker_flops, rtol=1e-2), :]
     dfo = by(
-        dfo, [:jobid, :worker_index, :interval, :worker_flops],
-        latency_col => mean => :mean, 
-        latency_col => median => :median,
-        latency_col => var => :var,
-        latency_col => minimum => :minimum,        
+        dfo, [:jobid, :worker_index, :worker_flops],
+        latency_col => diff => :diff,        
+        # latency_col => mean => :mean, 
+        # latency_col => median => :median,
+        # latency_col => var => :var,
+        # latency_col => minimum => :minimum,        
         )
 
+    # Tukey-Lambda Q-Q plot
     plt.figure()
-    for worker_flops in sort!(unique(dfo.worker_flops))
-        dfi = dfo
-        dfi = dfi[dfi.worker_flops .== worker_flops, :]
-        dfi = by(dfi, [:jobid, :worker_index], :mean => diff => :diff)
-        xs = sort!(dfi.diff)
-        ys = 1 .- range(0, 1, length=length(xs))
-        # plt.semilogy(xs, ys, label="c: $worker_flops")
+    dfi = dfo
+    xs = sort!(dfi.diff)
+    ys = range(0, 1, length=length(xs))
 
-        # Normal
-        # rv = Distributions.fit(Normal, xs)
-        # ts = range(0.9*minimum(xs), 1.1*maximum(xs), length=500)
-        # plt.plot(ts, cdf.(rv, ts), "k--")
+    for λ in [-0.4]
+        rv = TukeyLambda(λ)
 
-        # Cauchy
-        # rv = Distributions.fit(Normal, xs)
-        # ts = range(1.1*minimum(xs), 1.1*maximum(xs), length=1000)
-        # plt.semilogy(ts, 1 .- cdf.(rv, ts), "r--")        
+        qs = range(0.05, 0.95, length=100)
+        xs = [quantile(xs, q) for q in qs]
+        scale = maximum(abs.(xs))
+        xs ./= maximum(abs.(xs))
+        ys = [quantile(rv, q) for q in qs]
+        ys ./= maximum(abs.(ys))
+        plt.plot(xs, ys, label="λ: $λ")        
 
-        # Tukey-Lambda
-        for λ in [-0.4]
-            rv = TukeyLambda(λ)
+        xs = quantile.(rv, [0.01, 0.99])
+        scale /= maximum(abs.(xs))
+        xs ./= maximum(abs.(xs))
+        ys = quantile.(rv, [0.01, 0.99])
+        ys ./= maximum(abs.(ys))
+        plt.plot(xs, ys, "k-")                    
 
-            qs = range(0.05, 0.95, length=100)
-            xs = [quantile(xs, q) for q in qs]
-            xs ./= maximum(abs.(xs))
-            ys = [quantile(rv, q) for q in qs]
-            ys ./= maximum(abs.(ys))
-            plt.plot(xs, ys, label="λ: $λ")        
-
-            xs = quantile.(rv, [0.01, 0.99])
-            xs ./= maximum(abs.(xs))
-            ys = quantile.(rv, [0.01, 0.99])
-            ys ./= maximum(abs.(ys))
-            plt.plot(xs, ys, "k-")                    
-        end
-        # plt.plot([-1, 1], [-1, 1], "k-")
+        println("λ: $λ, scale: $scale")
     end
+
     plt.xlabel("Data")
     plt.ylabel("Theoretical distribution")
-    plt.axis("equal")
+    # plt.axis("equal")
     plt.grid()
     plt.legend()
     return
