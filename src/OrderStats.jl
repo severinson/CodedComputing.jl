@@ -1,5 +1,5 @@
-using Distributions
-export ExponentialOrder, OrderStatistic
+using Random, Statistics, Distributions
+export ExponentialOrder, OrderStatistic, NonIDOrderStatistic, TukeyLambda
 
 """
     ExponentialOrder(scale::Real, total::Int, order::Int)
@@ -20,20 +20,49 @@ function ExponentialOrder(scale::Real, total::Int, order::Int)
     return Gamma(alpha, theta)
 end
 
-struct OrderStatistic{S<:Sampleable{Univariate,Continuous},T} <: Sampleable{Univariate,Continuous}
-    s::S
+struct OrderStatistic{S<:Union{Discrete,Continuous},Spl<:Sampleable{Univariate,S},T} <: Sampleable{Univariate,S}
+    spl::Spl
     k::Int
     buffer::Vector{T}
 end
 
-Base.show(io::IO, s::OrderStatistic) = print(io, "OrderStatistic($(s.s), k=$(s.k), n=$(length(s.buffer)))")
+Base.show(io::IO, s::OrderStatistic) = print(io, "OrderStatistic($(s.spl), k=$(s.k), n=$(length(s.buffer)))")
 
-function OrderStatistic(s::Sampleable, order::Integer, nvariables::Integer)
-    OrderStatistic(s, order, Vector{eltype(s)}(undef, nvariables))
-end
+OrderStatistic(s::Sampleable, k::Integer, n::Integer) = OrderStatistic(s, k, Vector{eltype(s)}(undef, n))
 
-function Distributions.rand(rng::AbstractRNG, s::OrderStatistic)
-    Distributions.rand!(rng, s.s, s.buffer)
+function Random.rand(rng::AbstractRNG, s::OrderStatistic)
+    Distributions.rand!(rng, s.spl, s.buffer)
     partialsort!(s.buffer, s.k)
     s.buffer[s.k]
+end
+
+struct NonIDOrderStatistic{S<:Union{Discrete,Continuous},Spl<:Sampleable{Univariate,S},T} <: Sampleable{Univariate,S}
+    spls::Vector{Spl}
+    k::Int
+    buffer::Vector{T}
+end
+
+Base.show(io::IO, s::NonIDOrderStatistic) = print(io, "NonIDOrderStatistic($(eltype(s.spls)), k=$(s.k), n=$(length(s.buffer)))")
+
+NonIDOrderStatistic(spls::AbstractVector{<:Sampleable}, k::Integer) = NonIDOrderStatistic(spls, k, Vector{promote_type((eltype(spl) for spl in spls)...)}(undef, length(spls)))
+
+function Random.rand(rng::AbstractRNG, s::NonIDOrderStatistic)
+    for (i, spl) in enumerate(s.spls)
+        s.buffer[i] = Distributions.rand(rng, spl)
+    end
+    partialsort!(s.buffer, s.k)
+    s.buffer[s.k]
+end
+
+struct TukeyLambda <: Distribution{Univariate,Continuous}
+    λ::Float64
+end
+
+function Statistics.quantile(d::TukeyLambda, q::Real)
+    0 <= q <= 1 || throw(DomainError(q, "Expected 0 <= q <= 1."))
+    if d.λ == 0
+        return log(q / (1-q))
+    else
+        return (q^d.λ - (1-q)^d.λ) / d.λ
+    end
 end
