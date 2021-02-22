@@ -256,5 +256,22 @@ Feels like it's starting to be time to write some stuff down
 - Let's just figure out some heuristic for finding what state each worker is in
 - There are two independent random processes
 - I need to determine which state the Markov chain is in
-- Wtf am I doing? Who the fuck knows...
 - I want an automatic way to mark which samples correspond to which underlying Markov state
+
+# 210219
+
+- I've managed to isolate the large latency spikes
+- Next challenge is to model the remaining latency
+- There's definitely correlation between adjacent samples, i.e., it's a random process with non-zero autocorrelation
+- Latency is surely additive
+- I just need to isolate the different behaviors going on
+- The overall latency is made up of the sum of
+  - A constant
+  - A Markov process
+  - Random iid noise
+  - Extra latency if the worker is currently experiencing a burst
+- Let's discretize the Markov process and compute transition probabilities
+- I've computed the state transition matrix for the Markov chain
+- I can use it to generate realizations of the stochastic process
+- Latency is the sum of a constant, a markov chain, iid noise, and bursts
+- Now I just need to model all of these things
