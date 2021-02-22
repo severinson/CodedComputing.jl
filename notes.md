@@ -275,3 +275,22 @@ Feels like it's starting to be time to write some stuff down
 - I can use it to generate realizations of the stochastic process
 - Latency is the sum of a constant, a markov chain, iid noise, and bursts
 - Now I just need to model all of these things
+
+# 210222
+
+- Now I need to isolate the different components of the latency
+- First, the distribution of the mean of the latency over 300s (let's call it the constant part)
+- Constant part seems to be a Normal distribution across workers and jobs
+- Now let's do the high-frequency i.i.d. noise part
+- High-frequency noise looks like a Normal distribution
+- So let's look at the distribution of the parameters of that normal
+- Mean looks like something between a Normal and a Cauchy. Maybe a shape parameter somewhere between 0 and -3.
+- Variance looks like a Gamma
+- Next up is the Markov process, which is characterized by the states and the transition probability matrix
+- I can fix the states
+- I need to do something smart about the transition probability matrix
+- Maybe I can parameterize it somehow?
+- Let's ignore the Markov for now
+- Instead, let's model the mean, noise, and bursts only and see how close to the truth that gets us
+- Latency during bursts looks basically Normal
+- Next is to compute the state transition matrix, i.e., the prob. of being in a burst

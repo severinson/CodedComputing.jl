@@ -182,6 +182,47 @@ end
 
 """
 
+Compute the running mean of worker compute latency over windows of length `windowlengths` seconds.
+"""
+function compute_rmeans(dfo; miniterations=10000, windowlengths=[100, 10, 0.1, 0.01])
+    dfo = dfo[dfo.niterations .>= miniterations, :]    
+    sort!(dfo, [:jobid, :worker_index, :iteration])
+    function f(x)
+        vs = zeros(length(x.worker_compute_latency))
+        rv = zeros(length(x.worker_compute_latency), length(windowlengths)+1)
+        rv[:, 1] .= x.iteration
+        for (i, windowlength) in enumerate(windowlengths)
+            if iszero(windowlength)
+                rv[:, i+1] .= float.(x.worker_compute_latency)
+            elseif isinf(windowlength)
+                rv[:, i+1] .= mean(x.worker_compute_latency)
+            else
+                windowsize = ceil(Int, windowlength/(maximum(x.time)/maximum(x.iteration)))
+                # weights = DSP.Windows.gaussian(windowsize, 10)
+                # weights ./= sum(weights)
+                # rv[:, i+1] .= runmean(float.(x.worker_compute_latency), windowsize, weights)
+                circshift!(view(rv, :, i+1), runmean(float.(x.worker_compute_latency), windowsize), -round(Int, windowsize/2))                
+            end
+            rv[:, i+1] .-= vs
+            vs .+= rv[:, i+1]
+        end
+        rv
+    end
+    df = by(dfo, [:jobid, :worker_index], [:worker_compute_latency, :time, :iteration, :worker_flops] => f)    
+
+    # fix the iteration type and name
+    df.iteration = Int.(df.x1) 
+    select!(df, Not(:x1))
+    
+    # rename running mean columns
+    for (i, windowlength) in enumerate(windowlengths)    
+        rename!(df, "x$(i+1)" => "rmean_$windowlength")
+    end
+    innerjoin(dfo, df, on=[:jobid, :worker_index, :iteration])
+end
+
+"""
+
 Read a latency experiment csv file into a DataFrame
 """
 function read_latency_df(directory="C:/Users/albin/Dropbox/Eigenvector project/data/dataframes/latency/210215_v3/")
