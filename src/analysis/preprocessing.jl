@@ -113,15 +113,20 @@ function burst_state_from_orderstats_df(dfo; intervalsize=5)
         elseif isapprox(worker_flops, 2.52e7, rtol=1e-2)
             threshold = 0.005 # for interval of 10 s
         end        
+        # weights = 
         windowsize = ceil(Int, intervalsize/(maximum(x.time)/maximum(x.iteration)))
         vs = runmean(float.(x.worker_compute_latency), windowsize) .- minimum(x.worker_compute_latency)
         burst = vs .>= threshold
 
-        # also mark samples in half a windowsize before each window
-        for i in findall(isone, diff(burst))
-            j = max(1, i-round(Int, windowsize/2))
-            burst[j:i] .= true
-        end
+        # shift the mean left by half a window size
+        burst .= circshift(burst, -round(Int, windowsize/2))
+
+        # # also mark samples in half a windowsize before each window
+        # for i in findall(isone, diff(burst))
+        #     j = max(1, i-round(Int, windowsize/2))
+        #     burst[j:i] .= true
+        # end
+
         burst
     end
     sort!(dfo, [:jobid, :worker_index, :iteration])    

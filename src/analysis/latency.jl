@@ -750,99 +750,6 @@ function plot_latency_density(df)
     return
 end
 
-function plot_compute_time_3d(df)
-
-    df = df[df.kickstart .== false, :]
-    df = df[df.nreplicas .== 1, :]
-
-    colors = Iterators.cycle(["r", "b", "g", "k", "m"])
-
-    # fix nworkers
-    fig = plt.figure()
-    ax = fig[:add_subplot](111, projection="3d")    
-    for nworkers in unique(df.nworkers)
-        dfi = df
-        dfi = dfi[dfi.nworkers .== nworkers, :]
-        if size(dfi, 1) == 0
-            continue
-        end
-        ax[:plot](dfi.nwait, dfi.worker_flops, dfi.t_compute, ".", label="Nn: $nworkers")
-    end
-    plt.xlabel("nwait")
-    plt.ylabel("nflops")
-    ax[:set_zlabel]("Compute time [s]")
-    plt.grid()
-    plt.legend()    
-
-    # fix nwait
-    fig = plt.figure()
-    ax = fig[:add_subplot](111, projection="3d")        
-    for nwait in unique(df.nwait)
-        dfi = df
-        dfi = dfi[dfi.nwait .== nwait, :]
-        if size(dfi, 1) == 0
-            continue
-        end
-        ax[:plot](dfi.nworkers, dfi.worker_flops, dfi.t_compute, ".", label="Nw: $nwait")
-    end    
-    plt.xlabel("nworkers")
-    plt.ylabel("nflops")
-    ax[:set_zlabel]("Compute time [s]")
-    plt.grid()
-    plt.legend()
-
-    # fix worker_flops
-    fig = plt.figure()
-    ax = fig[:add_subplot](111, projection="3d")        
-    for nflops in unique(df.worker_flops)
-        dfi = df
-        dfi = dfi[dfi.worker_flops .== nflops, :]
-        if size(dfi, 1) == 0
-            continue
-        end
-        ax[:plot](dfi.nworkers, dfi.nwait, dfi.t_compute, ".", label="flops: $nflops")
-    end    
-    plt.xlabel("nworkers")
-    plt.ylabel("nwait")
-    ax[:set_zlabel]("Compute time [s]")
-    plt.grid()
-    plt.legend()    
-
-
-    return
-end
-
-"""
-
-Plot the compute time per iteration against the iteration index.
-"""
-function plot_latency_traces(df; nworkers=nothing, nwait=nothing, nsubpartitions=nothing, jobid=nothing)
-    plt.figure()
-    if !isnothing(nworkers)    
-        df = df[df.nworkers .== nworkers, :]
-    end
-    if !isnothing(nwait)    
-        df = df[df.nwait .== nwait, :]
-    end
-    if !isnothing(nsubpartitions)    
-        df = df[df.nsubpartitions .== nsubpartitions, :]
-    end
-    if !isnothing(jobid)    
-        df = df[df.jobid .== jobid, :]
-    end
-    for jobid in sort(unique(df.jobid))
-        dfi = df
-        dfi = dfi[dfi.jobid .== jobid, :]        
-        plt.plot(dfi.t_total, dfi.t_compute, ".", label="ID: $jobid")
-    end
-    plt.grid()
-    plt.legend()
-    plt.xlabel("Cumulative compute time [s]")
-    plt.ylabel("Compute time [s]")
-end
-
-
-
 """
 
 DataFrame composed of linear model parameters fit the order statistics latency.
@@ -893,35 +800,47 @@ function plot_order_latency(df, order=1)
     return
 end
 
-
-
 """
 
 Plot
 - Latency order stats recorded individually for each worker for different w_target
 - Iteration latency for different w_target
 """
-function plot_orderstats(df, nworkers=18, work=1; onlycompute=true)
+function plot_orderstats(dfo; worker_flops=7.56e7, onlycompute=true)
     order_col = onlycompute ? :compute_order : :order
-    latency_col = onlycompute ? :compute_latency : :latency    
-    df = df[df.nworkers .== nworkers, :]
+    latency_col = onlycompute ? :worker_compute_latency : :worker_latency
+    dfo = dfo[isapprox.(dfo.worker_flops, worker_flops, rtol=0.1), :]    
+    dfo = dfo[dfo.nwait .== dfo.nworkers, :] # TODO: temporary
+    println("worker_flops:\t$(unique(dfo.worker_flops))")
+    println("nbytes:\t$(unique(dfo.nbytes))\n")
 
-    # filter by either number of partitions or worker_flops
-    if typeof(work) <: Integer
-        df = df[df.nsubpartitions .== work, :]
-    elseif typeof(work) <: Real
-        df = df[isapprox.(df.worker_flops, work, rtol=0.1), :]
-    else
-        error()
-    end    
-    println("worker_flops:\t$(unique(df.worker_flops))")
-    println("nbytes:\t$(unique(df.nbytes))\n")
-    # return df.t_update
+    # plot the average latency as a function of the order
+    dfi = by(dfo, [:nworkers, order_col], latency_col => mean => :mean)
+    plt.figure()
+    for nworkers in [36]
+        # for nworkers in sort!(unique(dfi.nworkers))
 
-    dfo = orderstats_df(df)    
+        # empirical latency
+        dfj = dfi
+        dfj = dfj[dfj.nworkers .== nworkers, :]
+        if size(dfj, 1) > 0
+            plt.plot(dfj[order_col], dfj.mean, "o", label="Empirical ($nworkers workers")
+        end
+
+        # simulated latency
+        ys = [simulate_orderstats(1000, 100, nworkers, i) for i in 1:nworkers]
+        plt.plot((1:nworkers), ys, label="Simulated ($nworkers workers)")
+    end
+    plt.legend()
+    plt.xlabel("Order")
+    plt.ylabel("Latency")
+    plt.grid()
+    return
+
+    return
+
     dfo.order = dfo.order ./ dfo.nworkers
     dfo.compute_order = dfo.compute_order ./ dfo.nworkers
-    # dfo = dfo[dfo.order .<= dfo.nwait, :]
 
     # latency order stats recorded for individual workers
     plt.figure()
@@ -1264,259 +1183,11 @@ function plot_worker_latency_moments(dfo; miniterations=100000, onlycompute=true
     return
 end
 
-# """
-
-
-# """
-# function foo(df; onlycompute=true)
-#     dfo = orderstats_df(df)
-#     dfo = dfo[dfo.order .<= dfo.nwait, :]
-#     dfi = by(dfo, [:jobid, :worker_index], latency_col => mean => :mean)    
-#     order_col = onlycompute ? :compute_order : :order
-#     latency_col = onlycompute ? :worker_compute_latency : :worker_latency
-# end
-
-"""
-
-Return a df composed of the parameters of a Gamma distribution fit to the latency of each 
-individual worker for each job.
-"""
-function gamma_model_df(df; miniterations=0)
-    df = df[.!ismissing.(df["latency_worker_1"]), :]
-    df = df[df.nwait .== df.nworkers, :]
-    if size(df, 1) == 0
-        return DataFrame()
-    end
-    nworkers = maximum(df.nworkers)
-
-    # use to verify the values computed by the "by" setup
-    # jobid = 242
-    # dfi = df
-    # dfi = dfi[dfi.jobid .== jobid, :]
-    # vs = float.(dfi.latency_worker_1)
-    # shape, scale = params(Distributions.fit(Gamma, vs))
-    # println("shape: $shape, scale: $scale")
-
-    df = stack(df, ["latency_worker_$i" for i in 1:nworkers])
-    df = dropmissing(df, :value)
-    dfi = by(
-        df, [:jobid, :variable], 
-        :nworkers => mean => :nworkers,
-        :worker_flops => mean => :worker_flops,
-        :iteration => maximum => :niterations,
-        :value => mean => :mean,
-        :value => var => :var,
-    )    
-    df = by(
-        df, [:jobid, :variable], 
-        :value => ((x) -> NamedTuple{(:shape, :scale)}(params(Distributions.fit(Gamma, x)))),        
-    )    
-    df[:gmean] = df.shape .* df.scale # mean of fitted Gamma
-    df[:gvar] = df.shape .* df.scale.^2 # variance of fitted Gamma
-    df[:mean] = dfi[:mean] # empirical mean
-    df[:var] = dfi[:var] # empirical variance    
-    df[:nworkers] = dfi[:nworkers]
-    df[:worker_flops] = dfi[:worker_flops]
-    df[:niterations] = dfi[:niterations]
-
-    # drop rows with too few samples (iterations)
-    df = df[df.niterations .>= miniterations, :]
-
-    # avoid rounding errors when splitting by worker_flops later
-    df.worker_flops .= round.(df.worker_flops, digits=6)
-
-    sort!(df, :jobid)
-end
-
-"""
-
-Plot the latency of individual workers from fastest to slowest.
-"""
-function plot_worker_latency(df, nworkers=12, nsubpartitions=5)    
-    df = df[df.nworkers .== nworkers, :]
-    df = df[df.nsubpartitions .== nsubpartitions, :]
-    df = df[df.nwait .== df.nworkers, :]
-    df = gamma_model_df(df)
-    if size(df, 1) == 0
-        println("No jobs")
-        return
-    end
-    plt.figure()
-    for jobid in sort!(unique(df.jobid))
-        println(jobid)
-        dfi = df
-        dfi = dfi[dfi.jobid .== jobid, :]        
-        xs = sort!(dfi.mean)
-        plt.plot(xs, ".-", label="ID: $jobid")
-    end
-    plt.grid()
-    plt.legend()
-    plt.xlabel("w")
-    plt.ylabel("Mean latency")
-    return
-end
-
-"""
-
-Plot the parameters of a Gamma distribution fit to the latency of individual workers.
-"""
-function plot_gamma_model(df)
-    dfm = gamma_model_df(df)
-    # dfm = dfm[dfm.nworkers .== 18, :]
-
-    # plot mean
-    plt.figure()
-    for nworkers in sort!(unique(dfm.nworkers))
-        dfi = dfm
-        dfi = dfi[dfi.nworkers .== nworkers, :]                
-        plt.plot(dfi.worker_flops, dfi.gmean, ".", label="Nn: $nworkers (Gamma)")
-        # plt.plot(dfi.worker_flops, dfi.mean, ".", label="Nn: $nworkers (emp.)")
-        dfj = by(dfi, :worker_flops, :mean => mean => :mean)
-        plt.plot(dfj.worker_flops, dfj.mean, "s")
-    end
-    plt.title("Mean")
-    plt.ylabel("Mean")
-    plt.grid()
-    plt.legend()
-
-    # plot variance
-    plt.figure()
-    for nworkers in sort!(unique(dfm.nworkers))
-        dfi = dfm
-        dfi = dfi[dfi.nworkers .== nworkers, :]                
-        plt.plot(dfi.worker_flops, dfi.gvar, ".", label="Nn: $nworkers (Gamma)")
-        # plt.plot(dfi.worker_flops, dfi.var, ".", label="Nn: $nworkers (emp.)")
-        dfj = by(dfi, :worker_flops, :var => mean => :var)
-        plt.plot(dfj.worker_flops, dfj.var, "s")
-    end
-    plt.title("Variance")
-    plt.ylabel("Variance")
-    plt.grid()
-    plt.legend()    
-
-    # plot scale
-    plt.figure()
-    for nworkers in sort!(unique(dfm.nworkers))
-        dfi = dfm
-        dfi = dfi[dfi.nworkers .== nworkers, :]                
-        plt.plot(dfi.worker_flops, dfi.scale, ".", label="Nn: $nworkers")
-        dfj = by(dfi, :worker_flops, :scale => mean)
-        plt.plot(dfj.worker_flops, dfj.scale_mean, "o")
-    end
-    plt.title("Scale")
-    plt.ylabel("Scale")
-    plt.grid()
-    plt.legend()
-    return    
-
-    # # plot scale as a function of mean
-    # plt.figure()
-    # for nworkers in sort!(unique(dfm.nworkers))
-    #     dfi = dfm
-    #     dfi = dfi[dfi.nworkers .== nworkers, :]                
-    #     plt.plot(dfi.mean, dfi.scale, ".", label="Nn: $nworkers")
-    #     # dfj = by(dfi, :worker_flops, :scale => mean)
-    #     # plt.plot(dfj.worker_flops, dfj.scale_mean, "o")
-    # end
-    # plt.title("Scale")
-    # plt.xlabel("Gamma mean")    
-    # plt.ylabel("Scale")
-    # plt.grid()
-    # plt.legend()    
-
-    # plot shape
-    plt.figure()
-    for nworkers in sort!(unique(dfm.nworkers))
-        dfi = dfm
-        dfi = dfi[dfi.nworkers .== nworkers, :]
-        plt.semilogy(dfi.worker_flops, dfi.shape, ".", label="Nn: $nworkers")
-        dfj = by(dfi, :worker_flops, :shape => mean)
-        plt.semilogy(dfj.worker_flops, dfj.shape_mean, "o")        
-    end
-    plt.ylabel("Shape")    
-    plt.grid()
-    plt.legend()    
-
-end
-
-function plot_worker_cdf(df, n=1; miniterations=10000, onlycompute=true)
-    order_col = onlycompute ? :compute_order : :order
-    latency_col = onlycompute ? :worker_compute_latency : :worker_latency
-    df = df[df.niterations .>= miniterations, :]
-    # df = orderstats_df(df)
-
-    # two-state: 602, 34
-    # single-state: 600, 17    
-
-    
-
-    plt.figure()
-    for i in 1:n
-
-        # if i == 1
-        #     jobid = 600
-        #     worker_index = 17
-        # elseif i == 2
-        #     jobid = 602
-        #     worker_index = 34
-        # end
-
-        jobid = 609
-        worker_index = 13
-
-        dfi = df
-        # jobid = rand(unique(dfi.jobid))
-        dfi = dfi[dfi.jobid .== jobid, :]
-        # worker_index = rand(unique(dfi.worker_index))
-        dfi = dfi[dfi.worker_index .== worker_index, :]
-        
-        # empirical cdf
-        xs = sort!(dfi[latency_col])
-        shift = minimum(xs) - eps(Float64)
-        xs .-= shift
-        ys = range(0, 1, length=length(xs))
-        plt.plot(xs, ys, "b-", label="Empirical")
-
-        # Gamma
-        rv = Distributions.fit(Gamma, float.(xs))
-        ts = range(0.9*minimum(xs), 1.1*maximum(xs), length=100)
-        plt.plot(ts, cdf.(rv, ts), "k--", label="Gamma")
-        println(params(rv))
-
-        # LogNormal
-        # rv = Distributions.fit(LogNormal, float.(xs))
-        # ts = range(0.9*minimum(xs), 1.1*maximum(xs), length=100)
-        # plt.semilogy(ts, 1 .- cdf.(rv, ts), "r--", label="LogNormal")   
-
-        # # Exponential
-        # rv = Distributions.fit(Exponential, float.(xs))
-        # ts = range(0.9*minimum(xs), 1.1*maximum(xs), length=100)        
-        # plt.semilogy(ts, 1 .- cdf.(rv, ts), "m-.")
-
-        # Erlang
-        # rv = Distributions.fit(Erlang, float.(xs))
-        # ts = range(0.9*minimum(xs), 1.1*maximum(xs), length=100)
-        # plt.semilogy(ts, 1 .- cdf.(rv, ts), "m--", label="Erlang")             
-
-        # Normal
-        # rv = Distributions.fit(Normal, float.(xs))
-        # ts = range(0.9*minimum(xs), 1.1*maximum(xs), length=100)
-        # plt.semilogy(ts, 1 .- cdf.(rv, ts), "m-")        
-        
-    end
-    # plt.ylim(1e-1, 1)
-    plt.legend()
-    plt.grid()
-    plt.ylabel("CCDF")
-    plt.xlabel("Latency [s]")
-    return
-end
-
 """
 
 Compute Markov process state transition probability matrix
 """
-function foobar(df)
+function compute_markov_state_matrix(df)
     intervals = [100, 10, 0.1, 0.01]
 
     vs = df["rmean_10.0"]
@@ -1640,55 +1311,7 @@ function plot_worker_latency_timeseries(df, n=10; miniterations=10000, onlycompu
     plt.legend()
     plt.xlabel("Latency [s]")
     plt.ylabel("CCDF")
-
     return
-
-    function f(x)
-        windowsize = ceil(Int, intervalsize/(maximum(x.time)/maximum(x.iteration)))
-        runmean(float.(x.worker_compute_latency), windowsize) .- minimum(x.worker_compute_latency)
-    end
-    df.rmean = by(df, [:jobid, :worker_index], [:worker_compute_latency, :time, :iteration, :worker_flops] => f => :rmean).rmean
-
-    plt.figure()
-    for _ in 1:n
-        dfi = df
-        # dfi = dfi[dfi.worker_flops .== worker_flops, :]
-        jobid = rand(unique(dfi.jobid))
-        dfi = dfi[dfi.jobid .== jobid, :]
-        worker_index = rand(unique(dfi.worker_index))
-        dfi = dfi[dfi.worker_index .== worker_index, :]
-
-        # remove samples before the first window has passed over the data
-        dfi = dfi[dfi.time .>= intervalsize, :]
-
-        plt.plot(dfi.time, dfi.rmean, ".")
-
-        # # generate a fake process for comparison
-        # # minimum = 0.15
-        # minimum = 0
-        
-        # # λ = -0.4
-        # # scale = 0.00010282966170158503 / 100
-        # # rv = TukeyLambda(λ)
-
-        # μ = 0
-        # ts = 10
-        # # σ = 0.0001588368259783197 # 1 second intervals
-        # σ = 1.983481969336936e-5 # 10 second intervals
-        # rv = Normal(0, σ)
-
-        # xs = 1:ts:maximum(dfi.time) # time
-        # ys = zeros(length(xs))
-        # ys[1] = minimum
-        # for i in 2:length(xs)            
-        #     ys[i] = max(ys[i-1] + rand(rv), minimum)
-        # end
-        # plt.plot(xs, ys, "^")
-    end
-    # plt.legend()
-    plt.grid()
-    plt.xlabel("Time [s]")
-    plt.ylabel("Latency")
 end
 
 function plot_worker_latency_process(dfo, n=10; miniterations=10000, onlycompute=true, worker_flops=nothing)
@@ -1705,10 +1328,10 @@ function plot_worker_latency_process(dfo, n=10; miniterations=10000, onlycompute
 
     # compute running mean over windows of varying size
     # windowlengths = [300, 5, 0]
-    windowlengths = [Inf, 10, 0]
+    windowlengths = [Inf, 0]
     df = compute_rmeans(dfo; windowlengths)    
 
-    # plot the distribution of the constant part
+    # plot the distribution of the mean latency
     plt.figure()
     dfi = by(df, [:jobid, :worker_index], "rmean_$(windowlengths[1])" => mean => :mean)
     xs = sort(dfi.mean)
@@ -1721,15 +1344,23 @@ function plot_worker_latency_process(dfo, n=10; miniterations=10000, onlycompute
     rv = Distributions.fit(Normal, xs)
     ts = range(0.9*xs[1], 1.1*xs[end], length=100)
     plt.plot(ts, cdf.(rv, ts), "k--", label="Fitted normal")
+    println("Mean latency RV: $rv")
     
     plt.grid()
     plt.legend()
+    return
 
     # plot the distribution of the high-frequency noise
-    dfi = by(df, [:jobid, :worker_index], "rmean_$(windowlengths[end])" => ((x)->NamedTuple{(:μ, :σ)}(params(Distributions.fit(Normal, x)))))
+    # dfi = by(df, [:jobid, :worker_index], "rmean_$(windowlengths[end])" => ((x)->NamedTuple{(:μ, :σ)}(params(Distributions.fit(Normal, x)))))
+    dfi = by(
+        df, [:jobid, :worker_index], 
+        "rmean_$(windowlengths[end])" => mean => :mean, 
+        "rmean_$(windowlengths[end])" => var => :var, 
+    )
 
+    # mean
     plt.figure()
-    xs = sort(dfi.μ)
+    xs = sort(dfi.mean)
     ys = range(0, 1, length=length(xs))
     plt.plot(xs, ys, label="Empirical")
     plt.xlabel("i.i.d. noise mean")
@@ -1738,28 +1369,52 @@ function plot_worker_latency_process(dfo, n=10; miniterations=10000, onlycompute
     rv = Distributions.fit(Normal, xs)
     ts = range(1.1*xs[1], 1.1*xs[end], length=100)
     plt.plot(ts, cdf.(rv, ts), "k--", label="Fitted Normal")
+    println("Mean RV: $rv")   
 
     plt.grid()
     plt.legend()
 
+    # variance
     plt.figure()
-    xs = sort(dfi.σ)
+    xs = sort(dfi.var)
     ys = range(0, 1, length=length(xs))
     plt.plot(xs, ys, label="Empirical")
     plt.xlabel("i.i.d. noise variance")
     plt.ylabel("CDF")
 
-    rv = Distributions.fit(Gamma, xs)
+    rv = Distributions.fit(LogNormal, xs)
     ts = range(0, 1.1*xs[end], length=100)
-    plt.plot(ts, cdf.(rv, ts), "k--", label="Fitted Gamma")     
+    plt.plot(ts, cdf.(rv, ts), "k--", label="Fitted LogNormal")      
+    println("Variance RV: $rv")   
 
     plt.grid()
     plt.legend()    
+
+    # # mean-variance scatter plot
+    # plt.figure()
+    # plt.plot(dfi.mean, dfi.var, ".")
+    # plt.xlabel("Mean")
+    # plt.ylabel("Variance")
+    # plt.grid()
+
     return
 
-
+    # i.i.d. noise distribution for individual workers
     plt.figure()
-    n = 1
+
+    xs = sort(df["rmean_$(windowlengths[end])"])
+    ys = range(0, 1, length=length(xs))
+    plt.plot(xs, ys)    
+
+    # Normal distribution fitted to the data
+    rv = Distributions.fit(Normal, xs)
+    ts = range(1.1*xs[1], 1.1*xs[end], length=100)
+    plt.plot(ts, cdf.(rv, ts), "k--")            
+
+    return
+
+    # plot latency distribution for individual workers
+    n = 5    
     jobids = rand(unique(df.jobid), n)
     for jobid in jobids
         worker_index = rand(1:36)
@@ -1776,65 +1431,36 @@ function plot_worker_latency_process(dfo, n=10; miniterations=10000, onlycompute
         plt.plot(ts, cdf.(rv, ts), "k--")        
     end
     plt.grid()
-    return
-
-    intervalsize = 10
-    function f(x)
-        windowsize = ceil(Int, intervalsize/(maximum(x.time)/maximum(x.iteration)))
-        runmean(float.(x.worker_compute_latency), windowsize) .- minimum(x.worker_compute_latency)
-    end
-    dfo.rmean = by(dfo, [:jobid, :worker_index], [:worker_compute_latency, :time, :iteration, :worker_flops] => f => :rmean).rmean    
-
-    # distribution of the minimum latency
-    dfi = by(
-        dfo, [:jobid, :worker_index, :worker_flops],
-        latency_col => minimum => :minimum
-        )
-    plt.figure()
-    for worker_flops in sort!(unique(dfo.worker_flops))    
-        dfj = dfi
-        dfj = dfj[dfj.worker_flops .== worker_flops, :]
-        xs = sort!(dfj.minimum)
-        ys = range(0, 1, length=length(xs))
-        plt.plot(xs, ys, label="c: $worker_flops")        
-
-        rv = Distributions.fit(Normal, xs)
-        ts = range(0.9*xs[1], 1.1*xs[end], length=100)
-        plt.plot(ts, cdf.(rv, ts), "k--")
-        println("[Minimum] c: $worker_flops, params: $(params(rv))")        
-    end        
-    plt.xlabel("Minimum latency")
-    plt.ylabel("CDF")
-    plt.legend()
-    plt.grid()
-    # return
-
-    # distribution of the latency difference between subsequent iterations
-    dfi = by(
-        dfo, [:jobid, :worker_index, :worker_flops],
-        :rmean => diff => :diff
-        )
-    plt.figure()
-    for worker_flops in sort!(unique(dfo.worker_flops))    
-        dfj = dfi
-        dfj = dfj[dfj.worker_flops .== worker_flops, :]
-        xs = sort!(dfj.diff)
-        ys = range(0, 1, length=length(xs))
-        plt.plot(xs, ys, label="c: $worker_flops")        
-
-        rv = Distributions.fit(Normal, xs)
-        ts = range(1.1*xs[1], 1.1*xs[end], length=100)
-        plt.plot(ts, cdf.(rv, ts), "k--")
-        println("[Diff] c: $worker_flops, params: $(params(rv))")
-    end
-
-    plt.xlabel("Latency diff")
-    plt.ylabel("CDF")
-    plt.grid()
-    plt.legend()
-    return    
+    return  
 end
 
+"""
+
+Compute the state transition matrix associated with latency bursts.
+"""
+function compute_burst_state_matrix(dfo; miniterations=10000, worker_flops=nothing)
+    dfo = dfo[dfo.niterations .>= miniterations, :]
+    if !isnothing(worker_flops)
+        dfo = dfo[isapprox.(dfo.worker_flops, worker_flops, rtol=1e-2), :]
+    end
+    sort!(dfo, [:jobid, :worker_index, :iteration])
+    dfo.burst = burst_state_from_orderstats_df(dfo)
+
+    state = 1 .+ dfo.burst    
+    P = zeros(2, 2)
+    for i in 2:size(dfo, 1)
+        P[state[i-1], state[i]] += 1
+    end
+    P[1, :] ./= sum(P[1, :])
+    P[2, :] ./= sum(P[2, :])
+    P
+end
+
+
+"""
+
+Plot the latency distribution during bursts.
+"""
 function plot_bursts(dfo; miniterations=10000, worker_flops=nothing)
     dfo = dfo[dfo.niterations .>= miniterations, :]
     if !isnothing(worker_flops)
@@ -1842,9 +1468,79 @@ function plot_bursts(dfo; miniterations=10000, worker_flops=nothing)
     end
     sort!(dfo, [:jobid, :worker_index, :iteration])
     dfo.burst = burst_state_from_orderstats_df(dfo)
+
+    # plot latency outside and during bursts seprately
+    # plt.figure()
+    # n = 5
+    # for _ in 1:n
+
+    #     # select a job and worker at random        
+    #     dfi = dfo
+    #     jobid = rand(unique(dfi.jobid))
+    #     worker_index = rand(1:36)
+    #     println("jobid: $jobid, worker_index: $worker_index")
+    #     dfi = dfi[dfi.jobid .== jobid, :]
+    #     dfi = dfi[dfi.worker_index .== worker_index, :]
+
+    #     dfj = dfi[dfi.burst, :]
+    #     plt.plot(dfj.time, dfj.worker_compute_latency, "^")
+
+    #     dfj = dfi[dfi.burst .== false, :]
+    #     plt.plot(dfj.time, dfj.worker_compute_latency, ".")        
+    # end    
+    # plt.grid()
+    # return
+
+    # mean and variance of the latency during bursts
+    dfi = dfo[dfo.burst, :]
+    df1 = by(
+        dfi, [:jobid, :worker_index], 
+        :worker_compute_latency => mean => :mean,
+        :worker_compute_latency => var => :var,
+        )
+
+    # subtract the mean computed outside bursts
+    dfi = dfo[dfo.burst .== false, :]
+    df2 = by(
+        dfi, [:jobid, :worker_index], 
+        :worker_compute_latency => mean => :shift,
+    )
+    dfj = innerjoin(df1, df2, on=[:jobid, :worker_index])
+    dfj.mean .-= dfj.shift
+
+    # plot mean
+    plt.figure()
+    xs = sort(dfj.mean)
+    ys = range(0, 1, length=length(xs))
+    plt.plot(xs, ys)
+
+
+    rv = Distributions.fit(Normal, view(xs, ceil(Int, 0.03*length(xs)):length(xs)))
+    ts = range(0, 1.1*xs[end], length=100)
+    plt.plot(ts, cdf.(rv, ts), "k--")    
+    println("Burst mean RV: $rv")
+
+    plt.grid()
+    plt.xlabel("Mean")    
+
+    # plot variance
+    plt.figure()
+    xs = sort(dfj.var)
+    ys = range(0, 1, length=length(xs))
+    plt.plot(xs, ys)
+
+    rv = Distributions.fit(LogNormal, view(xs, ceil(Int, 0.03*length(xs)):length(xs)))    
+    ts = range(0, 1.1*xs[end], length=100)
+    plt.plot(ts, cdf.(rv, ts), "k--")
+    println("Burst variance RV: $rv")
+
+    plt.grid()
+    plt.xlabel("Variance")    
+    return dfj
+
     
-    # let's fit a normal to the amount of additional latency during bursts
-    # latency during bursts minus mean latency outside bursts
+    # collect the differences in latency between the mean outside of bursts and during bursts
+    # over all jobs and workers
     plt.figure()
     xs = zeros(0)    
     for jobid in unique(dfo.jobid)
@@ -1857,17 +1553,22 @@ function plot_bursts(dfo; miniterations=10000, worker_flops=nothing)
             append!(xs, dfi[dfi.burst .== true, :worker_compute_latency] .- shift)
         end
     end
+
+    # plot the cdf
     sort!(xs)
     ys = range(0, 1, length=length(xs))
     plt.plot(xs, ys)
 
+    # Normal fitted to the data
     rv = Distributions.fit(Normal, xs)
     ts = range(1.1xs[1], 1.1xs[end], length=100)
     plt.plot(ts, cdf.(rv, ts), "k--")
+    println("Burst latency RV: $rv")
 
     plt.grid()
     return
 
+    # plot the latency distribution during bursts for individual workers
     plt.figure()
     n = 10
     for _ in 1:n

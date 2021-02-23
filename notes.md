@@ -294,3 +294,29 @@ Feels like it's starting to be time to write some stuff down
 - Instead, let's model the mean, noise, and bursts only and see how close to the truth that gets us
 - Latency during bursts looks basically Normal
 - Next is to compute the state transition matrix, i.e., the prob. of being in a burst
+- After that I have all the components of a compute latency model
+
+# 210223
+
+- I've computed the burst state transition matrix and the fraction of time spent in bursts
+- Now I have all the pieces needed to compute latency
+- Process to generate a worker (for worker_flops=7.56e7):
+  - Draw the mean latency from a Normal{Float64}(μ=0.15185292155456753, σ=0.004095785673988278)
+  - The latency noise is given by a Normal distribution
+  - Draw the mean of the latency noise from a Normal{Float64}(μ=2.68559984516683e-18, σ=4.272504064627912e-16)
+  - Draw the variance of the latency noise from a LogNormal{Float64}(μ=-14.11655969017424, σ=0.6843218110446242)
+  - While in a burst the noise latency is determined by a Normal{Float64}(μ=0.02241252871954075, σ=0.00976378291546323)
+  - The mean of the Normal is drawn from a Normal{Float64}(μ=0.0221600607045976, σ=0.0014171964533128108)
+  - The variance of that Normal is drawn from a LogNormal{Float64}(μ=-9.495472609830145, σ=0.19837228407780638)
+  - The probability of being in a burst is 0.014768220659766032
+- Let's write a function that generates a series of latency samples for a single worker
+- I've written a function that can numerically simulate order statistics latency
+- Neat
+- Let's see how it compares with latency observed on AWS
+- Latency predicted by the model is very close to observed latency!
+- It slightly underestimates the latency when waiting for all workers
+- I guess that's to be expected since I'm not modeling all the latency with memory
+- I have a model of computational latency that seems to work reasonably well
+- Let's write it down in the report
+- I've written it in the report
+- The model allows me to predict latency
