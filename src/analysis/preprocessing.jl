@@ -109,23 +109,18 @@ function burst_state_from_orderstats_df(dfo; intervalsize=5)
         threshold = Inf
         worker_flops = mean(x.worker_flops)
         if isapprox(worker_flops, 7.56e7, rtol=1e-2)
-            threshold = 0.01 # for interval of 10 s
+            threshold = 0.01 # for 5s window
         elseif isapprox(worker_flops, 2.52e7, rtol=1e-2)
-            threshold = 0.005 # for interval of 10 s
+            threshold = 0.0025 # for 5s window
         end        
-        # weights = 
         windowsize = ceil(Int, intervalsize/(maximum(x.time)/maximum(x.iteration)))
-        vs = runmean(float.(x.worker_compute_latency), windowsize) .- minimum(x.worker_compute_latency)
+        # vs = runmean(float.(x.worker_compute_latency), windowsize) .- minimum(x.worker_compute_latency)
+        vs = runmean(float.(x.worker_compute_latency), windowsize)
+        vs .-= minimum(vs)
         burst = vs .>= threshold
 
         # shift the mean left by half a window size
         burst .= circshift(burst, -round(Int, windowsize/2))
-
-        # # also mark samples in half a windowsize before each window
-        # for i in findall(isone, diff(burst))
-        #     j = max(1, i-round(Int, windowsize/2))
-        #     burst[j:i] .= true
-        # end
 
         burst
     end
@@ -231,7 +226,8 @@ end
 Read a latency experiment csv file into a DataFrame
 """
 function read_latency_df(directory="C:/Users/albin/Dropbox/Eigenvector project/data/dataframes/latency/210215_v3/")
-    filename = sort!(glob("*.csv", directory))[end]
+    # filename = sort!(glob("*.csv", directory))[end]
+    filename = directory*"df_v10.csv"
     println("Reading $filename")
     df = DataFrame(CSV.File(filename, normalizenames=true))
     df.worker_flops = 2 .* df.nrows .* df.ncols .* df.ncomponents .* df.density
