@@ -1,4 +1,4 @@
-using CSV, DataFrames, PyPlot, Statistics, Polynomials, LinearAlgebra
+using CSV, DataFrames, PyPlot, Statistics, Polynomials, LinearAlgebra, Distributions, RollingFunctions
 using StatsBase
 
 using PyCall
@@ -48,7 +48,8 @@ function write_table(xs::AbstractVector, ys::AbstractVector, filename::AbstractS
     return
 end
 
+includet("analysis/preprocessing.jl")
 includet("analysis/convergence.jl")
 includet("analysis/correlation.jl")
 includet("analysis/latency.jl")
-includet("analysis/preprocessing.jl")
+includet("analysis/simulation.jl")

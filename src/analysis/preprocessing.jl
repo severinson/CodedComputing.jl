@@ -1,4 +1,5 @@
 # Code for loading .csv files into a DataFrame and for pre-processing that data
+using Glob
 
 """
 
@@ -77,7 +78,9 @@ end
 
 Read a csv file into a DataFrame
 """
-function read_df(filename="C:/Users/albin/Dropbox/Eigenvector project/data/dataframes/pca/210208/210208_v11.csv")
+function read_df(directory="C:/Users/albin/Dropbox/Eigenvector project/data/dataframes/pca/210208/")
+    filename = sort!(glob("*.csv", directory))[end]
+    println("Reading $filename")
     df = DataFrame(CSV.File(filename, normalizenames=true))
     df[:nostale] = Missings.replace(df.nostale, false)
     df[:kickstart] = Missings.replace(df.kickstart, false)
@@ -99,12 +102,141 @@ end
 
 """
 
+Return a boolean vector indicating for which samples the worker is currently experiencing a latency burst
+"""
+function burst_state_from_orderstats_df(dfo; intervalsize=5)
+    function f(x)
+        threshold = Inf
+        worker_flops = mean(x.worker_flops)
+        if isapprox(worker_flops, 7.56e7, rtol=1e-2)
+            threshold = 0.01 # for interval of 10 s
+        elseif isapprox(worker_flops, 2.52e7, rtol=1e-2)
+            threshold = 0.005 # for interval of 10 s
+        end        
+        # weights = 
+        windowsize = ceil(Int, intervalsize/(maximum(x.time)/maximum(x.iteration)))
+        vs = runmean(float.(x.worker_compute_latency), windowsize) .- minimum(x.worker_compute_latency)
+        burst = vs .>= threshold
+
+        # shift the mean left by half a window size
+        burst .= circshift(burst, -round(Int, windowsize/2))
+
+        # # also mark samples in half a windowsize before each window
+        # for i in findall(isone, diff(burst))
+        #     j = max(1, i-round(Int, windowsize/2))
+        #     burst[j:i] .= true
+        # end
+
+        burst
+    end
+    sort!(dfo, [:jobid, :worker_index, :iteration])    
+    by(dfo, [:jobid, :worker_index], [:worker_compute_latency, :time, :iteration, :worker_flops] => f => :burst).burst
+end
+
+"""
+
+Return a df composed of the order statistic samples for each worker, iteration, and job.
+"""
+function orderstats_df(df)    
+    df = df[.!ismissing.(df["latency_worker_1"]), :]    
+    if size(df, 1) == 0
+        return DataFrame()
+    end    
+    nworkers = maximum(df.nworkers)
+
+    # stack by worker latency
+    df1 = stack(df, ["latency_worker_$i" for i in 1:nworkers], value_name=:worker_latency)
+    df1[:worker_index] = parse.(Int, last.(split.(df1.variable, "_")))
+    df1 = select(df1, Not(:variable))
+    df1 = select(df1, Not(["repoch_worker_$i" for i in 1:nworkers]))
+    if "compute_latency_worker_1" in names(df)
+        df1 = select(df1, Not(["compute_latency_worker_$i" for i in 1:nworkers]))    
+    end
+    df1 = df1[.!ismissing.(df1.worker_latency), :]
+    
+    # stack by worker receive epoch
+    df2 = stack(df, ["repoch_worker_$i" for i in 1:nworkers], [:jobid, :iteration], value_name=:repoch)
+    df2[:worker_index] = parse.(Int, last.(split.(df2.variable, "_")))
+    df2 = select(df2, Not(:variable))
+    df2 = df2[.!ismissing.(df2.repoch), :]
+    df2[:isstraggler] = df2.repoch .< df2.iteration
+    joined = innerjoin(df1, df2, on=[:jobid, :iteration, :worker_index]) 
+
+    # stack by worker compute latency
+    if "compute_latency_worker_1" in names(df)
+        df3 = stack(df, ["compute_latency_worker_$i" for i in 1:nworkers], [:jobid, :iteration], value_name=:worker_compute_latency)
+        df3[:worker_index] = parse.(Int, last.(split.(df3.variable, "_")))
+        df3 = select(df3, Not(:variable))
+        df3 = df3[.!ismissing.(df3.worker_compute_latency), :]
+        joined = innerjoin(joined, df3, on=[:jobid, :iteration, :worker_index])
+    end
+
+    # the latency of stragglers is infinite
+    joined[joined.isstraggler, :worker_latency] .= Inf
+
+    # compute the order of all workers
+    sort!(joined, [:jobid, :iteration, :worker_latency])
+    joined[:order] = by(joined, [:jobid, :iteration], :nworkers => ((x) -> collect(1:maximum(x))) => :order).order
+    if "compute_latency_worker_1" in names(df)
+        sort!(joined, [:jobid, :iteration, :worker_compute_latency])
+        joined[:compute_order] = by(joined, [:jobid, :iteration], :nworkers => ((x) -> collect(1:maximum(x))) => :order).order        
+    end
+
+    return joined
+end
+
+"""
+
+Compute the running mean of worker compute latency over windows of length `windowlengths` seconds.
+"""
+function compute_rmeans(dfo; miniterations=10000, windowlengths=[100, 10, 0.1, 0.01])
+    dfo = dfo[dfo.niterations .>= miniterations, :]    
+    sort!(dfo, [:jobid, :worker_index, :iteration])
+    function f(x)
+        vs = zeros(length(x.worker_compute_latency))
+        rv = zeros(length(x.worker_compute_latency), length(windowlengths)+1)
+        rv[:, 1] .= x.iteration
+        for (i, windowlength) in enumerate(windowlengths)
+            if iszero(windowlength)
+                rv[:, i+1] .= float.(x.worker_compute_latency)
+            elseif isinf(windowlength)
+                rv[:, i+1] .= mean(x.worker_compute_latency)
+            else
+                windowsize = ceil(Int, windowlength/(maximum(x.time)/maximum(x.iteration)))
+                # weights = DSP.Windows.gaussian(windowsize, 10)
+                # weights ./= sum(weights)
+                # rv[:, i+1] .= runmean(float.(x.worker_compute_latency), windowsize, weights)
+                circshift!(view(rv, :, i+1), runmean(float.(x.worker_compute_latency), windowsize), -round(Int, windowsize/2))                
+            end
+            rv[:, i+1] .-= vs
+            vs .+= rv[:, i+1]
+        end
+        rv
+    end
+    df = by(dfo, [:jobid, :worker_index], [:worker_compute_latency, :time, :iteration, :worker_flops] => f)    
+
+    # fix the iteration type and name
+    df.iteration = Int.(df.x1) 
+    select!(df, Not(:x1))
+    
+    # rename running mean columns
+    for (i, windowlength) in enumerate(windowlengths)    
+        rename!(df, "x$(i+1)" => "rmean_$windowlength")
+    end
+    innerjoin(dfo, df, on=[:jobid, :worker_index, :iteration])
+end
+
+"""
+
 Read a latency experiment csv file into a DataFrame
 """
-function read_latency_df()
-    filename="C:/Users/albin/Dropbox/Eigenvector project/data/dataframes/latency/210215_v3/df_v1.csv"
+function read_latency_df(directory="C:/Users/albin/Dropbox/Eigenvector project/data/dataframes/latency/210215_v3/")
+    filename = sort!(glob("*.csv", directory))[end]
+    println("Reading $filename")
     df = DataFrame(CSV.File(filename, normalizenames=true))
     df.worker_flops = 2 .* df.nrows .* df.ncols .* df.ncomponents .* df.density
+    sort!(df, [:jobid, :iteration])
+    df.time = by(df, :jobid, :latency => cumsum => :time).time # cumulative time since the start of the computation
     df[df.ncols .== 1812842, :], df[df.ncols .== 2504, :]
 end
 
