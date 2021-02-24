@@ -40,13 +40,11 @@ end
 orthogonal(A::AbstractMatrix) = orthogonal!(copy(A))
 
 """
-    explained_variance(X, V)
+    explained_variance(X, V, den)
 
-Return the fraction of variance explained by the principal components
-in V, defined as tr(V'X'XV) / tr(X'X).
-
+Explained variance with pre-computed denominator.
 """
-function explained_variance(X, V)
+function explained_variance(X, V, den)
     n, d = size(X)
     _, k = size(V)
     XV = X*V
@@ -56,13 +54,26 @@ function explained_variance(X, V)
             num += Float64(XV[j, i])^2
         end
     end
+    min(num / den, 1.0-eps(Float64))
+end
+
+"""
+    explained_variance(X, V)
+
+Return the fraction of variance explained by the principal components
+in V, defined as tr(V'X'XV) / tr(X'X).
+
+"""
+function explained_variance(X, V)
+    n, d = size(X)
+    _, k = size(V)
     den = 0.0
     @inbounds for i in 1:d
         for j in 1:n
             den += Float64(X[j, i])^2
         end
     end
-    min(num / den, 1.0-eps(Float64))
+    explained_variance(X, V, den)
 end
 
 projection_distance(X, V) = sqrt(norm(X .- (X*V)*V')) / reduce(*, size(X))
