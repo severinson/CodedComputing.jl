@@ -76,6 +76,18 @@ function explained_variance(X, V)
     explained_variance(X, V, den)
 end
 
+"""
+
+Compute the right-singular vectors from the left-singular vectors `U` and the data matrix `X`.
+"""
+right_from_left_singular_vectors(X, U) = orthogonal!(U'*X)
+
+"""
+
+In-place version of the above.
+"""
+right_from_left_singular_vectors!(V, X, U) = orthogonal!(mul!(V, X, U))
+
 projection_distance(X, V) = sqrt(norm(X .- (X*V)*V')) / reduce(*, size(X))
 
 function projection_distance(X::SparseMatrixCSC, V)
