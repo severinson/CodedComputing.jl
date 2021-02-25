@@ -320,3 +320,35 @@ Feels like it's starting to be time to write some stuff down
 - Let's write it down in the report
 - I've written it in the report
 - The model allows me to predict latency
+
+# 210224
+
+- I've created a latency model for a single value of worker_flops
+- Now I'm interested in seeing how the parameters of that model changes with worker_flops
+- The modeling procedure consists of
+  - Separating samples into different states (bust and not burst)
+  - Computing statistics of those samples separately
+- The only part of the above that depends on worker_flops is the burst detection
+- So let's have a look at that
+- I'm not seeing any bursts for worker_flops 1.51e7
+- Could just be by chance. No idea
+- Looks like I have relatively few experiments for these loads. So I'm getting some more
+- In the meantime I can analyze the impact on the latency distribution outside of bursts
+- I want to see how the parameters of the distributions that generate worker behavior changes with worker_flops
+- Let's write a function that finds these parameters for all unique values of worker_flops
+- I'll have to take care to ensure that nwait = nworkers
+- I've written a function that fits all the random variables necessary
+- Now I need to consider how the parameters of these change as a function of worker_flops
+- Let's plot the distributions fitted for different worker_flops on top of each other
+- First I think I need some more data though
+- Let's wait until after fika, at which point I should have plenty more data
+- The burst behavior is still strange in that I'm not seeing it for other experiments
+- Maybe what I observed was some sort of exceptional behavior that is no longer around? Something like AWS doing updates
+- Let's let the experiments run overnight to see if the bursts reappear
+- In the meantime I could work on setting up experiments to be run on the entire genome
+- Tasks for running experiments on the full genome
+  - Write the entire dataset to disk as a h5 file
+  - Write code for loading only part of a sparse matrix from a h5 file
+  - Figure out how to compute explained variance from the left-singular vectors
+- The entire dataset is huge, so I need a way of loading only part of a sparse matrix from a .h5 file
+- I want something that behaves like a sparse matrix
