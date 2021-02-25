@@ -67,13 +67,23 @@ in V, defined as tr(V'X'XV) / tr(X'X).
 function explained_variance(X, V)
     n, d = size(X)
     _, k = size(V)
+    den = explained_variance_denominator(X)
+    explained_variance(X, V, den)
+end
+
+"""
+
+Compute the denominator of the explained variance.
+"""
+function explained_variance_denominator(X)
+    n, d = size(X)    
     den = 0.0
     @inbounds for i in 1:d
         for j in 1:n
             den += Float64(X[j, i])^2
         end
     end
-    explained_variance(X, V, den)
+    den
 end
 
 """
