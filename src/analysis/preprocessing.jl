@@ -112,6 +112,16 @@ function burst_state_from_orderstats_df(dfo; intervalsize=5)
             threshold = 0.01 # for 5s window
         elseif isapprox(worker_flops, 2.52e7, rtol=1e-2)
             threshold = 0.0025 # for 5s window
+        elseif isapprox(worker_flops, 1.51e8, rtol=1e-2)
+            threshold = 0.02
+        elseif isapprox(worker_flops, 5.04e7, rtol=1e-2)
+            threshold = 0.005
+        elseif isapprox(worker_flops, 3.78e7, rtol=1e-2)
+            threshold = 0.004
+        elseif isapprox(worker_flops, 3.02e7, rtol=1e-2)
+            threshold = 0.0035
+        elseif isapprox(worker_flops, 1.51e7, rtol=1e-2)
+            threshold = 0.001
         end        
         windowsize = ceil(Int, intervalsize/(maximum(x.time)/maximum(x.iteration)))
         # vs = runmean(float.(x.worker_compute_latency), windowsize) .- minimum(x.worker_compute_latency)
@@ -137,32 +147,34 @@ function orderstats_df(df)
     if size(df, 1) == 0
         return DataFrame()
     end    
-    nworkers = maximum(df.nworkers)
 
-    # stack by worker latency
-    df1 = stack(df, ["latency_worker_$i" for i in 1:nworkers], value_name=:worker_latency)
-    df1[:worker_index] = parse.(Int, last.(split.(df1.variable, "_")))
-    df1 = select(df1, Not(:variable))
-    df1 = select(df1, Not(["repoch_worker_$i" for i in 1:nworkers]))
+    # determine the number of workers based on column names
+    # (since not all rows may be present)
+    cols = [name for name in names(df) if occursin("repoch", name)]
+    indices = parse.(Int, last.(split.(cols, "_")))
+    nworkers = maximum(indices)
+    
+    ### stack by worker latency
+    df1 = select(df, Not(["repoch_worker_$i" for i in 1:nworkers]))
     if "compute_latency_worker_1" in names(df)
-        df1 = select(df1, Not(["compute_latency_worker_$i" for i in 1:nworkers]))    
-    end
-    df1 = df1[.!ismissing.(df1.worker_latency), :]
+        select!(df1, Not(["compute_latency_worker_$i" for i in 1:nworkers]))    
+    end    
+    df1 = stack(df1, ["latency_worker_$i" for i in 1:nworkers], value_name=:worker_latency)
+    select!(df1, Not(:variable), :variable => ((x) -> parse.(Int, last.(split.(x, "_")))) => :worker_index)
+    dropmissing!(df1, :worker_latency)
     
     # stack by worker receive epoch
     df2 = stack(df, ["repoch_worker_$i" for i in 1:nworkers], [:jobid, :iteration], value_name=:repoch)
-    df2[:worker_index] = parse.(Int, last.(split.(df2.variable, "_")))
-    df2 = select(df2, Not(:variable))
-    df2 = df2[.!ismissing.(df2.repoch), :]
+    select!(df2, Not(:variable), :variable => ((x) -> parse.(Int, last.(split.(x, "_")))) => :worker_index)    
+    dropmissing!(df2, :repoch)
     df2[:isstraggler] = df2.repoch .< df2.iteration
     joined = innerjoin(df1, df2, on=[:jobid, :iteration, :worker_index]) 
 
     # stack by worker compute latency
     if "compute_latency_worker_1" in names(df)
         df3 = stack(df, ["compute_latency_worker_$i" for i in 1:nworkers], [:jobid, :iteration], value_name=:worker_compute_latency)
-        df3[:worker_index] = parse.(Int, last.(split.(df3.variable, "_")))
-        df3 = select(df3, Not(:variable))
-        df3 = df3[.!ismissing.(df3.worker_compute_latency), :]
+        select!(df3, Not(:variable), :variable => ((x) -> parse.(Int, last.(split.(x, "_")))) => :worker_index)            
+        dropmissing!(df3, :worker_compute_latency)
         joined = innerjoin(joined, df3, on=[:jobid, :iteration, :worker_index])
     end
 
@@ -227,7 +239,7 @@ Read a latency experiment csv file into a DataFrame
 """
 function read_latency_df(directory="C:/Users/albin/Dropbox/Eigenvector project/data/dataframes/latency/210215_v3/")
     # filename = sort!(glob("*.csv", directory))[end]
-    filename = directory*"df_v10.csv"
+    filename = directory*"df_v11.csv"
     println("Reading $filename")
     df = DataFrame(CSV.File(filename, normalizenames=true))
     df.worker_flops = 2 .* df.nrows .* df.ncols .* df.ncomponents .* df.density

@@ -352,3 +352,19 @@ Feels like it's starting to be time to write some stuff down
   - Figure out how to compute explained variance from the left-singular vectors
 - The entire dataset is huge, so I need a way of loading only part of a sparse matrix from a .h5 file
 - I want something that behaves like a sparse matrix
+
+# 210225
+
+- I can't read the entire dataset into memory to extract part of it like I'm doing now
+- I need to read only a portion from disk
+- Meeting with Salim
+  - There's a mistake in the paper: the workload is unbalanced across workers
+  - It affects the latency we've seen on AWS
+  - In particular, the latency model is wrong and our proposed method DSAG has a smaller advantage than we thought for the scenario we considereda
+  - Since discovering it I've looked at latency on AWS more carefully
+  - It seems like all conclusions are still true, but that part of the behavior we saw is due to the unbalanced workload
+  - Hence, I think the paper can be salvaged
+  - To salvage the paper we'd need to update the latency model
+  - (I've got a new latency model that seems more accurate)
+  - and we need to run new experiments for a larger system for DSAG to have an advantage
+  - What's your preferred way of dealing with this?

@@ -1229,22 +1229,11 @@ function plot_worker_latency_timeseries(df, n=10; miniterations=10000, onlycompu
 
     # add absolute time to the df
     sort!(df, [:jobid, :worker_index, :iteration])
-    # df.time = by(df, [:jobid, :worker_index], :latency => cumsum => :time).time
-    # df.interval = ceil.(Int, df.time ./ intervalsize)
-    # df = by(
-    #     df, [:jobid, :worker_index, :interval, :worker_flops],
-    #     latency_col => mean => :mean, 
-    #     latency_col => median => :median,
-    #     latency_col => var => :var,
-    #     latency_col => minimum => :minimum,
-    #     latency_col => maximum => :maximum,
-    #     )
-    # df.time = df.interval * intervalsize .- intervalsize/2
 
     # select the job with the highest recorded latency
     # i = argmax(df.worker_compute_latency)
     is = sortperm(df.worker_compute_latency)
-    i = is[end-1]
+    i = is[end-10]
     jobid = df.jobid[i]
     worker_index = df.worker_index[i]
 
