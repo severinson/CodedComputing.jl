@@ -57,9 +57,9 @@ function parse_latency_files(;dir::AbstractString, prefix="output", dfname="df.c
     filenames = glob("$(prefix)*.h5", dir)
     for filename in filenames
         try
-            df = df_from_latency_file(filename) # the result is memoized on disk
+            df = df_from_latency_file(filename)
             CSV.write(filename*".csv", df)
-            # rm(filename)
+            rm(filename)
         catch e
             printstyled(stderr,"ERROR: ", bold=true, color=:red)
             printstyled(stderr,sprint(showerror,e), color=:light_red)
