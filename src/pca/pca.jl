@@ -48,7 +48,7 @@ function problem_size(filename::String, dataset::String)
     end
 end
 
-function read_localdata(i::Integer, nworkers::Integer; inputfile::String, inputdataset::String, nreplicas::Integer, kwargs...)
+function read_localdata(i::Integer, nworkers::Integer; inputfile::String, inputdataset::String, nreplicas::Integer, nsubpartitions::Integer, kwargs...)
     HDF5.ishdf5(inputfile) || throw(ArgumentError("$inputfile isn't an HDF5 file"))
     0 < nworkers || throw(DomainError(nworkers, "nworkers must be positive"))
     0 < nreplicas || throw(DomainError(nreplicas, "nreplicas must be positive"))
@@ -63,11 +63,21 @@ function read_localdata(i::Integer, nworkers::Integer; inputfile::String, inputd
         if flag
             il = round(Int, (partition_index - 1)/npartitions*nsamples + 1)
             iu = round(Int, partition_index/npartitions*nsamples)
-            return h5readcsc(fid, inputdataset, il, iu)
+            X = h5readcsc(fid, inputdataset, il, iu)
+            nlocalsamples = size(X, 2)
+            ils = [round(Int, (i-1)/nsubpartitions*nlocalsamples + 1) for i in 1:nsubpartitions]
+            ius = [round(Int, i/nsubpartitions*nlocalsamples) for i in 1:nsubpartitions]
+            localdata = [X[:, il:iu] for (il, iu) in zip(ils, ius)]
+            return localdata, dimension, nsamples
         else            
             il = round(Int, (partition_index - 1)/npartitions*nsamples + 1)
             iu = round(Int, partition_index/npartitions*nsamples)
-            return fid[inputdataset][:, il:iu]
+            X = fid[inputdataset][:, il:iu]
+            nlocalsamples = size(X, 2)            
+            ils = [round(Int, (i-1)/nsubpartitions*nlocalsamples + 1) for i in 1:nsubpartitions]
+            ius = [round(Int, i/nsubpartitions*nlocalsamples) for i in 1:nsubpartitions]            
+            localdata = [X[:, il:iu] for (il, iu) in zip(ils, ius)]
+            return localdata, dimension, nsamples
         end
     end
 end
@@ -75,10 +85,7 @@ end
 function worker_setup(rank::Integer, nworkers::Integer; ncomponents::Integer, kwargs...)
     0 < nworkers || throw(DomainError(nworkers, "nworkers must be positive"))
     isnothing(ncomponents) || 0 < ncomponents || throw(DomainError(ncomponents, "ncomponents must be positive"))
-    localdata = read_localdata(rank, nworkers; kwargs...)
-    dims = length(size(localdata))
-    dims == 2 || error("Expected localdata to be 2-dimensional, but got data of dimension $dims")
-    dimension = size(localdata, 1)
+    localdata, dimension, nsamples = read_localdata(rank, nworkers; kwargs...)
     recvbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*ncomponents)
     sendbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*ncomponents + METADATA_BYTES)
     localdata, recvbuf, sendbuf
@@ -112,32 +119,30 @@ end
 function worker_task!(recvbuf, sendbuf, localdata; state=nothing, nsubpartitions::Integer, ncomponents::Integer, kwargs...)
     0 < ncomponents || throw(DomainError(ncomponents, "ncomponents must be positive"))        
     sizeof(recvbuf) + METADATA_BYTES == sizeof(sendbuf) || throw(DimensionMismatch("recvbuf has size $(sizeof(recvbuf)), but sendbuf has size $(sizeof(sendbuf))"))
-    dimension, nlocalsamples = size(localdata)
-    1 <= nsubpartitions <= dimension || throw(DimensionMismatch("nsubpartitions is $nsubpartitions, but the dimension is $dimension"))
+    length(localdata) == nsubpartitions || throw(DimensionMismatch("Expected localdata to be of length nsubpartitions"))    
+    
+    # select a random sub-partition
+    subpartition_index = rand(1:nsubpartitions)
+    Xw = localdata[subpartition_index]
+    dimension, nlocalsamples = size(Xw)
+    1 <= nsubpartitions <= dimension || throw(DimensionMismatch("nsubpartitions is $nsubpartitions, but the dimension is $dimension"))    
 
     # format the recvbuf into a matrix we can operate on
     length(reinterpret(ELEMENT_TYPE, recvbuf)) == dimension*ncomponents || throw(DimensionMismatch("recvbuf has length $(length(reinterpret(ELEMENT_TYPE, recvbuf))), but the data dimension is $dimension and ncomponents is $k"))
     V = reshape(reinterpret(ELEMENT_TYPE, recvbuf), dimension, ncomponents)
-    Xw = localdata
 
     # prepare working memory
     if isnothing(state) # first iteration
-        max_samples = ceil(Int, nlocalsamples/nsubpartitions) # max number of samples processed per iteration
+        max_samples = maximum((x)->size(x, 2), localdata) # max number of samples processed per iteration
         W = Matrix{eltype(V)}(undef, max_samples, ncomponents)
     else # subsequent iterations
         W::Matrix{eltype(V)} = state
     end
 
-    # select a sub-partition at random
-    subpartition_index = rand(1:nsubpartitions)
-    il = round(Int, (subpartition_index - 1)/nsubpartitions*nlocalsamples + 1)
-    iu = round(Int, subpartition_index/nsubpartitions*nlocalsamples)
-    Xwv = view(Xw, :, il:iu)
-
     # do the computation
-    Wv = view(W, 1:size(Xwv, 2), :)
-    mul!(Wv, Xwv', V)
-    mul!(V, Xwv, Wv)
+    Wv = view(W, 1:size(Xw, 2), :)
+    mul!(Wv, Xw', V)
+    mul!(V, Xw, Wv)
     
     # populate the send buffer
     metadata = reinterpret(UInt16, view(sendbuf, 1:METADATA_BYTES))
