@@ -368,3 +368,55 @@ Feels like it's starting to be time to write some stuff down
   - (I've got a new latency model that seems more accurate)
   - and we need to run new experiments for a larger system for DSAG to have an advantage
   - What's your preferred way of dealing with this?
+
+# 210226
+
+- Today, let's focus on running experiments for the whole genome on Sveith
+- The matrices are actually large enough to fit into memory on Sveith
+- But it's extremely wasteful to load the entire matrix to then select only a small part
+- I need to load only part of it from disk
+- Let's first fix the explained variance computation
+- I need an efficient way to compute the inner product between a row of X
+
+- Sparse matrix test
+  - 10000 by 10000 sparse matrix with density 0.1
+  - compute dot products between the rows and columns of the matrix and the vector
+  - @time dot(X[2, :], V);
+    - 0.000458 seconds (22 allocations: 32.828 KiB)
+  - @time dot(view(X, 2, :), V);
+    - 0.000807 seconds (3 allocations: 112 bytes)
+
+- Let's just write the transposed genome matrix
+- I need to chunk the matrix somehow so that it's possible to only load part of it
+- Let's split into 100mb or so chunks
+- And have each worker load one or more chunks
+- This doesn't guarantee a balanced workload though
+- Let's consider columns to be samples and rows to be features
+- Since I want to split my matrices by samples and Julia is a column-major language
+- Let's do this in stages
+  1. Write the entire genome into a single .h5 file, with one dataset per genome, stored in the transposed manner
+- Turns out I can write a large sparse matrix in blocks by expanding the dimension of vectors
+- By combining that with reading a subset of the columns I can process datasets that won't fit in memory
+- Let's first write code for reading a single column and a range of columns
+- I've added this code
+
+TODO:
+- Change to using Float32 instead of Float64
+- I'm operating on views of sparse matrices, which means that I'm likely seeing much worse performance than what I'd see if I operated on the sparse matrix directly. The better way of doing this would be to partition the data when loading it from disk and then re-using the same partitions, and to remove the pfraction option
+- Rename pca.jl to kernel.jl
+- Replication should be general and not depend on the algorithm
+- Add docstrings to the functions in common.jl
+
+DONE:
+- Don't check nsamples, ncomponents etc in coordinator_main
+- Removed power.jl kernel
+- Make ncomponents a required argument
+- Check that the ncomponents and the size of the initial iterate are of compliant size
+- Fix the ncomponents problem with worker_setup
+- update_iterate should use dot syntax
+- Remove the pfraction option
+
+New sub-partition implementation
+- The current implementation is based on creating views into a single locally stored matrix
+- This is problematic since views of sparse matrices can be slow
+- Instead, I should create nsubpartitions separate sparse matrices at each worker and select randomly among those
