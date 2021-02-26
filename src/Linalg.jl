@@ -11,10 +11,15 @@ end
 """return the angle between w and v, accounting for their sign"""
 minangle(w, v) = min(angle(w, v), angle(w, -v))
 
-"""Compute PCA via the built-in SVD."""
-function pca(X, k::Integer=min(size(X)...))
+"""
+    pca(X::AbstractMatrix, k::Integer=min(size(X)...))
+
+Compute the top `k` PCs of `X` via `LinearAlgebra.svd`. The columns of `X` correspond to samples and 
+the rows to features.
+"""
+function pca(X::AbstractMatrix, k::Integer=min(size(X)...))
     F = svd(X)
-    return F.V[:, 1:k]
+    return F.U[:, 1:k]
 end
 
 """Orthogonalize and normalize the columns of A in-place."""
@@ -44,7 +49,7 @@ orthogonal(A::AbstractMatrix) = orthogonal!(copy(A))
 
 Explained variance with pre-computed denominator.
 """
-explained_variance(X, V, Xnorm::Real) = min((norm(X*V) / Xnorm)^2, 1.0-eps(Float64))
+explained_variance(X, V, Xnorm::Real) = min((norm(X'*V) / Xnorm)^2, 1.0-eps(Float64))
 
 """
     explained_variance(X, V)

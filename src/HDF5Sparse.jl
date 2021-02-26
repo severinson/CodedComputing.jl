@@ -41,9 +41,45 @@ function h5readcsc(fid::HDF5.File, name::AbstractString)::SparseMatrixCSC
     return SparseMatrixCSC(m, n, colptr, rowval, nzval)
 end
 
-function h5readcsc(filename, name::AbstractString)::SparseMatrixCSC
+"""
+
+Read the `col`-th column of the `SparseMatrixCSC` matrix stored in file `fid` under `name`
+"""
+function h5readcsc(fid::HDF5.File, name::AbstractString, col::Integer)::SparseVector
+    g = fid[name]
+    m = g["m"][]
+    n = g["n"][]
+    0 < col <= n || throw(BoundsError((fid, name), col))
+    i = g["colptr"][col]
+    j = g["colptr"][col+1] - 1
+    rowval = g["rowval"][i:j]     
+    nzval = g["nzval"][i:j]
+    SparseVector(m, rowval, nzval)
+end
+
+"""
+
+Read the submatrix consisting of columns `firstcol:lastcol` from `fid`.
+"""
+function h5readcsc(fid::HDF5.File, name::AbstractString, firstcol::Integer, lastcol::Integer)::SparseMatrixCSC
+    g = fid[name]
+    m = g["m"][]
+    n = g["n"][]
+    0 < firstcol <= n || throw(BoundsError((fid, name), firstcol))    
+    0 < lastcol <= n || throw(BoundsError((fid, name), lastcol))    
+    firstcol <= lastcol || throw(ArgumentError("expected firstcol <= lastcol"))
+    colptr = g["colptr"][firstcol:lastcol+1]
+    i = colptr[1]
+    j = colptr[end] - 1
+    rowval = g["rowval"][i:j]     
+    nzval = g["nzval"][i:j]
+    colptr .-= i-1
+    SparseMatrixCSC(m, lastcol-firstcol+1, colptr, rowval, nzval)
+end
+
+function h5readcsc(filename::AbstractString, args...; kwargs...)
     HDF5.ishdf5(filename) || throw(ArgumentError("$filename isn't a valid HDF5 file"))    
     h5open(filename, "r") do fid
-        return h5readcsc(fid, name)
+        return h5readcsc(fid, args...; kwargs...)
     end
 end

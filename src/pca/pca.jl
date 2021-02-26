@@ -6,11 +6,11 @@ const CANARY_VALUE = UInt16(2^16 - 1)
 
 function update_argsettings!(s::ArgParseSettings)
     @add_arg_table s begin
-        "--pfraction"
-            help = "Fraction of the data stored at each worker that should be used to compute the gradient"
-            arg_type = Float64
-            default = 1.0
-            range_tester = (x) -> 0 < x <= 1
+        "--ncomponents"
+            help = "Number of principal components to compute"
+            required = true
+            arg_type = Int            
+            range_tester = (x) -> x >= 1        
         "--nsubpartitions"
             help = "Number of sub-partitions to split the data stored at each worker into"
             arg_type = Int
@@ -48,7 +48,7 @@ function problem_size(filename::String, dataset::String)
     end
 end
 
-function read_localdata(i::Integer, nworkers::Integer; inputfile::String, inputdataset::String, nreplicas::Integer, kwargs...)
+function read_localdata(i::Integer, nworkers::Integer; inputfile::String, inputdataset::String, nreplicas::Integer, nsubpartitions::Integer, kwargs...)
     HDF5.ishdf5(inputfile) || throw(ArgumentError("$inputfile isn't an HDF5 file"))
     0 < nworkers || throw(DomainError(nworkers, "nworkers must be positive"))
     0 < nreplicas || throw(DomainError(nreplicas, "nreplicas must be positive"))
@@ -56,54 +56,49 @@ function read_localdata(i::Integer, nworkers::Integer; inputfile::String, inputd
     mod(nworkers, nreplicas) == 0 || throw(ArgumentError("nworkers must be divisible by nreplicas"))
     npartitions = div(nworkers, nreplicas)
     partition_index = ceil(Int, i/nreplicas)
+    dimension, nsamples = problem_size(inputfile, inputdataset)    
     h5open(inputfile, "r") do fid
         inputdataset in keys(fid) || throw(ArgumentError("$inputdataset is not in $fid"))
         flag, _ = isvalidh5csc(fid, inputdataset)
         if flag
-            X = h5readcsc(fid, inputdataset)
-            nrows = size(X, 1)
-            il = round(Int, (partition_index - 1)/npartitions*nrows + 1)
-            iu = round(Int, partition_index/npartitions*nrows)
-            return X[il:iu, :]            
+            il = round(Int, (partition_index - 1)/npartitions*nsamples + 1)
+            iu = round(Int, partition_index/npartitions*nsamples)
+            X = h5readcsc(fid, inputdataset, il, iu)
+            nlocalsamples = size(X, 2)
+            ils = [round(Int, (i-1)/nsubpartitions*nlocalsamples + 1) for i in 1:nsubpartitions]
+            ius = [round(Int, i/nsubpartitions*nlocalsamples) for i in 1:nsubpartitions]
+            localdata = [X[:, il:iu] for (il, iu) in zip(ils, ius)]
+            return localdata, dimension, nsamples
         else            
-            nrows = size(fid[inputdataset], 1)
-            il = round(Int, (partition_index - 1)/npartitions*nrows + 1)
-            iu = round(Int, partition_index/npartitions*nrows)
-            return fid[inputdataset][il:iu, :]
+            il = round(Int, (partition_index - 1)/npartitions*nsamples + 1)
+            iu = round(Int, partition_index/npartitions*nsamples)
+            X = fid[inputdataset][:, il:iu]
+            nlocalsamples = size(X, 2)            
+            ils = [round(Int, (i-1)/nsubpartitions*nlocalsamples + 1) for i in 1:nsubpartitions]
+            ius = [round(Int, i/nsubpartitions*nlocalsamples) for i in 1:nsubpartitions]            
+            localdata = [X[:, il:iu] for (il, iu) in zip(ils, ius)]
+            return localdata, dimension, nsamples
         end
     end
 end
 
-function worker_setup(rank::Integer, nworkers::Integer; ncomponents::Union{Nothing,<:Integer}, kwargs...)
+function worker_setup(rank::Integer, nworkers::Integer; ncomponents::Integer, kwargs...)
     0 < nworkers || throw(DomainError(nworkers, "nworkers must be positive"))
     isnothing(ncomponents) || 0 < ncomponents || throw(DomainError(ncomponents, "ncomponents must be positive"))
-    localdata = read_localdata(rank, nworkers; kwargs...)
-    dims = length(size(localdata))
-    dims == 2 || error("Expected localdata to be 2-dimensional, but got data of dimension $dims")
-    dimension = size(localdata, 2)
-
-    # default to computing all components
-    # TODO: this won't work if an initial iterate is provided but ncomponents isn't set
-    if isnothing(ncomponents)
-        k = dimension
-    else
-        k = ncomponents
-    end
-
-    recvbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*k)
-    sendbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*k + METADATA_BYTES)
+    localdata, dimension, nsamples = read_localdata(rank, nworkers; kwargs...)
+    recvbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*ncomponents)
+    sendbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*ncomponents + METADATA_BYTES)
     localdata, recvbuf, sendbuf
 end
 
-function coordinator_setup(nworkers::Integer; inputfile::String, inputdataset::String, iteratedataset, ncomponents, parsed_args...)    
+function coordinator_setup(nworkers::Integer; inputfile::String, inputdataset::String, iteratedataset, ncomponents::Integer, parsed_args...)    
     0 < nworkers || throw(DomainError(nworkers, "nworkers must be positive"))
     isnothing(ncomponents) || 0 < ncomponents || throw(DomainError(ncomponents, "ncomponents must be positive"))    
-    nsamples, dimension = problem_size(inputfile, inputdataset)
+    dimension, nsamples = problem_size(inputfile, inputdataset)
 
     # initial iterate
     if isnothing(iteratedataset) # initialized at random
-        k = isnothing(ncomponents) ? dimension : ncomponents
-        V = randn(dimension, k)
+        V = randn(dimension, ncomponents)
         orthogonal!(V)
     else # given as an argument and loaded from disk
         h5open(inputfile) do fid
@@ -111,69 +106,58 @@ function coordinator_setup(nworkers::Integer; inputfile::String, inputdataset::S
             V = fid[iteratedataset][:, :]
         end
         ncomponents == size(V, 2) || throw(DimensionMismatch("V has dimensions $(size(V)), but ncomponents is $ncomponents"))
-        k = size(V, 2)
     end
 
     # communication buffers
-    sendbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*k)
-    recvbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*nworkers*k + METADATA_BYTES*nworkers)
+    sendbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*ncomponents)
+    recvbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*nworkers*ncomponents + METADATA_BYTES*nworkers)
     reinterpret(ELEMENT_TYPE, view(sendbuf, :)) .= view(V, :)
 
     V, recvbuf, sendbuf
 end
 
-function worker_task!(recvbuf, sendbuf, localdata; state=nothing, pfraction::Real, nsubpartitions::Integer, ncomponents, kwargs...)
-    0 < pfraction <= 1 || throw(DomainError(pfraction, "pfraction must be in (0, 1]"))
-    isnothing(ncomponents) || 0 < ncomponents || throw(DomainError(ncomponents, "ncomponents must be positive"))        
+function worker_task!(recvbuf, sendbuf, localdata; state=nothing, nsubpartitions::Integer, ncomponents::Integer, kwargs...)
+    0 < ncomponents || throw(DomainError(ncomponents, "ncomponents must be positive"))        
     sizeof(recvbuf) + METADATA_BYTES == sizeof(sendbuf) || throw(DimensionMismatch("recvbuf has size $(sizeof(recvbuf)), but sendbuf has size $(sizeof(sendbuf))"))
-    dimension = size(localdata, 2)
-    1 <= nsubpartitions <= dimension || throw(DimensionMismatch("nsubpartitions is $nsubpartitions, but the dimension is $dimension"))
-    k = isnothing(ncomponents) ? div(length(reinterpret(ELEMENT_TYPE, recvbuf)), dimension) : ncomponents
+    length(localdata) == nsubpartitions || throw(DimensionMismatch("Expected localdata to be of length nsubpartitions"))    
+    
+    # select a random sub-partition
+    subpartition_index = rand(1:nsubpartitions)
+    Xw = localdata[subpartition_index]
+    dimension, nlocalsamples = size(Xw)
+    1 <= nsubpartitions <= dimension || throw(DimensionMismatch("nsubpartitions is $nsubpartitions, but the dimension is $dimension"))    
 
     # format the recvbuf into a matrix we can operate on
-    length(reinterpret(ELEMENT_TYPE, recvbuf)) == dimension*k || throw(DimensionMismatch("recvbuf has length $(length(reinterpret(ELEMENT_TYPE, recvbuf))), but the data dimension is $dimension and ncomponents is $k"))
-    V = reshape(reinterpret(ELEMENT_TYPE, recvbuf), dimension, k)
-    Xw = localdata    
+    length(reinterpret(ELEMENT_TYPE, recvbuf)) == dimension*ncomponents || throw(DimensionMismatch("recvbuf has length $(length(reinterpret(ELEMENT_TYPE, recvbuf))), but the data dimension is $dimension and ncomponents is $k"))
+    V = reshape(reinterpret(ELEMENT_TYPE, recvbuf), dimension, ncomponents)
 
-    # initialize state
-    if isnothing(state)
-        max_rows = ceil(Int, ceil(size(Xw, 1)/nsubpartitions) * pfraction)
-        W = Matrix{eltype(V)}(undef, max_rows, size(V, 2))
-    else
+    # prepare working memory
+    if isnothing(state) # first iteration
+        max_samples = maximum((x)->size(x, 2), localdata) # max number of samples processed per iteration
+        W = Matrix{eltype(V)}(undef, max_samples, ncomponents)
+    else # subsequent iterations
         W::Matrix{eltype(V)} = state
     end
 
-    # select a sub-partition at random
-    subpartition_index = rand(1:nsubpartitions)
-    il = round(Int, (subpartition_index - 1)/nsubpartitions*size(Xw, 1) + 1)
-    iu = round(Int, subpartition_index/nsubpartitions*size(Xw, 1))
-
-    # select a fraction pfraction of that partition at random
-    p = shuffle!(collect(il:iu))
-    j = round(Int, pfraction*length(p))
-    j = max(1, j)
-    Xwv = view(Xw, view(p, 1:j), :)
-
     # do the computation
-    Wv = view(W, 1:size(Xwv, 1), :)
-    mul!(Wv, Xwv, V)
-    mul!(V, Xwv', Wv)
+    Wv = view(W, 1:size(Xw, 2), :)
+    mul!(Wv, Xw', V)
+    mul!(V, Xw, Wv)
     
     # populate the send buffer
     metadata = reinterpret(UInt16, view(sendbuf, 1:METADATA_BYTES))
     metadata[1] = CANARY_VALUE
     metadata[2] = rank
     metadata[3] = subpartition_index
-    @views sendbuf[METADATA_BYTES+1:end] .= recvbuf[:]
+    @views sendbuf[METADATA_BYTES+1:end] .= recvbuf[:] # V is aliased to recvbuf
     W
 end
 
 data_view(recvbuf) = reinterpret(ELEMENT_TYPE, @view recvbuf[METADATA_BYTES+1:end])
 metadata_view(recvbuf) = view(recvbuf, 1:METADATA_BYTES)
 
-function update_gradient_sgd!(∇, recvbufs, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, nreplicas, pfraction, nsubpartitions, kwargs...)
+function update_gradient_sgd!(∇, recvbufs, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, nreplicas, nsubpartitions, kwargs...)
     length(recvbufs) == length(repochs) || throw(DimensionMismatch("recvbufs has dimension $(length(recvbufs)), but repochs has dimension $(length(repochs))"))
-    0 < pfraction <= 1 || throw(DomainError(pfraction, "pfraction must be in (0, 1]"))
     0 < nreplicas || throw(DomainError(nreplicas, "nreplicas must be positive"))
     epoch <= 1 || !isnothing(state) || error("expected state to be initiated for epoch > 1")
     nworkers = length(recvbufs)
@@ -234,13 +218,12 @@ function update_gradient_sgd!(∇, recvbufs, epoch::Integer, repochs::Vector{<:I
     end
 
     # scale the (stochastic) gradient to make it unbiased estimate of the true gradient
-    ∇ .*= (npartitions / nresults) / pfraction
+    ∇ .*= npartitions / nresults
     uepochs
 end
 
-function update_gradient_vr!(∇, recvbufs, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, nostale::Bool, nreplicas::Integer, pfraction::Real, nsubpartitions::Integer, kwargs...)
+function update_gradient_vr!(∇, recvbufs, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, nostale::Bool, nreplicas::Integer, nsubpartitions::Integer, kwargs...)
     length(recvbufs) == length(repochs) || throw(DimensionMismatch("recvbufs has dimension $(length(recvbufs)), but repochs has dimension $(length(repochs))"))
-    0 < pfraction <= 1 || throw(DomainError(pfraction, "pfraction must be in (0, 1]"))
     0 < nreplicas || throw(DomainError(nreplicas, "nreplicas must be positive"))
     epoch <= 1 || !isnothing(state) || error("expected state to be initiated for epoch > 1")
     nworkers = length(recvbufs)
@@ -301,12 +284,6 @@ function update_gradient_vr!(∇, recvbufs, epoch::Integer, repochs::Vector{<:In
         # record which worker has updates for which partition and how new it is
         partition_worker_map[partition_index] = worker_index
         uepochs[partition_index] = repochs[worker_index]        
-
-        # store the received partial gradient
-        # ∇w = reshape(data_view(recvbufs[worker_index]), size(∇)...)
-        # ∇s[partition_index] .= ∇w
-        # uepochs[partition_index] = repochs[worker_index]
-        # updated[partition_index] = 1
     end
 
     # number of new subgradients received in this iteration
@@ -357,9 +334,7 @@ update_gradient!(args...; variancereduced::Bool, kwargs...) = variancereduced ? 
 
 function update_iterate!(V, ∇; state=nothing, stepsize, kwargs...)
     size(V) == size(∇) || throw(DimensionMismatch("V has dimensions $(size(B)), but ∇ has dimensions $(size(∇))"))
-    for I in CartesianIndices(V)
-        V[I] -= stepsize * (∇[I] + V[I])
-    end
+    V .-= stepsize .* (∇ .+ V)
     orthogonal!(V)
     state
 end
@@ -374,7 +349,7 @@ function coordinator_task!(V, ∇, recvbufs, sendbuf, epoch::Integer, repochs::V
         gradient_state = update_gradient!(∇, recvbufs, epoch, repochs; state=gradient_state, kwargs...)
         iterate_state = update_iterate!(V, ∇; state=iterate_state, kwargs...)
     end
-    reinterpret(ELEMENT_TYPE, view(sendbuf, :)) .= view(V, :)        
+    reinterpret(ELEMENT_TYPE, view(sendbuf, :)) .= view(V, :)
     gradient_state, iterate_state
 end
 

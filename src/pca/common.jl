@@ -54,10 +54,6 @@ function parse_commandline(isroot::Bool)
             default = 10
             arg_type = Int            
             range_tester = (x) -> x >= 1            
-        "--ncomponents"
-            help = "Number of principal components to compute (defaults to computing all principal components)"           
-            arg_type = Int            
-            range_tester = (x) -> x >= 1
         "--nreplicas"
             help = "Number of replicas of each data partition"
             default = 1
@@ -148,7 +144,6 @@ end
 function worker_main()
     nworkers = MPI.Comm_size(comm) - 1
     parsed_args = parse_commandline(isroot)
-    nsamples, dimension = problem_size(parsed_args[:inputfile], parsed_args[:inputdataset])
     try
         localdata, recvbuf, sendbuf = worker_setup(rank, nworkers; parsed_args...)
         worker_loop(localdata, recvbuf, sendbuf; parsed_args...)
@@ -168,13 +163,8 @@ function coordinator_main()
 
     # setup
     parsed_args = parse_commandline(isroot)
-    nsamples, dimension = problem_size(parsed_args[:inputfile], parsed_args[:inputdataset])
     nworkers = MPI.Comm_size(comm) - 1
-    0 < nworkers <= nsamples || throw(DomainError(nworkers, "The number of workers must be in [1, nsamples]"))
     parsed_args[:nworkers] = nworkers
-    ncomponents::Int = isnothing(parsed_args[:ncomponents]) ? dimension : parsed_args[:ncomponents]
-    parsed_args[:ncomponents] = ncomponents
-    ncomponents <= dimension || throw(DimensionMismatch("ncomponents is $ncomponents, but the dimension is $dimension"))
     niterations::Int = parsed_args[:niterations]
     niterations > 0 || throw(DomainError(niterations, "The number of iterations must be non-negative"))
     saveiterates::Bool = parsed_args[:saveiterates]
