@@ -56,17 +56,15 @@ function read_localdata(i::Integer, nworkers::Integer; inputfile::String, inputd
     mod(nworkers, nreplicas) == 0 || throw(ArgumentError("nworkers must be divisible by nreplicas"))
     npartitions = div(nworkers, nreplicas)
     partition_index = ceil(Int, i/nreplicas)
+    dimension, nsamples = problem_size(inputfile, inputdataset)    
     h5open(inputfile, "r") do fid
         inputdataset in keys(fid) || throw(ArgumentError("$inputdataset is not in $fid"))
         flag, _ = isvalidh5csc(fid, inputdataset)
         if flag
-            X = h5readcsc(fid, inputdataset)
-            nsamples = size(X, 2)
             il = round(Int, (partition_index - 1)/npartitions*nsamples + 1)
             iu = round(Int, partition_index/npartitions*nsamples)
-            return X[:, il:iu]
+            return h5readcsc(fid, inputdataset, il, iu)
         else            
-            nsamples = size(fid[inputdataset], 2)
             il = round(Int, (partition_index - 1)/npartitions*nsamples + 1)
             iu = round(Int, partition_index/npartitions*nsamples)
             return fid[inputdataset][:, il:iu]
