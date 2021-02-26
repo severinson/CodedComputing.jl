@@ -136,9 +136,10 @@ end
         --ncomponents $ncomponents
         --niterations $niterations 
         --nwait $(nworkers-1)
+        --nreplicas $nreplicas        
         --saveiterates
         ```))
-    test_pca_iterates(;X, niterations, ncomponents, ev, outputfile, outputdataset)                        
+    test_pca_iterates(;X, niterations, ncomponents, ev, outputfile, outputdataset)
 
     ### 12 workers, a factor 3 replication
     nworkers = 12
