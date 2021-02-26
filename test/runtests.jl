@@ -159,14 +159,12 @@ end
     ## using mini-batches
     nworkers = 2
     outputfile = tempname()
-    pfraction = 0.9
-    stepsize = pfraction
+    stepsize = 1.0
     mpiexec(cmd -> run(```
         $cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile 
         --ncomponents $ncomponents
         --niterations $niterations 
         --nwait $(nworkers-1) 
-        --pfraction $pfraction 
         --stepsize $stepsize
         --saveiterates
         ```))
@@ -174,15 +172,13 @@ end
 
     ### sub-partitioning and stochastic sub-gradients
     nsubpartitions = 2
-    pfraction = 0.9
-    stepsize = pfraction / nsubpartitions
+    stepsize = 1.0 / nsubpartitions
     outputfile = tempname()
     mpiexec(cmd -> run(```
         $cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile
         --ncomponents $ncomponents
         --niterations $niterations 
         --nwait $(nworkers-1) 
-        --pfraction $pfraction 
         --nsubpartitions $nsubpartitions 
         --stepsize $stepsize
         --saveiterates

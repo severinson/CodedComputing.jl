@@ -11,11 +11,6 @@ function update_argsettings!(s::ArgParseSettings)
             required = true
             arg_type = Int            
             range_tester = (x) -> x >= 1        
-        "--pfraction"
-            help = "Fraction of the data stored at each worker that should be used to compute the gradient"
-            arg_type = Float64
-            default = 1.0
-            range_tester = (x) -> 0 < x <= 1
         "--nsubpartitions"
             help = "Number of sub-partitions to split the data stored at each worker into"
             arg_type = Int
@@ -116,8 +111,7 @@ function coordinator_setup(nworkers::Integer; inputfile::String, inputdataset::S
     V, recvbuf, sendbuf
 end
 
-function worker_task!(recvbuf, sendbuf, localdata; state=nothing, pfraction::Real, nsubpartitions::Integer, ncomponents::Integer, kwargs...)
-    0 < pfraction <= 1 || throw(DomainError(pfraction, "pfraction must be in (0, 1]"))
+function worker_task!(recvbuf, sendbuf, localdata; state=nothing, nsubpartitions::Integer, ncomponents::Integer, kwargs...)
     0 < ncomponents || throw(DomainError(ncomponents, "ncomponents must be positive"))        
     sizeof(recvbuf) + METADATA_BYTES == sizeof(sendbuf) || throw(DimensionMismatch("recvbuf has size $(sizeof(recvbuf)), but sendbuf has size $(sizeof(sendbuf))"))
     dimension, nlocalsamples = size(localdata)
@@ -130,7 +124,7 @@ function worker_task!(recvbuf, sendbuf, localdata; state=nothing, pfraction::Rea
 
     # prepare working memory
     if isnothing(state) # first iteration
-        max_samples = ceil(Int, ceil(nlocalsamples/nsubpartitions) * pfraction) # max number of samples processed per iteration
+        max_samples = ceil(Int, nlocalsamples/nsubpartitions) # max number of samples processed per iteration
         W = Matrix{eltype(V)}(undef, max_samples, ncomponents)
     else # subsequent iterations
         W::Matrix{eltype(V)} = state
@@ -140,12 +134,7 @@ function worker_task!(recvbuf, sendbuf, localdata; state=nothing, pfraction::Rea
     subpartition_index = rand(1:nsubpartitions)
     il = round(Int, (subpartition_index - 1)/nsubpartitions*nlocalsamples + 1)
     iu = round(Int, subpartition_index/nsubpartitions*nlocalsamples)
-
-    # select a fraction pfraction of that partition at random
-    p = shuffle!(collect(il:iu))
-    j = round(Int, pfraction*length(p))
-    j = max(1, j)
-    Xwv = view(Xw, :, view(p, 1:j))
+    Xwv = view(Xw, :, il:iu)
 
     # do the computation
     Wv = view(W, 1:size(Xwv, 2), :)
@@ -164,9 +153,8 @@ end
 data_view(recvbuf) = reinterpret(ELEMENT_TYPE, @view recvbuf[METADATA_BYTES+1:end])
 metadata_view(recvbuf) = view(recvbuf, 1:METADATA_BYTES)
 
-function update_gradient_sgd!(∇, recvbufs, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, nreplicas, pfraction, nsubpartitions, kwargs...)
+function update_gradient_sgd!(∇, recvbufs, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, nreplicas, nsubpartitions, kwargs...)
     length(recvbufs) == length(repochs) || throw(DimensionMismatch("recvbufs has dimension $(length(recvbufs)), but repochs has dimension $(length(repochs))"))
-    0 < pfraction <= 1 || throw(DomainError(pfraction, "pfraction must be in (0, 1]"))
     0 < nreplicas || throw(DomainError(nreplicas, "nreplicas must be positive"))
     epoch <= 1 || !isnothing(state) || error("expected state to be initiated for epoch > 1")
     nworkers = length(recvbufs)
@@ -227,13 +215,12 @@ function update_gradient_sgd!(∇, recvbufs, epoch::Integer, repochs::Vector{<:I
     end
 
     # scale the (stochastic) gradient to make it unbiased estimate of the true gradient
-    ∇ .*= (npartitions / nresults) / pfraction
+    ∇ .*= npartitions / nresults
     uepochs
 end
 
-function update_gradient_vr!(∇, recvbufs, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, nostale::Bool, nreplicas::Integer, pfraction::Real, nsubpartitions::Integer, kwargs...)
+function update_gradient_vr!(∇, recvbufs, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, nostale::Bool, nreplicas::Integer, nsubpartitions::Integer, kwargs...)
     length(recvbufs) == length(repochs) || throw(DimensionMismatch("recvbufs has dimension $(length(recvbufs)), but repochs has dimension $(length(repochs))"))
-    0 < pfraction <= 1 || throw(DomainError(pfraction, "pfraction must be in (0, 1]"))
     0 < nreplicas || throw(DomainError(nreplicas, "nreplicas must be positive"))
     epoch <= 1 || !isnothing(state) || error("expected state to be initiated for epoch > 1")
     nworkers = length(recvbufs)
@@ -344,9 +331,7 @@ update_gradient!(args...; variancereduced::Bool, kwargs...) = variancereduced ? 
 
 function update_iterate!(V, ∇; state=nothing, stepsize, kwargs...)
     size(V) == size(∇) || throw(DimensionMismatch("V has dimensions $(size(B)), but ∇ has dimensions $(size(∇))"))
-    for I in CartesianIndices(V)
-        V[I] -= stepsize * (∇[I] + V[I])
-    end
+    V .-= stepsize .* (∇ .+ V)
     orthogonal!(V)
     state
 end
