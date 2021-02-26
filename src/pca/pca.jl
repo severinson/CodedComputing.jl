@@ -6,6 +6,11 @@ const CANARY_VALUE = UInt16(2^16 - 1)
 
 function update_argsettings!(s::ArgParseSettings)
     @add_arg_table s begin
+        "--ncomponents"
+            help = "Number of principal components to compute"
+            required = true
+            arg_type = Int            
+            range_tester = (x) -> x >= 1        
         "--pfraction"
             help = "Fraction of the data stored at each worker that should be used to compute the gradient"
             arg_type = Float64
