@@ -61,15 +61,15 @@ function read_localdata(i::Integer, nworkers::Integer; inputfile::String, inputd
         flag, _ = isvalidh5csc(fid, inputdataset)
         if flag
             X = h5readcsc(fid, inputdataset)
-            nrows = size(X, 1)
-            il = round(Int, (partition_index - 1)/npartitions*nrows + 1)
-            iu = round(Int, partition_index/npartitions*nrows)
-            return X[il:iu, :]            
+            nsamples = size(X, 2)
+            il = round(Int, (partition_index - 1)/npartitions*nsamples + 1)
+            iu = round(Int, partition_index/npartitions*nsamples)
+            return X[:, il:iu]
         else            
-            nrows = size(fid[inputdataset], 1)
-            il = round(Int, (partition_index - 1)/npartitions*nrows + 1)
-            iu = round(Int, partition_index/npartitions*nrows)
-            return fid[inputdataset][il:iu, :]
+            nsamples = size(fid[inputdataset], 2)
+            il = round(Int, (partition_index - 1)/npartitions*nsamples + 1)
+            iu = round(Int, partition_index/npartitions*nsamples)
+            return fid[inputdataset][:, il:iu]
         end
     end
 end
@@ -80,7 +80,7 @@ function worker_setup(rank::Integer, nworkers::Integer; ncomponents::Union{Nothi
     localdata = read_localdata(rank, nworkers; kwargs...)
     dims = length(size(localdata))
     dims == 2 || error("Expected localdata to be 2-dimensional, but got data of dimension $dims")
-    dimension = size(localdata, 2)
+    dimension = size(localdata, 1)
 
     # default to computing all components
     # TODO: this won't work if an initial iterate is provided but ncomponents isn't set
@@ -98,7 +98,7 @@ end
 function coordinator_setup(nworkers::Integer; inputfile::String, inputdataset::String, iteratedataset, ncomponents, parsed_args...)    
     0 < nworkers || throw(DomainError(nworkers, "nworkers must be positive"))
     isnothing(ncomponents) || 0 < ncomponents || throw(DomainError(ncomponents, "ncomponents must be positive"))    
-    nsamples, dimension = problem_size(inputfile, inputdataset)
+    dimension, nsamples = problem_size(inputfile, inputdataset)
 
     # initial iterate
     if isnothing(iteratedataset) # initialized at random
@@ -126,7 +126,7 @@ function worker_task!(recvbuf, sendbuf, localdata; state=nothing, pfraction::Rea
     0 < pfraction <= 1 || throw(DomainError(pfraction, "pfraction must be in (0, 1]"))
     isnothing(ncomponents) || 0 < ncomponents || throw(DomainError(ncomponents, "ncomponents must be positive"))        
     sizeof(recvbuf) + METADATA_BYTES == sizeof(sendbuf) || throw(DimensionMismatch("recvbuf has size $(sizeof(recvbuf)), but sendbuf has size $(sizeof(sendbuf))"))
-    dimension = size(localdata, 2)
+    dimension, nlocalsamples = size(localdata)
     1 <= nsubpartitions <= dimension || throw(DimensionMismatch("nsubpartitions is $nsubpartitions, but the dimension is $dimension"))
     k = isnothing(ncomponents) ? div(length(reinterpret(ELEMENT_TYPE, recvbuf)), dimension) : ncomponents
 
@@ -135,36 +135,36 @@ function worker_task!(recvbuf, sendbuf, localdata; state=nothing, pfraction::Rea
     V = reshape(reinterpret(ELEMENT_TYPE, recvbuf), dimension, k)
     Xw = localdata    
 
-    # initialize state
-    if isnothing(state)
-        max_rows = ceil(Int, ceil(size(Xw, 1)/nsubpartitions) * pfraction)
-        W = Matrix{eltype(V)}(undef, max_rows, size(V, 2))
-    else
+    # prepare working memory
+    if isnothing(state) # first iteration
+        max_samples = ceil(Int, ceil(nlocalsamples/nsubpartitions) * pfraction) # max number of samples processed per iteration
+        W = Matrix{eltype(V)}(undef, max_samples, ncomponents)
+    else # subsequent iterations
         W::Matrix{eltype(V)} = state
     end
 
     # select a sub-partition at random
     subpartition_index = rand(1:nsubpartitions)
-    il = round(Int, (subpartition_index - 1)/nsubpartitions*size(Xw, 1) + 1)
-    iu = round(Int, subpartition_index/nsubpartitions*size(Xw, 1))
+    il = round(Int, (subpartition_index - 1)/nsubpartitions*nlocalsamples + 1)
+    iu = round(Int, subpartition_index/nsubpartitions*nlocalsamples)
 
     # select a fraction pfraction of that partition at random
     p = shuffle!(collect(il:iu))
     j = round(Int, pfraction*length(p))
     j = max(1, j)
-    Xwv = view(Xw, view(p, 1:j), :)
+    Xwv = view(Xw, :, view(p, 1:j))
 
     # do the computation
-    Wv = view(W, 1:size(Xwv, 1), :)
-    mul!(Wv, Xwv, V)
-    mul!(V, Xwv', Wv)
+    Wv = view(W, 1:size(Xwv, 2), :)
+    mul!(Wv, Xwv', V)
+    mul!(V, Xwv, Wv)
     
     # populate the send buffer
     metadata = reinterpret(UInt16, view(sendbuf, 1:METADATA_BYTES))
     metadata[1] = CANARY_VALUE
     metadata[2] = rank
     metadata[3] = subpartition_index
-    @views sendbuf[METADATA_BYTES+1:end] .= recvbuf[:]
+    @views sendbuf[METADATA_BYTES+1:end] .= recvbuf[:] # V is aliased to recvbuf
     W
 end
 
@@ -301,12 +301,6 @@ function update_gradient_vr!(∇, recvbufs, epoch::Integer, repochs::Vector{<:In
         # record which worker has updates for which partition and how new it is
         partition_worker_map[partition_index] = worker_index
         uepochs[partition_index] = repochs[worker_index]        
-
-        # store the received partial gradient
-        # ∇w = reshape(data_view(recvbufs[worker_index]), size(∇)...)
-        # ∇s[partition_index] .= ∇w
-        # uepochs[partition_index] = repochs[worker_index]
-        # updated[partition_index] = 1
     end
 
     # number of new subgradients received in this iteration
@@ -374,7 +368,7 @@ function coordinator_task!(V, ∇, recvbufs, sendbuf, epoch::Integer, repochs::V
         gradient_state = update_gradient!(∇, recvbufs, epoch, repochs; state=gradient_state, kwargs...)
         iterate_state = update_iterate!(V, ∇; state=iterate_state, kwargs...)
     end
-    reinterpret(ELEMENT_TYPE, view(sendbuf, :)) .= view(V, :)        
+    reinterpret(ELEMENT_TYPE, view(sendbuf, :)) .= view(V, :)
     gradient_state, iterate_state
 end
 

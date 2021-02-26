@@ -148,7 +148,6 @@ end
 function worker_main()
     nworkers = MPI.Comm_size(comm) - 1
     parsed_args = parse_commandline(isroot)
-    nsamples, dimension = problem_size(parsed_args[:inputfile], parsed_args[:inputdataset])
     try
         localdata, recvbuf, sendbuf = worker_setup(rank, nworkers; parsed_args...)
         worker_loop(localdata, recvbuf, sendbuf; parsed_args...)
@@ -168,7 +167,7 @@ function coordinator_main()
 
     # setup
     parsed_args = parse_commandline(isroot)
-    nsamples, dimension = problem_size(parsed_args[:inputfile], parsed_args[:inputdataset])
+    dimension, nsamples = problem_size(parsed_args[:inputfile], parsed_args[:inputdataset])
     nworkers = MPI.Comm_size(comm) - 1
     0 < nworkers <= nsamples || throw(DomainError(nworkers, "The number of workers must be in [1, nsamples]"))
     parsed_args[:nworkers] = nworkers
