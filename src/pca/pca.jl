@@ -79,36 +79,26 @@ function read_localdata(i::Integer, nworkers::Integer; inputfile::String, inputd
     end
 end
 
-function worker_setup(rank::Integer, nworkers::Integer; ncomponents::Union{Nothing,<:Integer}, kwargs...)
+function worker_setup(rank::Integer, nworkers::Integer; ncomponents::Integer, kwargs...)
     0 < nworkers || throw(DomainError(nworkers, "nworkers must be positive"))
     isnothing(ncomponents) || 0 < ncomponents || throw(DomainError(ncomponents, "ncomponents must be positive"))
     localdata = read_localdata(rank, nworkers; kwargs...)
     dims = length(size(localdata))
     dims == 2 || error("Expected localdata to be 2-dimensional, but got data of dimension $dims")
     dimension = size(localdata, 1)
-
-    # default to computing all components
-    # TODO: this won't work if an initial iterate is provided but ncomponents isn't set
-    if isnothing(ncomponents)
-        k = dimension
-    else
-        k = ncomponents
-    end
-
-    recvbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*k)
-    sendbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*k + METADATA_BYTES)
+    recvbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*ncomponents)
+    sendbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*ncomponents + METADATA_BYTES)
     localdata, recvbuf, sendbuf
 end
 
-function coordinator_setup(nworkers::Integer; inputfile::String, inputdataset::String, iteratedataset, ncomponents, parsed_args...)    
+function coordinator_setup(nworkers::Integer; inputfile::String, inputdataset::String, iteratedataset, ncomponents::Integer, parsed_args...)    
     0 < nworkers || throw(DomainError(nworkers, "nworkers must be positive"))
     isnothing(ncomponents) || 0 < ncomponents || throw(DomainError(ncomponents, "ncomponents must be positive"))    
     dimension, nsamples = problem_size(inputfile, inputdataset)
 
     # initial iterate
     if isnothing(iteratedataset) # initialized at random
-        k = isnothing(ncomponents) ? dimension : ncomponents
-        V = randn(dimension, k)
+        V = randn(dimension, ncomponents)
         orthogonal!(V)
     else # given as an argument and loaded from disk
         h5open(inputfile) do fid
@@ -116,29 +106,27 @@ function coordinator_setup(nworkers::Integer; inputfile::String, inputdataset::S
             V = fid[iteratedataset][:, :]
         end
         ncomponents == size(V, 2) || throw(DimensionMismatch("V has dimensions $(size(V)), but ncomponents is $ncomponents"))
-        k = size(V, 2)
     end
 
     # communication buffers
-    sendbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*k)
-    recvbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*nworkers*k + METADATA_BYTES*nworkers)
+    sendbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*ncomponents)
+    recvbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*nworkers*ncomponents + METADATA_BYTES*nworkers)
     reinterpret(ELEMENT_TYPE, view(sendbuf, :)) .= view(V, :)
 
     V, recvbuf, sendbuf
 end
 
-function worker_task!(recvbuf, sendbuf, localdata; state=nothing, pfraction::Real, nsubpartitions::Integer, ncomponents, kwargs...)
+function worker_task!(recvbuf, sendbuf, localdata; state=nothing, pfraction::Real, nsubpartitions::Integer, ncomponents::Integer, kwargs...)
     0 < pfraction <= 1 || throw(DomainError(pfraction, "pfraction must be in (0, 1]"))
-    isnothing(ncomponents) || 0 < ncomponents || throw(DomainError(ncomponents, "ncomponents must be positive"))        
+    0 < ncomponents || throw(DomainError(ncomponents, "ncomponents must be positive"))        
     sizeof(recvbuf) + METADATA_BYTES == sizeof(sendbuf) || throw(DimensionMismatch("recvbuf has size $(sizeof(recvbuf)), but sendbuf has size $(sizeof(sendbuf))"))
     dimension, nlocalsamples = size(localdata)
     1 <= nsubpartitions <= dimension || throw(DimensionMismatch("nsubpartitions is $nsubpartitions, but the dimension is $dimension"))
-    k = isnothing(ncomponents) ? div(length(reinterpret(ELEMENT_TYPE, recvbuf)), dimension) : ncomponents
 
     # format the recvbuf into a matrix we can operate on
-    length(reinterpret(ELEMENT_TYPE, recvbuf)) == dimension*k || throw(DimensionMismatch("recvbuf has length $(length(reinterpret(ELEMENT_TYPE, recvbuf))), but the data dimension is $dimension and ncomponents is $k"))
-    V = reshape(reinterpret(ELEMENT_TYPE, recvbuf), dimension, k)
-    Xw = localdata    
+    length(reinterpret(ELEMENT_TYPE, recvbuf)) == dimension*ncomponents || throw(DimensionMismatch("recvbuf has length $(length(reinterpret(ELEMENT_TYPE, recvbuf))), but the data dimension is $dimension and ncomponents is $k"))
+    V = reshape(reinterpret(ELEMENT_TYPE, recvbuf), dimension, ncomponents)
+    Xw = localdata
 
     # prepare working memory
     if isnothing(state) # first iteration
