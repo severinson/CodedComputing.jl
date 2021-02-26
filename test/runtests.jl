@@ -2,6 +2,41 @@ using CodedComputing
 using Random, MPI, HDF5, LinearAlgebra, SparseArrays
 using Test
 
+@testset "HDF5Sparse.jl" begin
+    Random.seed!(123)
+
+    # test writing and reading a sparse matrix
+    m, n, p = 10, 5, 0.1
+    M = sprand(Float32, m, n, p)
+    filename = tempname()
+    name = "M"
+    h5writecsc(filename, name, M)
+    M_hat = h5readcsc(filename, name)
+    @test typeof(M_hat) == typeof(M)
+    @test M_hat ≈ M
+
+    # test reading each column separately
+    for i in 1:n
+        v = h5readcsc(filename, name, i)
+        @test v ≈ M[:, i]
+    end
+
+    # test reading blocks of columns
+    for i in 1:n
+        for j in i:n
+            correct = M[:, i:j]
+            println("Expected: $(M[:, i:j])")
+            println("correct colptr", correct.colptr)
+            println(correct.rowval)
+            println(correct.nzval)
+            V = h5readcsc(filename, name, i, j)
+            println("Got $V")
+            println()
+            @test V ≈ M[:, i:j]
+        end
+    end
+end
+
 """
 
 Return an array composed of the PCA computed iterates.
@@ -342,16 +377,4 @@ end
         --saveiterates        
         ```))
     test_pca_iterates(;X, niterations, ncomponents, ev, outputfile, outputdataset)    
-end
-
-@testset "HDF5Sparse.jl" begin
-    Random.seed!(123)
-    m, n, p = 10, 5, 0.1
-    M = sprand(Float32, m, n, p)
-    filename = tempname()
-    name = "M"
-    h5writecsc(filename, name, M)
-    M_hat = h5readcsc(filename, name)
-    @test typeof(M_hat) == typeof(M)
-    @test M_hat ≈ M
 end
