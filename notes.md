@@ -420,3 +420,37 @@ New sub-partition implementation
 - The current implementation is based on creating views into a single locally stored matrix
 - This is problematic since views of sparse matrices can be slow
 - Instead, I should create nsubpartitions separate sparse matrices at each worker and select randomly among those
+
+# 210301
+
+- During the previous week I worked on the latency model and on preparing for doing experiments on the full genome dataset
+- The latency model looks quite solid
+- So let's summarize it in preparation for the meeting later today
+- Let's start with the distribution of the mean
+- In particular, the distribution of the mean for different worker_flops and the parameters of that distribution as a function of worker_flops
+- I've done the mean distribution
+- Next, let's do the noise outside of bursts
+- The distribution of the mean latency for a given workload is fine
+- Now I'm trying to capture the noise behavior
+- I think the noise is a continuous process, meaning I should look at the noise per unit of time
+- So let's have a look at the noise divided by the length of the computation as a function of the length of the computation
+- My idea is that the latency noise is something that occurs over very small time intervals and that the overall deviation in latency for a given computation is the sum of the noise over these small increments
+- Performing a very small computation takes a random amount of time with some distribution
+- A minimum time plus noise or a mean time plus noise
+- The minimum time should increase linearly with the load
+- The mean time may increase non-linearly
+- Basically, each worker should be characterized only by a single thing: the latency distribution of an infinitesimal computation
+- The latency of longer computations is just the integral over that process
+- I've captured the minimum latency for a given c
+- Now I'm looking at the latency noise, which looks like a two-state Markov process
+- Since the difference between the minimum and observed latency is the sum of a very large number of small random events the central limit theorem should hold and the noise should follow a Normal distribution
+- The rate of the worker varies over time according to some process
+- If I integrate over the rate I think I'd recover the distribution I'm looking for
+- To do so I need to characterize the rate process
+- The latency associated with a very small computation is a shifted exponential
+- I can compute the shift in a robust manner by looking at the minimum latency across workers and experiments
+- The shift is the same across all workers but the tail varies between workers
+- The latency associated with a larger computation is the sum of the shifted exponential RVs associated with the small computation
+- But they're not independent
+- The scale (or rate) parameter of the shifted exponential varies over time
+- Now all I need to know is the distribution of tail latency scales I see over different timespans
