@@ -28,6 +28,33 @@ function latency_benchmark()
     return df_from_latency_file(outputfile)
 end
 
+"""
+    mymul!(C::Matrix, A::SparseMatrixCSC, B::Matrix)
+
+Compute the sparse-dense matrix-matrix multiplication `A*B` and store the result in `C`.
+Reference implementation for comparing performance scaling of different sparse multiplication rountines.
+"""
+function mymul!(C::Matrix, A::SparseMatrixCSC, B::Matrix)
+    @boundscheck size(C, 1) == size(A, 1) || throw(DimensionMismatch("C has dimensions $(size(C)), but A has dimensions $(size(A))"))    
+    @boundscheck size(C, 2) == size(B, 2) || throw(DimensionMismatch("C has dimensions $(size(C)), but B has dimensions $(size(B))"))        
+    @boundscheck size(A, 2) == size(B, 1) || throw(DimensionMismatch("A has dimensions $(size(A)), but B has dimensions $(size(B))"))
+    m, n = size(A)
+    k = size(B, 2)
+    rows = rowvals(A)
+    vals = nonzeros(A)
+    C .= 0
+    for col = 1:n # column of A
+        for i in nzrange(A, col)
+            @inbounds row = rows[i] # row of A
+            @inbounds val = vals[i] # A[row, col]
+            @simd for j = 1:k # columns indices of B
+                @inbounds C[row, j] += val * B[col, j]
+            end
+        end
+    end
+    C
+end
+
 function sample!(V, W, X)
     mul!(W, X, V)
     mul!(V, X', W)
