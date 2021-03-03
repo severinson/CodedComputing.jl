@@ -189,6 +189,9 @@ function orderstats_df(df)
         joined[:compute_order] = by(joined, [:jobid, :iteration], :nworkers => ((x) -> collect(1:maximum(x))) => :order).order        
     end
 
+    # add a flag indicating if the worker is experiencing a latency burst
+    joined.burst = burst_state_from_orderstats_df(joined)
+
     return joined
 end
 
@@ -239,7 +242,7 @@ Read a latency experiment csv file into a DataFrame
 """
 function read_latency_df(directory="C:/Users/albin/Dropbox/Eigenvector project/data/dataframes/latency/210215_v3/")
     # filename = sort!(glob("*.csv", directory))[end]
-    filename = directory*"df_v11.csv"
+    filename = directory*"df_v12.csv"
     println("Reading $filename")
     df = DataFrame(CSV.File(filename, normalizenames=true))
     df.worker_flops = 2 .* df.nrows .* df.ncols .* df.ncomponents .* df.density

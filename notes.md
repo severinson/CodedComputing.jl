@@ -454,3 +454,28 @@ New sub-partition implementation
 - But they're not independent
 - The scale (or rate) parameter of the shifted exponential varies over time
 - Now all I need to know is the distribution of tail latency scales I see over different timespans
+
+# 210302
+
+- Conjecture:
+  - Small computations have a shifted exponential latency distribution
+  - Large computations are made up of several small computations
+  - If I know how the shift and scale of these distributions change over time I can sum up the small ones to get the big ones
+- There's a minimum latency associated with each operation, which is a fundamental limit
+- In addition to that there's some additive exponential noise added to it
+- The sum of several of those noise variables is a Gamma
+- Hence, compute latency follows a Gamma distribution
+- The mean of the noise seems to increase with the square of c
+- The variance seems to increase linearly with c
+- I'd like an explanation for this behavior
+
+
+- Let's call the RV from which I draw the parameters S
+- If I want the variance of S to scale linearly with c, then the parameter of S should scale with the square root of c
+- It makes sense that the variance increases linearly since I'm adding more variables to the sum
+
+# 210303
+
+- Questions: why am I seeing the latency increasing with the square of the complexity?
+- Question: do I see the same behavior on my laptop, on Sveith, on an ec2 instance, and when running jobs under Slurm?
+  - To answer this question, let's write a small script that runs multiplications

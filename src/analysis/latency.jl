@@ -1217,7 +1217,140 @@ function compute_markov_state_matrix(df)
     return
 end
 
+function variance_test(dfo)
+
+    shift = 1.04452512147574e-9
+    # dfo = dfo[dfo.burst .== false, :]
+    # dfo.straggling = dfo.worker_compute_latency ./ dfo.worker_flops .- shift
+
+    # dfo = by(dfo, [:jobid, :worker_index, :worker_flops], :straggling => mean => :mean)
+    # return dfo
+
+    plt.figure()
+    plt.plot(dfo.worker_flops, dfo.mean, ".")
+    plt.grid()
+
+    return
+    df = by(dfo, :worker_flops, 
+        :worker_compute_latency => minimum => :minimum,
+        :worker_compute_latency => ((x) -> quantile(x, 0.01)) => :q001,
+        :worker_compute_latency => ((x) -> quantile(x, 0.01)) => :q002,
+        :worker_compute_latency => ((x) -> quantile(x, 0.01)) => :q005,
+        :worker_compute_latency => ((x) -> quantile(x, 0.01)) => :q01,
+        )
+    
+    plt.figure()            
+
+    ys = (df.minimum .- df.worker_flops.*shift) ./ df.worker_flops
+    plt.plot(df.worker_flops, ys, "o", label="Minimum")
+
+    ys = (df.q001 .- df.worker_flops.*shift) ./ df.worker_flops
+    plt.plot(df.worker_flops, ys, "o", label="q001")    
+
+    ys = (df.q002 .- df.worker_flops.*shift) ./ df.worker_flops
+    plt.plot(df.worker_flops, ys, "o", label="q002")    
+    
+    ys = (df.q005 .- df.worker_flops.*shift) ./ df.worker_flops
+    plt.plot(df.worker_flops, ys, "o", label="q005")        
+
+    ys = (df.q01 .- df.worker_flops.*shift) ./ df.worker_flops
+    plt.plot(df.worker_flops, ys, "o", label="q01")            
+
+
+    plt.legend()
+    plt.grid()
+    return df
+end
+
+function markov_test()
+
+    nstates = 100
+    P = zeros(nstates, nstates)
+    for i in 1:size(P, 1)
+        P[i, i] = 0.9
+    end
+    for i in 2:size(P, 1)-1
+        P[i-1, i] = 0.05
+        P[i+1, i] = 0.05
+    end    
+    P[2, 1] = 0.1
+    P[end-1, end] = 0.1
+    x = zeros(nstates)
+    x[round(Int, nstates/2)] = 1
+
+    vars = zeros(1000)
+    for i in 1:1000
+        x .= P*x
+        vars[i] = var(x)
+    end
+    plt.figure()
+    plt.plot(vars)
+    return
+
+    plt.figure()
+    for _ in 1:10
+        x .= P*x
+    end
+    plt.plot(x, label="10")
+    println(var(x))
+
+    for _ in 1:90
+        x .= P*x
+    end
+    plt.plot(x, label="100")    
+    println(var(x))
+
+    for _ in 1:900
+        x .= P*x
+    end
+    plt.plot(x, label="1000")        
+    println(var(x))
+end
+
 function exponential_test()
+
+    rv = Exponential()
+    # scale_rv = Exponential()
+    nsamples = 10000
+
+    plt.figure()
+    means = zeros(0)
+    vars = zeros(0)
+    cs = [10, 20, 30, 100, 200, 500, 1000]
+    for c in cs
+        scale_rv = Exponential(sqrt(c))
+
+        shifts = ones(nsamples, c)
+        scales = rand(scale_rv, nsamples, c)
+
+        latency = vec(sum(shifts, dims=2))
+        latency .+= vec(sum(rand(rv, nsamples, c) .* scales, dims=2))
+        # latency = vec(sum(shifts .+ rand(rv, nsamples, c) .* scales, dims=2))
+        # latency ./= c
+        sort!(latency)
+        ys = range(0, 1, length=nsamples)
+        plt.plot(latency ./ c, ys, label="c: $c")
+        println("[c: $c] mean: $(mean(latency))")
+
+        push!(means, mean(latency))
+        push!(vars, var(latency))
+    end
+    plt.legend()
+    plt.grid()
+
+    plt.figure()
+    plt.plot(cs, means, ".")
+    plt.legend()
+    plt.ylabel("Mean")    
+    plt.grid()
+
+    plt.figure()
+    plt.plot(cs, vars, ".")
+    plt.ylabel("Variance")
+    plt.grid()
+
+    return
+
     nvariables = 10000
     nsamples = 1000
     samples = zeros(nsamples)
@@ -1253,6 +1386,63 @@ function exponential_test()
     return
 end
 
+function sparse_dense_test()
+    # let's look at how latency scales with the number of rows of the matrix for dense and sparse matrices
+    nsamples = 10
+    ncols = 1000
+    ncomponents = 3
+    nrows_all = [1000, 2000, 3000, 4000, 5000, 10000, 20000, 50000, 70000, 100000]
+    latency_sparse = zeros(length(nrows_all))
+    latency_dense = zeros(length(nrows_all))
+    for (i, nrows) in enumerate(nrows_all)
+        # X_dense = randn(nrows, ncols)
+        X_sparse = sprand(nrows, ncols, 0.05)
+        V = zeros(ncols, ncomponents)
+        W = zeros(nrows, ncomponents)
+        # for _ in 1:nsamples
+        #     latency_dense[i] += @elapsed mul!(W, X_dense, V)
+        #     latency_dense[i] += @elapsed mul!(V, X_dense', W)
+        # end
+        # latency_dense[i] /= nsamples
+
+        for _ in 1:nsamples
+            latency_sparse[i] += @elapsed mul!(W, X_sparse, V)
+            latency_sparse[i] += @elapsed mul!(V, X_sparse', W)
+        end
+        latency_sparse[i] /= nsamples        
+    end
+
+    flops = 2 .* nrows_all .* ncols .* ncomponents
+
+    plt.figure()
+    # plt.plot(flops, latency_dense, "s")
+    plt.plot(flops, latency_sparse, "o")
+    plt.grid()
+    return
+end
+
+function tail_plot(dfo)
+    dfo = dfo[dfo.burst .== false, :]    
+    intersect = 2.5461674786469558e-17
+    slope = 8.121166381604497e-10    
+    dfo.noise = dfo.worker_compute_latency .- slope .* dfo.worker_flops
+    df = by(dfo, [:jobid, :worker_index, :worker_flops], :noise => mean => :mean, :noise => var => :var, :noise => median => :median)
+
+    # mean and median
+    plt.figure()
+    plt.plot(df.worker_flops, df.mean, ".", label="Mean")
+    plt.plot(df.worker_flops, df.median, ".", label="Median")
+    plt.ylabel("Mean and median")
+    plt.legend()
+
+    # variance
+    plt.figure()
+    plt.plot(df.worker_flops, df.var, ".")
+    plt.ylabel("Variance")    
+
+    return
+end
+
 """
 
 Plot worker latency over time
@@ -1267,7 +1457,7 @@ function plot_worker_latency_timeseries(df, n=10; miniterations=10000, onlycompu
     # sort!(df, [:jobid, :worker_index, :iteration])
 
     # select the job with the highest recorded latency
-    # i = argmax(df.worker_compute_latency)
+    # i = argmin(df.worker_compute_latency)
     # is = sortperm(df.worker_compute_latency)
     # i = is[end-10]
     # jobid = df.jobid[i]
@@ -1283,12 +1473,48 @@ function plot_worker_latency_timeseries(df, n=10; miniterations=10000, onlycompu
     df = df[df.worker_index .== worker_index, :]
 
     # remove large bursts
-    df.burst = burst_state_from_orderstats_df(df)
+    # df.burst = burst_state_from_orderstats_df(df)
     df = df[df.burst .== false, :]
 
-    shift = 8.121166381604497e-10    
-    op_tail_latency = df.worker_compute_latency ./ df.worker_flops .- shift
+    # intersect = 5.639606250018633e-17
+    # slope = 1.04452512147574e-9
+
+    intersect = 2.5461674786469558e-17
+    slope = 8.121166381604497e-10
     
+    min_latency = intersect + worker_flops*slope
+
+    op_tail_latency = (df.worker_compute_latency .- min_latency)
+
+    println("[c: $worker_flops] mean: $(mean(op_tail_latency))")
+
+    # cdf
+    plt.figure()
+    xs = sort(op_tail_latency)
+    ys = range(0, 1, length=length(xs))
+    plt.plot(xs, ys)
+
+    i = ceil(Int, length(xs)/10)
+    shift = xs[i]
+    vs = xs[i:end] .- shift
+    rv = Distributions.fit(Exponential, vs)
+    println("Shift: $shift, RV: $rv")
+    ts = range(0, xs[end]-shift, length=100)
+    plt.plot(ts.+shift, cdf.(rv, ts), "k--")
+
+    shift = xs[1] - eps(Float64)
+    rv = Distributions.fit(Gamma, xs .- shift)
+    ts = range(quantile(rv, 1e-6), quantile(rv, 1.0-1e-6), length=100)
+    plt.plot(ts .+ shift, cdf.(rv, ts), "r--")
+
+    α1 = (shift + mean(rv)) / log(worker_flops)
+    α2 = sqrt(var(rv) / log(worker_flops))
+    println("α1: $α1, α2: $α2")
+
+    plt.grid()
+    return
+    
+    # timeseries
     plt.figure()
     plt.plot(df.time, op_tail_latency)
     plt.grid()
@@ -1408,7 +1634,7 @@ function fit_worker_latency_process(dfo, worker_flops; miniterations=10000, only
     order_col = onlycompute ? :compute_order : :order
     latency_col = onlycompute ? :worker_compute_latency : :worker_latency
     dfo = dfo[dfo.niterations .>= miniterations, :]
-    # dfo = dfo[isapprox.(dfo.worker_flops, worker_flops, rtol=1e-2), :]
+    dfo = dfo[isapprox.(dfo.worker_flops, worker_flops, rtol=1e-2), :]
     dfo = dfo[dfo.nwait .== dfo.nworkers, :] # ensure all workers are available at the start of each iteration
     dfo.burst = burst_state_from_orderstats_df(dfo)
 
@@ -1418,19 +1644,11 @@ function fit_worker_latency_process(dfo, worker_flops; miniterations=10000, only
 
     # distribution of the mean latency of each worker, outside of bursts
     dfi = by(df1, [:jobid, :worker_index], latency_col => mean => :mean)    
-    # rv_shift = Distributions.fit(Normal, dfi.mean)
+    rv_shift = Distributions.fit(Normal, dfi.mean)
 
     # add the mean latency outside of bursts to df1 and df2
     df1 = leftjoin(df1, dfi, on=[:jobid, :worker_index])
-    return df1
     df2 = leftjoin(df2, dfi, on=[:jobid, :worker_index])
-
-    plt.figure()    
-    vs = df1[latency_col] .- df1.mean    
-    plt.plot(df1[latency_col], vs, ".")
-    plt.grid()
-
-    return
 
     # distribution of the latency noise outside of bursts
     df1[latency_col] .-= df1.mean
