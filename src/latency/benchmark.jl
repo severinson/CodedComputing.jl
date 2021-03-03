@@ -78,7 +78,7 @@ function latency_sweep()
     end
 
     # sparse matrices    
-    nrows_all = [1000, 2000, 4000, 8000, 16000, 32000, 64000, 128000]
+    nrows_all = [1000, 2000, 4000, 8000, 16000, 32000, 64000, 128000, 256000]
     for nrows in nrows_all            
         dfi = DataFrame()        
         Xs = sprand(nrows, ncols, density)
