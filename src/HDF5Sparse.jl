@@ -1,19 +1,100 @@
 using SparseArrays
-export h5writecsc, h5readcsc, isvalidh5csc
+export h5writecsc, h5appendcsc, h5readcsc, isvalidh5csc
 
-function h5writecsc(filename, name::AbstractString, data::SparseMatrixCSC)
-    h5open(filename, "cw") do fid
-        if name in keys(fid)
-            delete!(fid, name)
-        end
-        g = create_group(fid, name)
-        g["colptr"] = data.colptr
-        g["m"] = data.m
-        g["n"] = data.n
-        g["nzval"] = data.nzval
-        g["rowval"] = data.rowval
-    end
+"""
+    h5appendcsc(fid::HDF5.File, name::AbstractString, data::SparseMatrixCSC)
+
+Append the matrix `data` to the right of the `SparseMatrixCSC` already stored in `fid[name]`.
+"""
+function h5appendcsc(fid::HDF5.File, name::AbstractString, data::SparseMatrixCSC)
+    name in keys(fid) || throw(ArgumentError("$name doesn't exist in $fid"))
+    g = fid[name]
+    m, n = g["m"][], g["n"][]
+    m == size(data, 1) || throw(DimensionMismatch("Existing array has dimensions $((m, n)), but the new array has dimensions $(size(data))"))
+
+    colptr = data.colptr
+    i = size(g["colptr"], 1)
+    j = i + length(colptr) - 1
+    HDF5.set_dims!(g["colptr"], (j,))
+    offset = size(g["rowval"], 1)
+    g["colptr"][i:j]  = colptr .+ offset
+
+    nzval = nonzeros(data)
+    i = size(g["nzval"], 1) + 1
+    j = i + length(nzval) - 1
+    HDF5.set_dims!(g["nzval"], (j,))
+    g["nzval"][i:j]  = nzval
+
+    rowval = rowvals(data)
+    i = size(g["rowval"], 1) + 1
+    j = i + length(rowval) - 1
+    HDF5.set_dims!(g["rowval"], (j,))
+    g["rowval"][i:j]  = rowval
+
+    delete_object(g, "n")
+    g["n"] = n + size(data, 2)
     return
+end
+
+"""
+    h5appendcsc(filename::AbstractString, args...; kwargs...)
+"""
+function h5appendcsc(filename::AbstractString, args...; kwargs...)
+    h5open(filename, "cw") do fid
+        return h5appendcsc(fid, args...; kwargs...)
+    end
+end
+
+"""
+    h5writecsc(fid::HDF5.File, name::AbstractString, data::SparseMatrixCSC; overwrite=false, batchsize=1000)
+
+Write the matrix `data` to `fid[data]`, overwriting any existing dataset with the same name if `overwrite=true`.
+"""
+function h5writecsc(fid::HDF5.File, name::AbstractString, data::SparseMatrixCSC; overwrite=false, batchsize=1000)
+    if name in keys(fid)
+        if overwrite
+            delete_object(fid, name)
+        else
+            throw(ArgumentError("Dataset with name $name already exists"))
+        end
+    end
+    g = create_group(fid, name)
+    g["m"] = data.m
+    g["n"] = data.n
+    
+    colptr = data.colptr
+    g_colptr = create_dataset(
+        g, "colptr", 
+        eltype(colptr), 
+        ((length(colptr),), (-1,)),
+        chunk=(batchsize,),
+    )
+    g_colptr[1:length(colptr)] = colptr
+
+    nzval = nonzeros(data)
+    g_nzval = create_dataset(
+        g, "nzval", 
+        eltype(nzval), 
+        ((length(nzval),), (-1,)),
+        chunk=(batchsize,),
+    )
+    g_nzval[1:length(nzval)] = nzval
+    
+    rowval = rowvals(data)
+    g_rowval = create_dataset(
+        g, "rowval", 
+        eltype(rowval), 
+        ((length(rowval),), (-1,)),
+        chunk=(batchsize,),
+    )
+    g_rowval[1:length(rowval)] = rowval
+    return
+end
+
+function h5writecsc(filename::AbstractString, args...; kwargs...)
+    h5open(filename, "cw") do fid
+        return h5writecsc(fid, args...; kwargs...)
+    end
 end
 
 function isvalidh5csc(fid::HDF5.File, name::AbstractString)
@@ -27,6 +108,11 @@ function isvalidh5csc(fid::HDF5.File, name::AbstractString)
     true, ""
 end
 
+"""
+    h5readcsc(fid::HDF5.File, name::AbstractString)
+
+Read the `SparseMatrixCSC` matrix stored in `fid[name]`.
+"""
 function h5readcsc(fid::HDF5.File, name::AbstractString)::SparseMatrixCSC
     flag, msg = isvalidh5csc(fid, name)
     if !flag
@@ -43,7 +129,7 @@ end
 
 """
 
-Read the `col`-th column of the `SparseMatrixCSC` matrix stored in file `fid` under `name`
+Read the `col`-th column of the `SparseMatrixCSC` matrix stored in `fid[name]`.
 """
 function h5readcsc(fid::HDF5.File, name::AbstractString, col::Integer)::SparseVector
     g = fid[name]
@@ -59,7 +145,7 @@ end
 
 """
 
-Read the submatrix consisting of columns `firstcol:lastcol` from `fid`.
+Read the submatrix consisting of columns `firstcol:lastcol` from `fid[name]`.
 """
 function h5readcsc(fid::HDF5.File, name::AbstractString, firstcol::Integer, lastcol::Integer)::SparseMatrixCSC
     g = fid[name]
