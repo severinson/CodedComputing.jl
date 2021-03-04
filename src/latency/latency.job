@@ -2,20 +2,26 @@
 # Run 
 #SBATCH --job-name=latency.jl
 #SBATCH --output=latency.out
-#SBATCH --nodes=7
+#SBATCH --nodes=37
 #SBATCH --time=600:00
 
 export JULIA_DEPOT_PATH="/shared/.julia/"
 date
 kernel=/shared/.julia/dev/CodedComputing/src/latency/kernel.jl
-output_directory=/shared/.julia/dev/CodedComputing/simulations/latency/210215_v3/
-npartitions_all=( 18 36 54)
+output_directory=/shared/.julia/dev/CodedComputing/simulations/latency/210303/
+# npartitions_all=( 18 36 54 72 90)
+# npartitions_all=( 90 54 18)
+npartitions_all=( 180 90 54 45 36 27 18)
+# npartitions_all=( 720 360 180 13 5)
 
-niterations=50
+niterations=10000
 ncomponents=3
 density=0.05
 # nwait_all=( 1 3 6 9 12 16 18)
-nwait_all=(1 2 3 4 5 6)
+# nwait_all=(1 2 3 4 5 6)
+# nwait_all=( 1 3 6 9 12)
+# nwait_all=( 1 6 12 18 24 30 36)
+nwait_all=( 36)
 timeout=0
 
 for npartitions in "${npartitions_all[@]}"
@@ -24,38 +30,38 @@ do
     do
 
         # original matrix
-        nrows_total=2504
-        ncols=1812842
-        nbytes=43508208
-        nrows=$(($nrows_total / $npartitions))        
-        echo "[Latency] p: ${npartitions}, w: ${nwait}"
-        /opt/amazon/openmpi/bin/mpirun -n "$SLURM_NTASKS" julia --project ${kernel} "${output_directory}/output $(date).h5" --niterations ${niterations} --nbytes ${nbytes} --nrows ${nrows} --ncols ${ncols} --ncomponents ${ncomponents} --density ${density} --nwait ${nwait} --timeout ${timeout}
+        # nrows_total=2504
+        # ncols=1812842
+        # nbytes=43508208
+        # nrows=$(($nrows_total / $npartitions))        
+        # echo "[Latency] p: ${npartitions}, w: ${nwait}"
+        # /opt/amazon/openmpi/bin/mpirun -n "$SLURM_NTASKS" julia --project ${kernel} "${output_directory}/output $(date).h5" --niterations ${niterations} --nbytes ${nbytes} --nrows ${nrows} --ncols ${ncols} --ncomponents ${ncomponents} --density ${density} --nwait ${nwait} --timeout ${timeout}
 
         # transposed matrix
         nrows_total=1812842
         ncols=2504
         nbytes=60096
         nrows=$(($nrows_total / $npartitions))        
-        echo "Transposed matrix"
+        echo "[Latency (transposed matrix)] p: ${npartitions}, w: ${nwait}"
         /opt/amazon/openmpi/bin/mpirun -n "$SLURM_NTASKS" julia --project ${kernel} "${output_directory}/output $(date).h5" --niterations ${niterations} --nbytes ${nbytes} --nrows ${nrows} --ncols ${ncols} --ncomponents ${ncomponents} --density ${density} --nwait ${nwait} --timeout ${timeout}        
     done
 done
 
-# transposed matrix
-nrows_total=1812842
-ncols=2504
-nbytes=60096
-ngenomes_all=( 3 5 10)
+# # transposed matrix
+# nrows_total=1812842
+# ncols=2504
+# nbytes=60096
+# ngenomes_all=( 3 5 10)
 
-for ngenomes in "${ngenomes_all[@]}"
-do
-    for npartitions in "${npartitions_all[@]}"
-    do
-        for nwait in "${nwait_all[@]}"
-        do
-            nrows=$(($nrows_total * $ngenomes / $npartitions))
-            echo "[Latency] g: ${ngenomes}, p: ${npartitions}, w: ${nwait}"
-            /opt/amazon/openmpi/bin/mpirun -n "$SLURM_NTASKS" julia --project ${kernel} "${output_directory}/output $(date).h5" --niterations ${niterations} --nbytes ${nbytes} --nrows ${nrows} --ncols ${ncols} --ncomponents ${ncomponents} --density ${density} --nwait ${nwait} --timeout ${timeout}        
-        done
-    done
-done
+# for ngenomes in "${ngenomes_all[@]}"
+# do
+#     for npartitions in "${npartitions_all[@]}"
+#     do
+#         for nwait in "${nwait_all[@]}"
+#         do
+#             nrows=$(($nrows_total * $ngenomes / $npartitions))
+#             echo "[Latency] g: ${ngenomes}, p: ${npartitions}, w: ${nwait}"
+#             /opt/amazon/openmpi/bin/mpirun -n "$SLURM_NTASKS" julia --project ${kernel} "${output_directory}/output $(date).h5" --niterations ${niterations} --nbytes ${nbytes} --nrows ${nrows} --ncols ${ncols} --ncomponents ${ncomponents} --density ${density} --nwait ${nwait} --timeout ${timeout}        
+#         done
+#     done
+# done
