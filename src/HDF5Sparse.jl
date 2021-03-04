@@ -50,7 +50,7 @@ end
 
 Write the matrix `data` to `fid[data]`, overwriting any existing dataset with the same name if `overwrite=true`.
 """
-function h5writecsc(fid::HDF5.File, name::AbstractString, data::SparseMatrixCSC; overwrite=false, batchsize=1000)
+function h5writecsc(fid::HDF5.File, name::AbstractString, data::SparseMatrixCSC; overwrite=false, batchsize=100000, blosc=5)
     if name in keys(fid)
         if overwrite
             delete_object(fid, name)
@@ -68,6 +68,7 @@ function h5writecsc(fid::HDF5.File, name::AbstractString, data::SparseMatrixCSC;
         eltype(colptr), 
         ((length(colptr),), (-1,)),
         chunk=(batchsize,),
+        blosc=blosc,        
     )
     g_colptr[1:length(colptr)] = colptr
 
@@ -77,6 +78,7 @@ function h5writecsc(fid::HDF5.File, name::AbstractString, data::SparseMatrixCSC;
         eltype(nzval), 
         ((length(nzval),), (-1,)),
         chunk=(batchsize,),
+        blosc=blosc,
     )
     g_nzval[1:length(nzval)] = nzval
     
@@ -86,6 +88,7 @@ function h5writecsc(fid::HDF5.File, name::AbstractString, data::SparseMatrixCSC;
         eltype(rowval), 
         ((length(rowval),), (-1,)),
         chunk=(batchsize,),
+        blosc=blosc,        
     )
     g_rowval[1:length(rowval)] = rowval
     return
