@@ -56,6 +56,7 @@ function parse_latency_files(;dir::AbstractString, prefix="output", dfname="df.c
     # process output files
     filenames = glob("$(prefix)*.h5", dir)
     for filename in filenames
+        println("Parsing $filename")
         try
             df = df_from_latency_file(filename)
             CSV.write(filename*".csv", df)
