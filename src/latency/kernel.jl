@@ -1,6 +1,7 @@
 using CodedComputing, MPI, MPIStragglers
 using HDF5, LinearAlgebra, SparseArrays
 using ArgParse
+using MKLSparse # important for performance of sparse matrix multiplication on Intel-based systems
 
 MPI.Init()
 const comm = MPI.COMM_WORLD
