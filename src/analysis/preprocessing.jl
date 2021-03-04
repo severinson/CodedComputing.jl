@@ -240,9 +240,9 @@ end
 
 Read a latency experiment csv file into a DataFrame
 """
-function read_latency_df(directory="C:/Users/albin/Dropbox/Eigenvector project/data/dataframes/latency/210215_v3/")
+function read_latency_df(directory="C:/Users/albin/Dropbox/Eigenvector project/data/dataframes/latency/210303/")
     # filename = sort!(glob("*.csv", directory))[end]
-    filename = directory*"df_v12.csv"
+    filename = directory*"df_v1.csv"
     println("Reading $filename")
     df = DataFrame(CSV.File(filename, normalizenames=true))
     df.worker_flops = 2 .* df.nrows .* df.ncols .* df.ncomponents .* df.density

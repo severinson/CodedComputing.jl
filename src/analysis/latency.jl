@@ -254,138 +254,6 @@ function plot_iterationtime_cdf(df; nworkers::Integer=12)
     plt.show()
 end
 
-"""
-
-Plot the quantiles of the iteration time as a function of `nwait`, i.e., the number of 
-workers waited for in each iteration.
-"""
-function plot_iterationtime_quantiles(dct)
-    plt.figure()
-    for (label, df) in dct
-        df = df[df.nreplicas .== 1, :]
-
-        df.nwait = df.nwait ./ df.nworkers
-
-        offsets = Vector{Float64}()
-        slopes = Vector{Float64}()
-        flops = Vector{Float64}()
-        for (nreplicas, nsubpartitions, worker_flops) in Iterators.product(unique(df.nreplicas), unique(df.nsubpartitions), unique(df.worker_flops))
-            dfi = df
-            dfi = dfi[dfi.nreplicas .== nreplicas, :]
-            dfi = dfi[dfi.nsubpartitions .== nsubpartitions, :]
-            dfi = dfi[dfi.worker_flops .== worker_flops, :]
-            # dfi = dfi[dfi.kickstart .!= true, :]
-            if size(dfi, 1) == 0
-                continue
-            end
-
-            xs = Vector{Float64}()
-            ys = Vector{Float64}()
-            mins = Vector{Float64}()
-            maxes = Vector{Float64}()
-            for nwait in unique(dfi.nwait)
-                dfj = dfi[dfi.nwait .== nwait, :]
-                if size(dfj, 1) == 0
-                    continue
-                end
-                push!(xs, nwait)
-                push!(ys, mean(dfj.t_compute))
-                push!(mins, quantile(dfj.t_compute, 0.1))
-                push!(maxes, quantile(dfj.t_compute, 0.9))
-            end
-            l = label * " nrep: $nreplicas, nsubp: $nsubpartitions, nflops: $(round(worker_flops, sigdigits=3))"            
-            yerr = zeros(2, length(xs))
-            yerr[1, :] .= ys .- mins
-            yerr[2, :] .= maxes .- ys
-            plt.errorbar(xs, ys, yerr=yerr, fmt=".", label=l)
-
-            # plot a linear model fit to the data
-            poly = Polynomials.fit(float.(dfi.nwait), float.(dfi.t_compute), 1)
-            offset, slope = poly.coeffs
-            t = range(0.0, maximum(xs), length=100)
-            plt.plot(t, poly.(t))
-
-            push!(offsets, offset)
-            push!(slopes, slope)
-            push!(flops, worker_flops)
-
-            println("[nreplicas: $nreplicas, nsubp: $nsubpartitions, nflops: $worker_flops] offset: $(round(offset, digits=5)) ($(offset / worker_flops)), slope: $(round(slope, digits=5)) ($(slope / worker_flops))")
-        end
-
-        plt.grid()
-        plt.legend()
-        plt.xlabel("nwait")
-        plt.ylabel("Compute time [s]")        
-
-        # offset
-        plt.figure()
-        p = sortperm(flops)
-        plt.plot(flops[p], offsets[p], "o")
-
-        poly = Polynomials.fit(flops, offsets, 2)
-        t = range(0.0, maximum(df.worker_flops), length=100)
-        plt.plot(t, poly.(t))
-
-        plt.grid()
-        plt.legend()
-        plt.xlabel("flops")
-        plt.ylabel("offset")     
-
-        # # print the parameters
-        # for i in 1:length(flops)        
-        #     println("$(flops[i]) $(offsets[i])")
-        # end
-
-        # # print the fitted line
-        # println()
-        # for i in 1:length(t)        
-        #     println("$(t[i]) $(poly(t[i]))")
-        # end        
-
-        # print the quadratic parameters
-        p = poly.coeffs
-        println("offset")
-        println("$(p[1]) & $(p[2]) & $(p[3])")
-        
-        # slope
-        plt.figure()
-        p = sortperm(flops)
-        plt.plot(flops[p], slopes[p], "o")
-
-        poly = Polynomials.fit(flops, slopes, 2)
-        t = range(0.0, maximum(flops), length=100)
-        plt.plot(t, poly.(t))          
-
-        # # print the parameters
-        # for i in 1:length(flops)        
-        #     println("$(flops[i]) $(slopes[i])")
-        # end
-
-        # # print the fitted line
-        # println()
-        # for i in 1:length(t)        
-        #     println("$(t[i]) $(poly(t[i]))")
-        # end                
-
-        # print the quadratic parameters
-        println("slope")
-        p = poly.coeffs
-        println("$(p[1]) & $(p[2]) & $(p[3]) \\")        
-
-        plt.grid()
-        plt.legend()
-        plt.xlabel("flops")
-        plt.ylabel("slope")             
-    end
-
-
-
-    # tikzplotlib.save("./plots/tcompute.tex")
-    
-    return
-end
-
-plot_iterationtime_quantiles(df::AbstractDataFrame) = plot_iterationtime_quantiles(Dict("df"=>df))
 
 """
 
@@ -602,151 +470,6 @@ function plot_latency(df, nworkers=6)
     plt.grid()
     plt.xlabel("Nw")
     plt.ylabel("T_compute")
-    return
-end
-
-"""
-
-Plot the update time at the master against the number of sub-partitions.
-"""
-function plot_update_time(dct)
-
-    # SAG
-    plt.figure()    
-    df = dct["pcavr"]
-    df = df[df.kickstart .== false, :]
-    df = df[df.nreplicas .== 1, :]
-    df = df[df.nostale .== false, :]
-    npartitions = df.nworkers .* df.nsubpartitions
-    # df.cost = min.(npartitions, 2df.nwait)
-    df.cost = df.nsubpartitions
-    # df.cost = df.nwait .+ min.(npartitions, 2df.nwait)
-    for nworkers in sort!(unique(df.nworkers))
-        dfi = df
-        dfi = dfi[dfi.nworkers .== nworkers, :]
-        # plt.plot(dfi.cost, dfi.t_update, "o", label="Nn: $nworkers")
-
-        dfj = combine(groupby(dfi, :cost), :t_update => mean)
-        sort!(dfj, :cost)
-        plt.plot(dfj.cost, dfj.t_update_mean, "o", label="Nn: $nworkers")
-
-        # print values
-        # println("Nn=$nworkers")
-        # for i in 1:size(dfj, 1)
-        #     println("$(dfj.cost[i]) $(dfj.t_update_mean[i])")
-        # end
-    end
-    plt.legend()
-    plt.grid()
-    plt.xlabel("p / Nn")
-    plt.ylabel("Update time [s]")
-
-    # SGD
-    plt.figure()    
-    df = dct["pca"]
-    df = df[df.kickstart .== false, :]
-    df = df[df.nreplicas .== 1, :]
-    npartitions = df.nworkers .* df.nsubpartitions
-    # df.cost = min.(npartitions, 2df.nwait)
-    # df.cost = npartitions
-    df.cost = df.nwait
-    for nworkers in sort!(unique(df.nworkers))
-        dfi = df
-        dfi = dfi[dfi.nworkers .== nworkers, :]
-        # plt.plot(dfi.cost, dfi.t_update, "o", label="Nn: $nworkers")
-
-        dfj = combine(groupby(dfi, :cost), :t_update => mean)
-        sort!(dfj, :cost)
-        plt.plot(dfj.cost, dfj.t_update_mean, "o", label="Nn: $nworkers")
-
-        # print values
-        println("Nn=$nworkers")
-        for i in 1:size(dfj, 1)
-            println("$(dfj.cost[i]) $(dfj.t_update_mean[i])")
-        end        
-    end
-    plt.legend()
-    plt.grid()
-    plt.xlabel("Nw")
-    plt.ylabel("Update time [s]")
-
-    return 
-
-    for (label, df) in dct
-        df = df[df.nreplicas .== 1, :]
-
-        for (nreplicas, nsubpartitions) in Iterators.product(unique(df.nreplicas), unique(df.nsubpartitions))
-
-        
-
-            dfi = df
-            dfi = dfi[dfi.nreplicas .== nreplicas, :]
-            dfi = dfi[dfi.nsubpartitions .== nsubpartitions, :]
-            dfi = dfi[Missings.replace(dfi.kickstart, false) .== false, :]
-            dfi = dfi[dfi.iteration .> 1, :] # ignore the first iteration
-            # dfi = dfi[dfi.iteration .== 1, :] # only first iteration
-            if size(dfi, 1) == 0                
-                continue
-            end
-
-            xs = Vector{Float64}()
-            ys = Vector{Float64}()
-            mins = Vector{Float64}()
-            maxes = Vector{Float64}()
-            for nwait in unique(dfi.nwait)
-                dfj = dfi[dfi.nwait .== nwait, :]
-                if size(dfj, 1) == 0
-                    continue
-                end
-                push!(xs, nwait)
-                push!(ys, mean(dfj.t_update))
-                push!(mins, quantile(dfj.t_update, 0.1))
-                push!(maxes, quantile(dfj.t_update, 0.9))
-
-                k = argmax(dfj.t_update)
-                println((nreplicas, nsubpartitions, nwait, dfj.jobid[k]))
-
-                # plt.plot(dfj.nwait, dfj.t_update, ".")
-            end
-            l = label * " nreplicas: $nreplicas, nsubpartitions: $nsubpartitions"
-            yerr = zeros(2, length(xs))
-            yerr[1, :] .= ys .- mins
-            yerr[2, :] .= maxes .- ys
-            # plt.errorbar(xs, ys, yerr=yerr, fmt=".", label=l)
-            plt.plot(xs, ys, ".", label=l)
-
-            # # plot a linear model fit to the data
-            # offset, slope = linear_model(xs, ys)
-            # plt.plot([0, maximum(xs)], offset .+ [0, maximum(xs)*slope])
-            # println("[nreplicas: $nreplicas, nsubpartitions: $nsubpartitions] offset: $offset ($(offset / nsubpartitions)), slope: $slope ($(slope / nsubpartitions))")
-        end
-    end
-
-    plt.grid()
-    plt.legend()
-    plt.xlabel("nwait")
-    plt.ylabel("Update time [s]")
-
-    # tikzplotlib.save("./plots/tupdate.tex")
-    
-    return  
-end
-
-plot_update_time(df::AbstractDataFrame) = plot_update_time(Dict("df"=>df))
-
-"""
-
-Scatterplot of worker latency vs. density of the partitions stored by each worker.
-"""
-function plot_latency_density(df)
-    nworkers = 18
-    nsubpartitions = 1
-    df = df[df.nworkers .== 18, :]
-    df = df[df.nsubpartitions .== 1, :]
-    df = orderstats_df(df)
-    density = [0.05140742522974717, 0.05067826288956093, 0.05122862096280494, 0.050645562535343865, 0.05099657254820253, 0.05138775739534186, 0.050901895214905575, 0.050316781109837165, 0.05188810059429005, 0.051392694196391135, 0.05082197380306366, 0.050276556499358506, 0.05169503754425293, 0.051862277178989835, 0.05151591182965395, 0.05201310404786811, 0.05083756996715019, 0.05134404845100367]    
-    plt.plot(density[df.worker_index], df.latency, ".")
-    plt.grid()
     return
 end
 
@@ -1422,18 +1145,30 @@ function sparse_dense_test()
 end
 
 function tail_plot(dfo)
-    dfo = dfo[dfo.burst .== false, :]    
-    intersect = 2.5461674786469558e-17
-    slope = 8.121166381604497e-10    
-    dfo.noise = dfo.worker_compute_latency .- slope .* dfo.worker_flops
-    df = by(dfo, [:jobid, :worker_index, :worker_flops], :noise => mean => :mean, :noise => var => :var, :noise => median => :median)
+
+    dfo = copy(dfo)
+    df = by(
+        dfo, [:jobid, :worker_index, :worker_flops], 
+        :worker_compute_latency => mean => :mean, 
+        :worker_compute_latency => var => :var, 
+        :worker_compute_latency => median => :median,
+        :worker_compute_latency => minimum => :minimum,
+        )
+
+    # dfo = dfo[dfo.burst .== false, :]    
+    # intersect = 2.5461674786469558e-17
+    # slope = 8.121166381604497e-10    
+    # dfo.noise = dfo.worker_compute_latency .- slope .* dfo.worker_flops
+    # df = by(dfo, [:jobid, :worker_index, :worker_flops], :noise => mean => :mean, :noise => var => :var, :noise => median => :median)
 
     # mean and median
-    plt.figure()
+    # plt.figure()
     plt.plot(df.worker_flops, df.mean, ".", label="Mean")
-    plt.plot(df.worker_flops, df.median, ".", label="Median")
-    plt.ylabel("Mean and median")
+    plt.plot(df.worker_flops, df.minimum, ".", label="Minimum")
+    # plt.plot(df.worker_flops, df.median, ".", label="Median")
+    plt.ylabel("Mean")
     plt.legend()
+    return
 
     # variance
     plt.figure()
@@ -1447,14 +1182,11 @@ end
 
 Plot worker latency over time
 """
-function plot_worker_latency_timeseries(df, n=10; miniterations=10000, onlycompute=true, worker_flops, min_latency=worker_flops*8.121166381604497e-10)
+function plot_worker_latency(df, n=10; miniterations=10000, onlycompute=true, worker_flops)
     order_col = onlycompute ? :compute_order : :order
     latency_col = onlycompute ? :worker_compute_latency : :worker_latency
     df = df[df.niterations .>= miniterations, :]
     df = df[isapprox.(df.worker_flops, worker_flops, rtol=1e-2), :]
-
-    # add absolute time to the df
-    # sort!(df, [:jobid, :worker_index, :iteration])
 
     # select the job with the highest recorded latency
     # i = argmin(df.worker_compute_latency)
@@ -1472,109 +1204,16 @@ function plot_worker_latency_timeseries(df, n=10; miniterations=10000, onlycompu
     df = df[df.jobid .== jobid, :]
     df = df[df.worker_index .== worker_index, :]
 
-    # remove large bursts
-    # df.burst = burst_state_from_orderstats_df(df)
-    df = df[df.burst .== false, :]
-
-    # intersect = 5.639606250018633e-17
-    # slope = 1.04452512147574e-9
-
-    intersect = 2.5461674786469558e-17
-    slope = 8.121166381604497e-10
-    
-    min_latency = intersect + worker_flops*slope
-
-    op_tail_latency = (df.worker_compute_latency .- min_latency)
-
-    println("[c: $worker_flops] mean: $(mean(op_tail_latency))")
-
-    # cdf
-    plt.figure()
-    xs = sort(op_tail_latency)
-    ys = range(0, 1, length=length(xs))
-    plt.plot(xs, ys)
-
-    i = ceil(Int, length(xs)/10)
-    shift = xs[i]
-    vs = xs[i:end] .- shift
-    rv = Distributions.fit(Exponential, vs)
-    println("Shift: $shift, RV: $rv")
-    ts = range(0, xs[end]-shift, length=100)
-    plt.plot(ts.+shift, cdf.(rv, ts), "k--")
-
-    shift = xs[1] - eps(Float64)
-    rv = Distributions.fit(Gamma, xs .- shift)
-    ts = range(quantile(rv, 1e-6), quantile(rv, 1.0-1e-6), length=100)
-    plt.plot(ts .+ shift, cdf.(rv, ts), "r--")
-
-    α1 = (shift + mean(rv)) / log(worker_flops)
-    α2 = sqrt(var(rv) / log(worker_flops))
-    println("α1: $α1, α2: $α2")
-
-    plt.grid()
-    return
-    
-    # timeseries
-    plt.figure()
-    plt.plot(df.time, op_tail_latency)
-    plt.grid()
-    plt.xlabel("Time [s]")
-    plt.ylabel("Exponential tail scale")
-    return
-
-    rate = df.worker_flops ./ df.worker_compute_latency
-    rate0 = maximum(rate)
-    rate_noise = rate .- rate0
-    rate_noise .*= -1
-    
-    plt.figure()
-    sort!(rate_noise)
-    ys = range(0, 1, length=length(rate_noise))
-    plt.plot(rate_noise, ys)
-    plt.grid()
-    return
-
-    plt.figure()
-    plt.plot(df.time, ys)
-    plt.grid()
-    return
-
-    
-    xs = sort!(df.worker_compute_latency .- min_latency)
-    ys = range(0, 1, length=length(xs))
-    plt.figure()    
-    plt.plot(xs, ys)
-
-    rv = Distributions.fit(Gamma, xs)
-    ts = range(quantile(rv, 1e-6), quantile(rv, 1.0-1e-6), length=100)
-    plt.plot(ts, cdf.(rv, ts), "k--")
-
-
-    # plt.plot(df.time, , ".", label="Total latency")
-    plt.grid()    
-    return
-
-
-    # # plot total latency
-    # plt.figure()
-    # plt.plot(df.time, df.worker_compute_latency, ".")
-    # plt.grid()
-    # plt.xlabel("Time [s]")
-    # plt.ylabel("Latency [s]")
-    # return
-
     # compute running mean over windows of varying size
     windowlengths = [Inf, 5, 0]
     df = compute_rmeans(df; windowlengths)
 
-    # shift the rmean with largest window to be zero mean
-    # df["rmean_$(windowlengths[1])"] .-= mean(df["rmean_$(windowlengths[1])"])
-
+    # plot timeseries latency
     plt.figure()
     plt.plot(df.time, df.worker_compute_latency, ".", label="Total latency")
-    dfi = df[df.burst, :]    
-    plt.plot(dfi.time, dfi.worker_compute_latency, "o", label="Burst latency")
-    for windowlength in windowlengths[2:end]
+    # dfi = df[df.burst, :]    
+    # plt.plot(dfi.time, dfi.worker_compute_latency, "o", label="Burst latency")
+    for windowlength in reverse(windowlengths[2:end])
         plt.plot(df.time, df["rmean_$windowlength"], ".", label="$windowlength")
     end
 
@@ -1585,37 +1224,23 @@ function plot_worker_latency_timeseries(df, n=10; miniterations=10000, onlycompu
     plt.legend()
     plt.xlabel("Time [s]")
     plt.ylabel("Latency [s]")
-    return
 
-
-    vs .= 0
+    ### plot latency distribution
     plt.figure()
-    for intervalsize in [100, 10, 0.1, 0.01]
-        dfi = copy(df)
 
-        # function f(x)
-        #     windowsize = ceil(Int, intervalsize/(maximum(x.time)/maximum(x.iteration)))
-        #     runmean(float.(x.worker_compute_latency), windowsize) .- minimum(x.worker_compute_latency)
-        # end
-        # dfi.rmean = by(dfi, [:jobid, :worker_index], [:worker_compute_latency, :time, :iteration, :worker_flops] => f => :rmean).rmean
+    # empirical
+    xs = sort(df.worker_compute_latency)
+    ys = range(0, 1, length=length(xs))
+    plt.plot(xs, ys)
 
-        windowsize = ceil(Int, intervalsize/(maximum(dfi.time)/maximum(dfi.iteration)))        
-        dfi.rmean = runmean(float.(dfi.worker_compute_latency), windowsize) .- minimum(dfi.worker_compute_latency)
-        dfi.rmean .-= vs
-        vs .+= dfi.rmean
+    # fitted
+    rv = Distributions.fit(Gamma, xs)
+    ts = range(quantile(rv, 1e-6), quantile(rv, 1.0-1e-6), length=100)
+    plt.plot(ts, cdf.(rv, ts), "k--")
 
-        # remove samples before the first window has passed over the data
-        dfi = dfi[dfi.time .>= intervalsize, :]
-        
-        # plot ccdf
-        xs = sort!(dfi.rmean)
-        ys = 1 .- range(0, 1, length=length(xs))
-        plt.semilogy(xs, ys, label="$intervalsize")
-    end
     plt.grid()
-    plt.legend()
     plt.xlabel("Latency [s]")
-    plt.ylabel("CCDF")
+    plt.ylabel("CDF")
     return
 end
 

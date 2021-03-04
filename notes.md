@@ -477,5 +477,120 @@ New sub-partition implementation
 # 210303
 
 - Questions: why am I seeing the latency increasing with the square of the complexity?
-- Question: do I see the same behavior on my laptop, on Sveith, on an ec2 instance, and when running jobs under Slurm?
-  - To answer this question, let's write a small script that runs multiplications
+
+## Question: 
+
+Do I see the same behavior (latency increasing with the square of the number of flops) on my laptop, on Sveith, on an ec2 instance, and when running jobs under Slurm?
+
+Notes:
+- To answer this question, let's write a small script that runs multiplications
+- I've written script that measures latency of matrix multiplication for dense and sparse (sparse-dense multiplication) matrices of varying size
+- On my latop the latency increases linearly with nflops for both sparse and dense matrices
+- On a c5xlarge instance latency increase linearly for dense matrices, but with the square of nflops for sparse matrices
+- If I include the MKLSparse library, it looks linear (for large enough matrices; there's some tapering for very small matrices)
+- However, the latency of dense-dense multiplication increases when I include MKLSparse, although it still looks linear
+Answer: 
+- There's something strange going on with the backend used by Julia to perform sparse-dense multiplication on AWS
+- Using MKLSparse dramatically increases performance for multiplication of large matrices
+- When using the MKLSparse library the behavior looks similar between my laptop and the c5xlarge instance
+
+## Question
+
+Does using MKLSparse on AWS change performance for my experiments?
+
+Notes
+- Let's try running my latency experiments again but with the MKLSparse library
+
+Answer
+- Initial results indicate that using MKLSparse leads to faster operations with less variance, but I need results for larger operations to know for sure
+
+## Question
+
+Has the character of the latency variation changed due to using MKLSparse? Am I still seeing large bursts in latency? What's the latency distribution for individual workers?
+
+Notes
+- Let's look at the latency timeseries for the traces using the MKLSparse library
+
+Answer
+- Latency looks similar to before
+- Mean and variance seems to vary between workers
+- I still see some Markov behavior, i.e., there are latency bursts
+- The CDF of the latency looks either like a shifted exponential or a Gamma
+- Closer to a shifted exponential for small computations and closer to a Gamma for larger computations
+
+# Question
+
+How does the latency I've recorded in Slurm jobs compare to the latency I recorded on a single worker?
+
+Answer
+- When using MKLSparse, the difference in latency between the Slurm and individual tests is small
+- When not using MKLSparse there's a large difference in latency. The latency is much higher for the individual tests.
+
+# Question
+
+Do the individual latency sweep tests reproduce?
+
+Notes
+- Let's re-run the latency sweep tests
+
+Answer
+- The latency sweep tests do reproduce
+- Using MKLSparse yields significantly better performance for sparse matrices
+- In the previous run I saw worse performance for dense-dense multiplication when using MKLSparse, which I didn't observe the second time
+
+# Question
+
+I'm currently running tests for the multiplication X'*X*V. Will I see the same kind of scaling if I just do the multiplication X*V?
+
+Answer
+- Yes, the behavior is the same
+- Using MKLSparse yields much better performance
+- Latency scales with the square of nflops
+
+# Questions
+
+Am I computing the number of flops correctly for sparse matrices? Is there something that increases the number of operations performed in some way?
+
+Notes
+- Let's implement my own sparse multiplication for comparison
+
+Answer
+- My reference implementation, which just iterates over the elements of the sparse matrix looks much more linear than what the built-in implementations do
+- My reference implementation is much slower than the built-in one
+- Hence, the latency scaling behavior I'm observing are due to something with the implementation of sparse matrix multiplication
+
+# Problem
+
+The latency of sparse matrix multiplication is non-linear in the number of rows (everything else kept constant) and I have no idea why. If I don't understand how latency of the underlying computation scales, then I can't extrapolate my model.
+
+Possible solutions
+- Use the mymul! method (since it seems to be more linear)
+- Avoid using sparse matrices at all
+
+Notes
+- Using sparse matrices is giving me a lot of greif
+- But using dense matrices is much slower and isn't what's done in practice
+- Maybe there's a way to sidestep this problem entirely and assume some sort of model that is oblivious to the latency of the underlying computation
+- Maybe I just need to know the time it takes and I can do something about that? Or just look at the percentage variation across workers.
+
+# 210304
+
+# Goal
+
+Run PCA over the entire genome.
+
+Notes
+- I've implemented lots of out-of-core functionality for dealing with the large amount of data
+- Once I've finished writing the data to matrix I need to permute it
+- Then I should be able to run the experiments on Sveith
+- I also want to run experiments on AWS, for which I need to move the data matrix to AWS storage
+- The difficulty of doing so depends on how large it ends up being
+- Hopefully I can just copy it over the network
+- The only remaining challenge is computing norm(X) and norm(X'*V), which I need to do to compute explained variance
+- It's a challenge since X is very large
+- I could solve it by writing custom out-of-core functions for the very specific operations I need
+- This is probably the easiest. I can do it tomorrow.
+- I'd like to run experiments on AWS overnight
+- To do so I need to transfer the matrices to AWS storage
+- Let's go home while waiting for the shuffled matrix to complete
+- Once that's done, let's download it to my desktop and then upload it to AWS
