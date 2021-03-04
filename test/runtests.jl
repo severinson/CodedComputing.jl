@@ -43,7 +43,7 @@ end
     Random.seed!(123)
 
     # test writing and reading a sparse matrix
-    m, n, p = 10, 5, 0.5
+    m, n, p = 10, 6, 0.5
     M = sprand(Float32, m, n, p)
     filename = tempname()
     name = "M"
@@ -73,6 +73,27 @@ end
     M_hat = h5readcsc(filename, name)
     @test typeof(M_hat) == typeof(M)
     @test M_hat ≈ hcat(M, M2)
+
+    # test permuting the columns of the matrix
+    M = hcat(M, M2)
+    p = [1, 2, 3]
+    h5permutecsc(filename, "M", filename, "Mp", p, overwrite=true)
+    Mp = h5readcsc(filename, "Mp")
+    @test Mp ≈ M
+
+    p = [2, 1]
+    h5permutecsc(filename, "M", filename, "Mp", p, overwrite=true)
+    Mp = h5readcsc(filename, "Mp")
+    @test Mp[:, 1:6] ≈ M[:, 7:12]
+    @test Mp[:, 7:12] ≈ M[:, 1:6]
+
+    # test permuting and storing the result in a new file
+    p = [2, 1]
+    dstfile = tempname()
+    h5permutecsc(filename, "M", dstfile, "Mp", p, overwrite=true)
+    Mp = h5readcsc(dstfile, "Mp")
+    @test Mp[:, 1:6] ≈ M[:, 7:12]
+    @test Mp[:, 7:12] ≈ M[:, 1:6]    
 end
 
 @testset "latency.jl" begin

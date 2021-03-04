@@ -1,5 +1,5 @@
 using SparseArrays
-export h5writecsc, h5appendcsc, h5readcsc, isvalidh5csc
+export h5writecsc, h5appendcsc, h5readcsc, isvalidh5csc, h5permutecsc
 
 """
     h5appendcsc(fid::HDF5.File, name::AbstractString, data::SparseMatrixCSC)
@@ -170,5 +170,44 @@ function h5readcsc(filename::AbstractString, args...; kwargs...)
     HDF5.ishdf5(filename) || throw(ArgumentError("$filename isn't a valid HDF5 file"))    
     h5open(filename, "r") do fid
         return h5readcsc(fid, args...; kwargs...)
+    end
+end
+
+"""
+    h5permutecsc(srcfid::HDF5.File, srcname::AbstractString, dstfid::HDF5.File, dstname::AbstractString, p::AbstractVector{<:Integer}; overwrite=false)
+
+Split the `SparseMatrixCSC` stored in `srcfid[srcname]` column-wise into `length(p)` partitions and 
+write those partitions to `dstfid[dstname]` in the order specified by the permutation vector `p`.
+"""
+function h5permutecsc(srcfid::HDF5.File, srcname::AbstractString, dstfid::HDF5.File, dstname::AbstractString, p::AbstractVector{<:Integer}; overwrite=false)
+    srcg = srcfid[srcname]
+    dstg = srcfid[srcname]
+    m, n = srcg["m"][], srcg["n"][]
+    1 < length(p) <= n || throw(DimensionMismatch("p has dimension $(length(p)), but the source matrix has dimensions $((m, n))"))
+    nblocks = length(p)
+    i = p[1]
+    firstcol = round(Int, (i-1)/nblocks*n+1)
+    lastcol = round(Int, i/nblocks*n)  
+    X = h5readcsc(srcfid, srcname, firstcol, lastcol)
+    h5writecsc(dstfid, dstname, X; overwrite)
+    for i in view(p, 2:length(p))
+        firstcol = round(Int, (i-1)/nblocks*n+1)
+        lastcol = round(Int, i/nblocks*n)
+        X = h5readcsc(srcfid, srcname, firstcol, lastcol)
+        h5appendcsc(dstfid, dstname, X)
+        GC.gc() # force GC to make sure we don't run out of memory        
+    end
+end
+
+function h5permutecsc(srcfile::AbstractString, srcname::AbstractString, dstfile::AbstractString, dstname::AbstractString, args...; kwargs...)
+    srcfid = h5open(srcfile, "cw")
+    dstfid = dstfile == srcfile ? srcfid : h5open(dstfile, "cw")
+    try
+        h5permutecsc(srcfid, srcname, dstfid, dstname, args...; kwargs...)
+    finally
+        close(srcfid)
+        if dstfid != srcfid
+            close(dstfid)
+        end
     end
 end
