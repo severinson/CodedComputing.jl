@@ -94,6 +94,11 @@ end
     Mp = h5readcsc(dstfile, "Mp")
     @test Mp[:, 1:6] ≈ M[:, 7:12]
     @test Mp[:, 7:12] ≈ M[:, 1:6]    
+
+    # test matrix-matrix multiplication
+    A = randn(20, 10)
+    C = h5mulcsc(A, filename, "M", nblocks=3)
+    @test C ≈ A*M
 end
 
 @testset "latency.jl" begin
