@@ -1,5 +1,5 @@
 using SparseArrays
-export h5writecsc, h5appendcsc, h5readcsc, isvalidh5csc, h5permutecsc, h5mulcsc
+export h5writecsc, h5appendcsc, h5readcsc, isvalidh5csc, h5permutecsc, h5mulcsc, h5size
 
 """
     h5appendcsc(fid::HDF5.File, name::AbstractString, data::SparseMatrixCSC)
@@ -237,5 +237,16 @@ end
 function h5mulcsc(A::AbstractMatrix, filename::AbstractString, args...; kwargs...)
     h5open(filename, "r") do fid
         return h5mulcsc(A, fid, args...; kwargs...)
+    end
+end
+
+function h5size(fid::HDF5.File, name::AbstractString)
+    g = fid[name]
+    g["m"][], g["n"][]
+end
+
+function h5size(filename::AbstractString, args...; kwargs...)
+    h5open(filename, "r") do fid
+        return h5size(fid, args...; kwargs...)
     end
 end
