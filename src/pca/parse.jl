@@ -6,7 +6,7 @@ using HDF5, DataFrames, CSV, Glob, Dates, Random
 
 Parse an output file and record everything in a DataFrame.
 """
-function df_from_output_file(filename::AbstractString; inputfile::AbstractString, inputname::AbstractString, Xnorm::Real, mseiterations::Integer=2)
+function df_from_output_file(filename::AbstractString; inputfile::AbstractString, inputname::AbstractString, Xnorm::Real, mseiterations::Integer=10)
 
     # return a memoized result if one exists
     df_filename = filename * ".csv"
@@ -42,8 +42,7 @@ function df_from_output_file(filename::AbstractString; inputfile::AbstractString
         mses = Vector{Union{Missing,Float64}}(missing, niterations)
         if "iterates" in keys(fid)
             U = zeros(eltype(fid["iterates"]), size(fid["iterates"], 1), size(fid["iterates"], 2))
-            for j in 1:mseiterations
-                i = round(Int, j/mseiterations*niterations)
+            for i in round.(Int, range(1, niterations, length=mseiterations))
                 println("Iteration $i / $niterations ($(j / mseiterations))")
                 @time U .= fid["iterates"][:, :, i]
                 @time UtX = h5mulcsc(U', inputfile, inputname)
