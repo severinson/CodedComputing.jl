@@ -525,35 +525,53 @@ end
 
 """
 
+Plot order statistics latency for a given computational load.
+
 Plot
 - Latency order stats recorded individually for each worker for different w_target
 - Iteration latency for different w_target
 """
-function plot_orderstats(dfo; worker_flops=7.56e7, onlycompute=true)
+function plot_orderstats(dfo; worker_flops=7.56e7, onlycompute=false)
     order_col = onlycompute ? :compute_order : :order
     latency_col = onlycompute ? :worker_compute_latency : :worker_latency
-    dfo = dfo[isapprox.(dfo.worker_flops, worker_flops, rtol=0.1), :]    
-    dfo = dfo[dfo.nwait .== dfo.nworkers, :] # TODO: temporary
+    dfo = dfo[dfo[order_col] .<= dfo.nwait, :]    
+    dfo = dfo[isapprox.(dfo.worker_flops, worker_flops, rtol=0.01), :]
     println("worker_flops:\t$(unique(dfo.worker_flops))")
     println("nbytes:\t$(unique(dfo.nbytes))\n")
 
     # plot the average latency as a function of the order
-    dfi = by(dfo, [:nworkers, order_col], latency_col => mean => :mean)
+    # dfi = by(dfo, [:nworkers, order_col], latency_col => mean => :mean)
+    
+    colors = ["b", "g", "r", "c", "m", "y"]
+
     plt.figure()
     for nworkers in [36]
         # for nworkers in sort!(unique(dfi.nworkers))
+        dfi = dfo
+        dfi = dfi[dfi.nworkers .== nworkers, :]        
+        for (color, nwait) in zip(colors, sort!(unique(dfi.nwait), rev=true))
+            dfj = dfi
+            dfj = dfj[dfj.nwait .== nwait, :]
 
-        # empirical latency
-        dfj = dfi
-        dfj = dfj[dfj.nworkers .== nworkers, :]
-        if size(dfj, 1) > 0
-            plt.plot(dfj[order_col], dfj.mean, "o", label="Empirical ($nworkers workers")
+            # all samples
+            # plt.plot(dfj[order_col], dfj[latency_col], color*".")
+            
+            # mean latency
+            dfk = by(dfj, order_col, latency_col => mean => :mean)
+            plt.plot(dfk[order_col], dfk.mean, color*"-o", label="$((nworkers, nwait))")
+
+            # if nwait == 36
+            p, coeffs = fit_polynomial(dfk[order_col], dfk.mean, 3)
+            ts = range(0, nwait, length=100)
+            plt.plot(ts, p.(ts), "k--")
+            # end
         end
 
         # simulated latency
-        ys = [simulate_orderstats(1000, 100, nworkers, i) for i in 1:nworkers]
-        plt.plot((1:nworkers), ys, label="Simulated ($nworkers workers)")
+        # ys = [simulate_orderstats(1000, 100, nworkers, i) for i in 1:nworkers]
+        # plt.plot((1:nworkers), ys, label="Simulated ($nworkers workers)")
     end
+    plt.xlim(0, 37)
     plt.legend()
     plt.xlabel("Order")
     plt.ylabel("Latency")
@@ -1144,11 +1162,40 @@ function sparse_dense_test()
     return
 end
 
+function plot_iteration_distribution(dfo)
+
+    # all iterations
+    plt.figure()
+    for worker_flops in sort!(unique(dfo.worker_flops))
+        dfi = dfo
+        xs = dfi[dfi.worker_flops .== worker_flops, :worker_compute_latency]
+        sort!(xs)
+        ys = range(0, 1, length=length(xs))
+        plt.semilogy(xs, 1.0.-ys, label="c: $worker_flops")
+    end
+    plt.legend()
+    plt.grid()
+    
+    # only the first iteration
+    dfo = dfo[dfo.iteration .== 1, :]
+    plt.figure()    
+    for worker_flops in sort!(unique(dfo.worker_flops))
+        dfi = dfo
+        xs = dfi[dfi.worker_flops .== worker_flops, :worker_compute_latency]
+        sort!(xs)
+        ys = range(0, 1, length=length(xs))
+        plt.semilogy(xs, 1.0.-ys, label="c: $worker_flops")
+    end
+    plt.legend()
+    plt.grid()    
+end
+
 function tail_plot(dfo)
 
-    dfo = copy(dfo)
+    dfo = copy(dfo)    
+    dfo.slot = ceil.(Int, dfo.time ./ 10) # split into slots
     df = by(
-        dfo, [:jobid, :worker_index, :worker_flops], 
+        dfo, [:jobid, :worker_index, :slot, :worker_flops],
         :worker_compute_latency => mean => :mean, 
         :worker_compute_latency => var => :var, 
         :worker_compute_latency => median => :median,
@@ -1162,18 +1209,21 @@ function tail_plot(dfo)
     # df = by(dfo, [:jobid, :worker_index, :worker_flops], :noise => mean => :mean, :noise => var => :var, :noise => median => :median)
 
     # mean and median
-    # plt.figure()
-    plt.plot(df.worker_flops, df.mean, ".", label="Mean")
+    plt.figure()
+    plt.plot(df.worker_flops, df.mean, "o", label="Mean")
     plt.plot(df.worker_flops, df.minimum, ".", label="Minimum")
     # plt.plot(df.worker_flops, df.median, ".", label="Median")
-    plt.ylabel("Mean")
+    plt.ylabel("Latency [s]")
+    plt.xlabel("Flops")
     plt.legend()
-    return
+    plt.grid()
 
     # variance
     plt.figure()
     plt.plot(df.worker_flops, df.var, ".")
-    plt.ylabel("Variance")    
+    plt.ylabel("Latency variance")
+    plt.xlabel("Flops")
+    plt.grid()
 
     return
 end

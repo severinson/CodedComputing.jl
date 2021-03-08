@@ -168,6 +168,27 @@ function plot_genome_convergence(df, nworkers=unique(df.nworkers)[1], opt=maximu
             (nworkers, 3, 0.9),
             (1, 3, 0.9),
         ]    
+    elseif nworkers == 36
+
+        # # varying npartitions
+        # nwait = 3
+        # params = [
+        #     # (nwait, 10, 0.9),            
+        #     # (nwait, 40, 0.9),
+        #     # (nwait, 80, 0.9),
+        #     (nwait, 160, 0.9),
+        # ]
+
+        # varying nwait      
+        nsubpartitions = 160
+        params = [
+            # (1, nsubpartitions, 0.9),            
+            (3, nsubpartitions, 0.9),            
+            # (6, nsubpartitions, 0.9),                        
+            # (9, nsubpartitions, 0.9),            
+            # (18, nsubpartitions, 0.9),        
+            # (27, nsubpartitions, 0.9),
+        ]
     end
 
     df = df[df.nworkers .== nworkers, :]    
@@ -176,32 +197,33 @@ function plot_genome_convergence(df, nworkers=unique(df.nworkers)[1], opt=maximu
     df = df[df.nreplicas .== 1, :]
     df = df[.!ismissing.(df.mse), :]
 
-    # plot the bound
-    r = 2
-    Nw = 1
-    samp = 1
+    plt.figure()    
 
-    # get the convergence per iteration for batch GD
-    dfi = df
-    dfi = dfi[dfi.nsubpartitions .== 1, :]    
-    dfi = dfi[dfi.nwait .== nworkers, :]
-    dfi = dfi[dfi.stepsize .== 1, :]
-    dfi = dfi[dfi.variancereduced .== false, :]
-    dfi = dfi[dfi.kickstart .== false, :]
-    dfi = dfi[dfi.nostale .== false, :]
-    dfj = combine(groupby(dfi, :iteration), :mse => mean)
-    ys = opt .- dfj.mse_mean
+    # # plot the bound
+    # r = 2
+    # Nw = 1
+    # samp = 1
 
-    # compute the iteration time for a scheme with a factor r replication
-    @assert length(unique(dfi.worker_flops)) == 1
-    worker_flops = r*unique(dfi.worker_flops)[1]
-    x0 = get_offset(worker_flops) .+ samp .* get_slope(worker_flops, nworkers) * Nw
-    xs = x0 .* (1:maximum(dfi.iteration))
+    # # get the convergence per iteration for batch GD
+    # dfi = df
+    # dfi = dfi[dfi.nsubpartitions .== 1, :]    
+    # dfi = dfi[dfi.nwait .== nworkers, :]
+    # dfi = dfi[dfi.stepsize .== 1, :]
+    # dfi = dfi[dfi.variancereduced .== false, :]
+    # dfi = dfi[dfi.kickstart .== false, :]
+    # dfi = dfi[dfi.nostale .== false, :]
+    # dfj = combine(groupby(dfi, :iteration), :mse => mean)
+    # ys = opt .- dfj.mse_mean
 
-    # make the plot
-    plt.figure()        
-    plt.semilogy(xs, ys, "--k", label="Bound r: $r, Nw: $Nw")
-    write_table(xs, ys, "./data/bound_$(nworkers)_$(Nw)_$(r).csv")
+    # # compute the iteration time for a scheme with a factor r replication
+    # @assert length(unique(dfi.worker_flops)) == 1
+    # worker_flops = r*unique(dfi.worker_flops)[1]
+    # x0 = get_offset(worker_flops) .+ samp .* get_slope(worker_flops, nworkers) * Nw
+    # xs = x0 .* (1:maximum(dfi.iteration))
+
+    # # make the plot
+    # plt.semilogy(xs, ys, "--k", label="Bound r: $r, Nw: $Nw")
+    # write_table(xs, ys, "./data/bound_$(nworkers)_$(Nw)_$(r).csv")
 
     for (nwait, nsubpartitions, stepsize) in params
         dfi = df
@@ -219,51 +241,102 @@ function plot_genome_convergence(df, nworkers=unique(df.nworkers)[1], opt=maximu
         filename = "./data/dsag_$(nworkers)_$(nwait)_$(nsubpartitions)_$(stepsize).csv"
         println("DSAG: $(length(unique(dfj.jobid))) jobs")
         if size(dfj, 1) > 0
-            dfj = combine(groupby(dfj, :iteration), :mse => mean, :t_total => mean)
+            dfj = combine(groupby(dfj, :iteration), :mse => mean => :mse, :t_total => mean => :t_total)
             if size(dfj, 1) > 0
-                xs = dfj.t_total_mean
-                ys = opt.-dfj.mse_mean
-                plt.semilogy(xs, ys, "o-", label="DSAG (Nw: $nwait, Np: $nsubpartitions, η: $stepsize)")                
-                write_table(xs, ys, filename)
+                xs = dfj.t_total
+                ys = opt.-dfj.mse
+                plt.semilogy(xs, ys, ".-", label="DSAG w=$nwait, p=$nsubpartitions")
+                # write_table(xs, ys, filename)
             end
         end
 
-        ### SAG
-        dfj = dfi
-        dfj = dfj[dfj.variancereduced .== true, :]
-        if nwait < nworkers # for nwait = nworkers, DSAG and SAG are the same
-            dfj = dfj[dfj.nostale .== true, :]            
-        end        
-        filename = "./data/sag_$(nworkers)_$(nwait)_$(nsubpartitions)_$(stepsize).csv"
-        println("SAG: $(length(unique(dfj.jobid))) jobs")
-        if size(dfj, 1) > 0
-            dfj = combine(groupby(dfj, :iteration), :mse => mean, :t_total => mean)
-            if size(dfj, 1) > 0
-                xs = dfj.t_total_mean
-                ys = opt.-dfj.mse_mean                
-                plt.semilogy(xs, ys, "^-", label="SAG (Nw: $nwait, Np: $nsubpartitions, η: $stepsize)")
-                write_table(xs, ys, filename)                
-            end
-        end
+        # ### SAG
+        # dfj = dfi
+        # dfj = dfj[dfj.variancereduced .== true, :]
+        # if nwait < nworkers # for nwait = nworkers, DSAG and SAG are the same
+        #     dfj = dfj[dfj.nostale .== true, :]            
+        # end        
+        # filename = "./data/sag_$(nworkers)_$(nwait)_$(nsubpartitions)_$(stepsize).csv"
+        # println("SAG: $(length(unique(dfj.jobid))) jobs")
+        # if size(dfj, 1) > 0
+        #     dfj = combine(groupby(dfj, :iteration), :mse => mean, :t_total => mean)
+        #     if size(dfj, 1) > 0
+        #         xs = dfj.t_total_mean
+        #         ys = opt.-dfj.mse_mean                
+        #         plt.semilogy(xs, ys, "^-", label="SAG (Nw: $nwait, Np: $nsubpartitions, η: $stepsize)")
+        #         # write_table(xs, ys, filename)                
+        #     end
+        # end
 
-        ### SGD
-        dfj = dfi
-        dfj = dfj[dfj.variancereduced .== false, :]
-        filename = "./data/sgd_$(nworkers)_$(nwait)_$(nsubpartitions)_$(stepsize).csv"
-        println("SGD: $(length(unique(dfj.jobid))) jobs")
-        if size(dfj, 1) > 0
-            dfj = combine(groupby(dfj, :iteration), :mse => mean, :t_total => mean)    
-            if size(dfj, 1) > 0
-                xs = dfj.t_total_mean
-                ys = opt.-dfj.mse_mean                
-                plt.semilogy(xs, ys, "s-", label="SGD (Nw: $nwait, Np: $nsubpartitions, η: $stepsize)")
-                write_table(xs, ys, filename)
-            end
-        end
+        # ### SGD
+        # dfj = dfi
+        # dfj = dfj[dfj.variancereduced .== false, :]
+        # filename = "./data/sgd_$(nworkers)_$(nwait)_$(nsubpartitions)_$(stepsize).csv"
+        # println("SGD: $(length(unique(dfj.jobid))) jobs")
+        # if size(dfj, 1) > 0
+        #     dfj = combine(groupby(dfj, :iteration), :mse => mean, :t_total => mean)    
+        #     if size(dfj, 1) > 0
+        #         xs = dfj.t_total_mean
+        #         ys = opt.-dfj.mse_mean                
+        #         plt.semilogy(xs, ys, "s-", label="SGD (Nw: $nwait, Np: $nsubpartitions, η: $stepsize)")
+        #         # write_table(xs, ys, filename)
+        #     end
+        # end
         
         println()
     end
 
+    # Plot SAG
+    # for nsubpartitions in sort!(unique(df.nsubpartitions))
+    nsubpartitions = 80
+    stepsize = 0.9
+    dfi = df
+    dfi = dfi[dfi.nwait .== nworkers, :]
+    dfi = dfi[dfi.variancereduced .== true, :]
+    dfi = dfi[dfi.stepsize .== stepsize, :]    
+    dfi = dfi[dfi.nsubpartitions .== nsubpartitions, :]
+    println("SAG p: $nsubpartitions, $(length(unique(dfi.jobid))) jobs")
+    dfj = by(dfi, :iteration, :mse => mean => :mse, :t_total => mean => :t_total)
+    if size(dfj, 1) > 0
+        xs = dfj.t_total
+        ys = opt.-dfj.mse
+        plt.semilogy(xs, ys, "o-", label="SAG p=$nsubpartitions")
+    end
+    # end
+
+    # # Plot SGD
+    # # nsubpartitions = 80
+    # println("SGD p: $nsubpartitions")
+    # stepsize = 0.9
+    # dfi = df
+    # dfi = dfi[dfi.nwait .== nworkers, :]
+    # dfi = dfi[dfi.nsubpartitions .== nsubpartitions, :]
+    # dfi = dfi[dfi.variancereduced .== false, :]
+    # dfi = dfi[dfi.stepsize .== stepsize, :]
+    # dfj = by(dfi, :iteration, :mse => mean, :t_total => mean)
+    # if size(dfj, 1) > 0
+    #     xs = dfj.t_total_mean
+    #     ys = opt.-dfj.mse_mean
+    #     plt.semilogy(xs, ys, "c^-", label="SGD")
+    # end        
+
+    # Plot GD
+    stepsize = 1.0
+    dfi = df
+    dfi = dfi[dfi.nwait .== nworkers, :]
+    dfi = dfi[dfi.nsubpartitions .== 1, :]
+    dfi = dfi[dfi.variancereduced .== false, :]
+    dfi = dfi[dfi.stepsize .== stepsize, :]
+    println("GD $(length(unique(dfi.jobid))) jobs")
+    dfj = by(dfi, :iteration, :mse => mean => :mse, :t_total => mean => :t_total)
+    if size(dfj, 1) > 0
+        xs = dfj.t_total
+        ys = opt.-dfj.mse
+        plt.semilogy(xs, ys, "ms-", label="GD")
+    end    
+
+
+    plt.xlim(0)
     plt.grid()
     plt.legend()    
     plt.xlabel("Time [s]")
