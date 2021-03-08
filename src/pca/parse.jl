@@ -6,9 +6,7 @@ using HDF5, DataFrames, CSV, Glob, Dates, Random
 
 Parse an output file and record everything in a DataFrame.
 """
-function df_from_output_file(filename::AbstractString, inputmatrix)    
-    t = now()
-    println("[$(Dates.format(now(), "HH:MM"))] parsing $filename")
+function df_from_output_file(filename::AbstractString; inputfile::AbstractString, inputname::AbstractString, Xnorm::Real, mseiterations::Integer=10)
 
     # return a memoized result if one exists
     df_filename = filename * ".csv"
@@ -21,12 +19,13 @@ function df_from_output_file(filename::AbstractString, inputmatrix)
     if !HDF5.ishdf5(filename)
         println("skipping (not a HDF5 file): $filename")
         return rv
-    end    
+    end
 
     h5open(filename) do fid        
         row = Dict{String,Any}()
-        row["nrows"] = size(inputmatrix, 1)
-        row["ncolumns"] = size(inputmatrix, 2)
+        nrows, ncolumns = h5size(inputfile, inputname)
+        row["nrows"] = nrows
+        row["ncolumns"] = ncolumns
         niterations = fid["parameters/niterations"][]
         nworkers = fid["parameters/nworkers"][]
 
@@ -39,22 +38,17 @@ function df_from_output_file(filename::AbstractString, inputmatrix)
             end
         end
 
-        # compute mse using multiple threads (it's by far the most time-consuming part of the parsing)
+        # compute explained variance        
         mses = Vector{Union{Missing,Float64}}(missing, niterations)
         if "iterates" in keys(fid)
-            l = ReentrantLock() # HDF5 read isn't thread-safe
-            cache = zeros(eltype(fid["iterates"]), size(fid["iterates"], 1), size(fid["iterates"], 2), min(Threads.nthreads(), niterations))
-            Threads.@threads for i in 1:niterations
-                j = Threads.threadid()                
-                begin
-                    lock(l)
-                    try
-                        cache[:, :, j] .= fid["iterates"][:, :, i]
-                    finally
-                        unlock(l)
-                    end
-                end
-                mses[i] = explained_variance(inputmatrix, view(cache, :, :, j))
+            U = zeros(eltype(fid["iterates"]), size(fid["iterates"], 1), size(fid["iterates"], 2))
+            for i in round.(Int, range(1, niterations, length=mseiterations))
+                println("Iteration $i / $niterations ($(j / mseiterations))")
+                @time U .= fid["iterates"][:, :, i]
+                @time UtX = h5mulcsc(U', inputfile, inputname)
+                @time mses[i] = (norm(UtX) / Xnorm)^2
+                println()
+                GC.gc()
             end
         end
 
@@ -78,6 +72,7 @@ function df_from_output_file(filename::AbstractString, inputmatrix)
             end            
 
             push!(rv, row, cols=:union)
+            GC.gc()
         end
     end    
 
@@ -105,26 +100,18 @@ end
 
 Read all output files from `dir` and write summary statistics (e.g., iteration time and convergence) to DataFrames.
 """
-function parse_benchmark_files(;dir::AbstractString, inputfile::AbstractString, inputname="X", prefix="output", dfname="df.csv")
-
-    # read input matrix (used to measure convergence)
-    iscsc = false
-    h5open(inputfile) do fid
-        iscsc, _ = isvalidh5csc(fid, inputname)
-    end
-    if iscsc
-        X = h5readcsc(inputfile, inputname)
-    else
-        X = h5read(inputfile, inputname)
-    end
+function parse_pca_files(;dir::AbstractString, inputfile::AbstractString, inputname="X", prefix="output", dfname="df.csv", Xnorm=104444.37027911078)
 
     # process output files
     filenames = glob("$(prefix)*.h5", dir)
     shuffle!(filenames) # randomize the order to minimize overlap when using multiple concurrent processes
     for filename in filenames
+        t = now()
+        println("[$(Dates.format(now(), "HH:MM"))] parsing $filename")
         try
-            df_from_output_file(filename, X) # the result is memoized on disk
-            rm(filename)
+            df = df_from_output_file(filename; inputfile, inputname, Xnorm)
+            CSV.write(filename*".csv", df)
+            # rm(filename)
         catch e
             printstyled(stderr,"ERROR: ", bold=true, color=:red)
             printstyled(stderr,sprint(showerror,e), color=:light_red)

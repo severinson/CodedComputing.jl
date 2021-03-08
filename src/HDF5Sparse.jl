@@ -1,5 +1,5 @@
 using SparseArrays
-export h5writecsc, h5appendcsc, h5readcsc, isvalidh5csc, h5permutecsc
+export h5writecsc, h5appendcsc, h5readcsc, isvalidh5csc, h5permutecsc, h5mulcsc, h5size
 
 """
     h5appendcsc(fid::HDF5.File, name::AbstractString, data::SparseMatrixCSC)
@@ -209,5 +209,44 @@ function h5permutecsc(srcfile::AbstractString, srcname::AbstractString, dstfile:
         if dstfid != srcfid
             close(dstfid)
         end
+    end
+end
+
+"""
+    h5mulcsc(A::AbstractMatrix, fid::HDF5.File, name::AbstractString; nblocks::Integer=100)
+
+Return the matrix-matrix product `A*X`, where `X` is the `SparseMatrixCSC` stored in `fid[name]`. 
+The result is computed over `nblocks` column blocks.
+"""
+function h5mulcsc(A::AbstractMatrix, fid::HDF5.File, name::AbstractString; nblocks::Integer=100)
+    g = fid[name]
+    m, n = g["m"][], g["n"][]
+    size(A, 2) == m || throw(DimensionMismatch("A has dimensions $(size(A)), but RHS matrix has dimensions $((m, n))"))
+    nblocks <= n || throw(DimensionMismatch("Matrix has dimensions $((m, n)), but nblocks is $nblocks"))
+    C = similar(A, size(A, 1), n)
+    for i in 1:nblocks
+        firstcol = round(Int, (i-1)/nblocks*n+1)
+        lastcol = round(Int, i/nblocks*n)
+        X = h5readcsc(fid, name, firstcol, lastcol)
+        mul!(view(C, :, firstcol:lastcol), A, X)
+        GC.gc() # force GC to make sure we don't run out of memory
+    end
+    C
+end
+
+function h5mulcsc(A::AbstractMatrix, filename::AbstractString, args...; kwargs...)
+    h5open(filename, "r") do fid
+        return h5mulcsc(A, fid, args...; kwargs...)
+    end
+end
+
+function h5size(fid::HDF5.File, name::AbstractString)
+    g = fid[name]
+    g["m"][], g["n"][]
+end
+
+function h5size(filename::AbstractString, args...; kwargs...)
+    h5open(filename, "r") do fid
+        return h5size(fid, args...; kwargs...)
     end
 end
