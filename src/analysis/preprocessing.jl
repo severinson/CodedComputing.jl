@@ -77,23 +77,19 @@ end
 
 Read a csv file into a DataFrame
 """
-function read_df(directory="C:/Users/albin/Dropbox/Eigenvector project/data/dataframes/pca/1000genomes_shuffled/210305/")
+function read_df(directory="C:/Users/albin/Dropbox/Eigenvector project/dataframes/pca/1000genomes_shuffled/210305/")
     filename = sort!(glob("*.csv", directory))[end]
     println("Reading $filename")
     df = DataFrame(CSV.File(filename, normalizenames=true))
+    df = df[.!ismissing.(df.nworkers), :]
+    df = df[.!ismissing.(df.iteration), :]
     df[:nostale] = Missings.replace(df.nostale, false)
     df[:kickstart] = Missings.replace(df.kickstart, false)
-    df = df[.!ismissing.(df.nworkers), :]
     df = df[df.kickstart .== false, :]
     df = remove_initialization_delay!(df)
     df[:worker_flops] = worker_flops_from_df(df)
     df.npartitions = df.nworkers .* df.nsubpartitions
     rename!(df, :t_compute => :latency)
-
-    # scale up workload
-    # df[:worker_flops] .*= 22
-    # df[:t_compute] .= model_tcompute_from_df(df, samp=1)
-
     df[:nbytes] = df.ncolumns .* df.ncomponents .* 8
     df[:t_total] = cumulative_time_from_df(df)    
     df

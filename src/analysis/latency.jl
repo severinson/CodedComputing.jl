@@ -1,14 +1,21 @@
 # Code for analyzing and plotting latency
 
 # linear model
-get_βs() = [0.005055059937837611, 8.075122937312302e-8, 1.1438758464435006e-16]
-get_γs() = [0.03725188744901591, 3.109510011653974e-8, 6.399147477943208e-16]
-get_offset(w) = 0.005055059937837611 .+ 8.075122937312302e-8w .+ 1.1438758464435006e-16w.^2
-get_slope(w, nworkers) = 0.03725188744901591 .+ 3.109510011653974e-8(w./nworkers) .+ 6.399147477943208e-16(w./nworkers).^2
+# get_βs() = [0.005055059937837611, 8.075122937312302e-8, 1.1438758464435006e-16]
+# get_γs() = [0.03725188744901591, 3.109510011653974e-8, 6.399147477943208e-16]
+
+# get_offset(w) = 0.005055059937837611 .+ 8.075122937312302e-8w .+ 1.1438758464435006e-16w.^2
+# get_slope(w, nworkers) = 0.03725188744901591 .+ 3.109510011653974e-8(w./nworkers) .+ 6.399147477943208e-16(w./nworkers).^2
+
+get_offset(w) = 7.931410368124847e-9w
+get_slope(w, nworkers) = 2.6742493942344247e-9(w./nworkers)
 
 # shifted exponential model
-get_shift(w) = 0.2514516116132241 .+ 6.687583396247953e-8w .+ 2.0095825408761404e-16w.^2
-get_scale(w) = 0.23361469930191084 .+ 7.2464826067975726e-9w .+ 5.370433628859458e-17w^2
+# get_shift(w) = 0.2514516116132241 .+ 6.687583396247953e-8w .+ 2.0095825408761404e-16w.^2
+# get_scale(w) = 0.23361469930191084 .+ 7.2464826067975726e-9w .+ 5.370433628859458e-17w^2
+
+get_shift(w) = 7.511478910765988e-9w
+get_scale(w) = 0.012667298954788542 .+ 5.788848515637547e-10w
 
 """
 
@@ -16,22 +23,24 @@ Fit a shifted exponential latency model to the data.
 """
 function fit_shiftexp_model(df, worker_flops)
     # df = df[df.nwait .== nwait, :]
-    df = df[df.worker_flops .== worker_flops, :]
+    df = df[isapprox.(df.worker_flops, worker_flops, rtol=1e-2), :]
     df = df[df.nreplicas .== 1, :]
-    df = df[df.kickstart .== false, :]    
-    df = df[df.pfraction .== 1, :]
+    df = df[df.kickstart .== false, :]
+    if size(df[df.nwait .==1, :], 1) == 0
+        return NaN, NaN
+    end
 
     # get the shift from waiting for 1 worker
-    shift = quantile(df[df.nwait .== 1, :t_compute], 0.01)
-    ts = df.t_compute .- shift
+    shift = quantile(df[df.nwait .== 1, :latency], 0.01)
+    ts = df.latency .- shift
 
     # get the scale from waiting for all workers
-    β = 0.0        
+    β = 0.0
     for nworkers in unique(df.nworkers)
         dfi = df
         dfi = dfi[dfi.nworkers .== nworkers, :]
         nwait = nworkers
-        ts = dfi[dfi.nwait .== nwait, :t_compute] .- shift
+        ts = dfi[dfi.nwait .== nwait, :latency] .- shift
         # σ = var(ts)
         # β1 = sqrt(σ / sum(1/i^2 for i in (nworkers-nwait+1):nworkers))        
         μ = mean(ts)
@@ -60,7 +69,7 @@ function plot_shiftexp_model(df)
     plt.figure()
     plt.plot(ws, shifts, "o")
 
-    poly = Polynomials.fit(ws, shifts, 2)
+    poly = Polynomials.fit(ws, shifts, 1)
     println(poly.coeffs)    
     ts = range(0, maximum(df.worker_flops), length=100)
     plt.plot(ts, poly.(ts))
@@ -72,7 +81,7 @@ function plot_shiftexp_model(df)
     plt.figure()
     plt.plot(ws, scales, "o")
 
-    poly = Polynomials.fit(ws, scales, 2)
+    poly = Polynomials.fit(ws, scales, 1)
     println(poly.coeffs)
     ts = range(0, maximum(df.worker_flops), length=100)
     plt.plot(ts, poly.(ts))    
@@ -254,36 +263,43 @@ function plot_iterationtime_cdf(df; nworkers::Integer=12)
     plt.show()
 end
 
-
 """
 
-Return a DataFrame of linear model parameters for t_compute fit to the data
+Fit a line to the linear-looking middle part of the orderstats plot.
 """
 function linear_model_df(df)
-    # df = df[df.kickstart .== false, :]
-    # df = df[df.nreplicas .== 1, :]
-    rv = DataFrame()    
-    for (nworkers, worker_flops) in Iterators.product(unique(df.nworkers), unique(df.worker_flops))
-        dfi = df
-        dfi = dfi[dfi.nworkers .== nworkers, :]
-        dfi = dfi[dfi.worker_flops .== worker_flops, :]
-        if size(dfi, 1) < 2
-            continue
-        end
+    df = df[df.nwait .<= 0.75.*df.nworkers, :]
+    df = df[df.nwait .>= 0.05.*df.nworkers, :]
+    rv = by(
+        df, [:nworkers, :worker_flops],
+        [:nwait, :latency] => ((x) -> NamedTuple{(:intercept, :slope)}(fit_polynomial(x.nwait, x.latency, 1)[2])),
+    )
+    for nworkers in unique(rv.nworkers)
+        row = Dict(:nworkers=>nworkers, :worker_flops=>0, :intercept=>0, :slope=>0)
+        push!(rv, row)
+    end
+    sort!(rv, [:nworkers, :worker_flops])    
+    rv
+end
 
-        # Polynomials.jl fit
-        # poly = Polynomials.fit(float.(dfi.nwait), float.(dfi.t_compute), 1)        
-        # offset, slope = poly.coeffs
+"""
 
-        # homemade polynomial fit
-        poly, coeffs = fit_polynomial(float.(dfi.nwait), float.(dfi.latency), 1)
-        offset, slope = coeffs
-
-        row = Dict("nworkers" => nworkers, "worker_flops" => worker_flops, "intercept" => offset, "slope" => slope)
-        push!(rv, row, cols=:union)
+Fit a line to the linear-looking middle part of the orderstats plot.
+"""
+function linear_model_dfo(dfo)
+    dfo = dfo[dfo.nwait .== dfo.nworkers, :]
+    dfo = dfo[dfo.order .<= 0.75.*dfo.nworkers, :]
+    dfo = dfo[dfo.order .>= 0.05.*dfo.nworkers, :]
+    rv = by(
+        dfo, [:nworkers, :worker_flops],
+        [:order, :worker_latency] => ((x) -> NamedTuple{(:intercept, :slope)}(fit_polynomial(x.order, x.worker_latency, 1)[2])),
+    )    
+    for nworkers in unique(rv.nworkers)
+        row = Dict(:nworkers=>nworkers, :worker_flops=>0, :intercept=>0, :slope=>0)
+        push!(rv, row)
     end
     sort!(rv, [:nworkers, :worker_flops])
-    rv
+    rv    
 end
 
 """
@@ -312,13 +328,14 @@ end
 
 Plot the linear model parameters 
 """
-function plot_linear_model(df)
+function plot_linear_model(df, dfo)
     # df = df[df.kickstart .== false, :]
     # df = df[df.nreplicas .== 1, :]
     # df = df[df.pfraction .== 1, :]
 
+    dfm = linear_model_dfo(dfo)
     # dfm = linear_model_df(df)
-    dfm = mean_linear_model_df(df)
+    # dfm = mean_linear_model_df(df)
     # dfm = order_linear_model_df(df)
 
     # offset
@@ -326,7 +343,7 @@ function plot_linear_model(df)
     for nworkers in unique(dfm.nworkers)
         dfi = dfm
         dfi = dfi[dfi.nworkers .== nworkers, :]        
-        plt.semilogx(dfi.worker_flops, dfi.intercept, "o", label="Nn: $nworkers")        
+        plt.semilogx(dfi.worker_flops, dfi.intercept, "o", label="Nn: $nworkers")
 
         # print parameters
         # println("Nn: $nworkers")
@@ -337,22 +354,22 @@ function plot_linear_model(df)
     end    
 
     # quadratic fit
-    poly, coeffs = fit_polynomial(float.(dfm.worker_flops), float.(dfm.intercept), 2)    
+    poly, coeffs = fit_polynomial(float.(dfm.worker_flops), float.(dfm.intercept), 1)    
     t = range(0, maximum(dfm.worker_flops), length=100)
     plt.semilogx(t, poly.(t))
 
     # print fit line
-    # println(coeffs)
+    println("Intercept: ", coeffs)
     # for i in 1:length(t)
     #     println("$(t[i]) $(poly(t[i]))")
     # end
 
     plt.grid()
-    plt.xlabel("flops")
-    plt.ylabel("offset")
+    plt.xlabel("Flops")
+    plt.ylabel("Intercept")
     plt.legend()
 
-    # intercept
+    # slope
     plt.figure()
     for nworkers in unique(dfm.nworkers)
         dfi = dfm
@@ -362,28 +379,28 @@ function plot_linear_model(df)
         plt.semilogx(x, dfi.slope, "o", label="Nn: $nworkers")
 
         # print parameters
-        println("Nn: $nworkers")
-        sort!(dfi, [:worker_flops])
-        for i in 1:size(dfi, 1)
-            println("$(x[i]) $(dfi.slope[i])")
-        end        
+        # println("Nn: $nworkers")
+        # sort!(dfi, [:worker_flops])
+        # for i in 1:size(dfi, 1)
+        #     println("$(x[i]) $(dfi.slope[i])")
+        # end        
     end
 
     # quadratic fit
-    poly, coeffs = fit_polynomial(float.(dfm.worker_flops ./ dfm.nworkers), float.(dfm.slope), 2)
+    poly, coeffs = fit_polynomial(float.(dfm.worker_flops ./ dfm.nworkers), float.(dfm.slope), 1)    
     t = range(0, maximum(dfm.worker_flops ./ dfm.nworkers), length=100)
     # t = range(0, maximum(dfm.worker_flops), length=100)
     plt.semilogx(t, poly.(t))
 
     # print fit line
-    # println(coeffs)
-    for i in 1:length(t)
-        println("$(t[i]) $(poly(t[i]))")
-    end    
+    println("Slope ", coeffs)
+    # for i in 1:length(t)
+    #     println("$(t[i]) $(poly(t[i]))")
+    # end
 
     plt.grid()
-    plt.xlabel("flops / Nn")
-    plt.ylabel("slope")
+    plt.xlabel("Flops / Nn")
+    plt.ylabel("Slope")
     plt.legend()
     return
 end
@@ -396,55 +413,50 @@ Plots:
 - Latency predicted by the i.i.d. shifted exponential model
 
 """
-function plot_latency(df, nworkers=6)
+function plot_latency(df, nworkers=36)
     df = df[df.kickstart .== false, :]
     df = df[df.nreplicas .== 1, :]
-    df = df[df.pfraction .== 1, :]    
     df = df[df.nworkers .== nworkers, :]
     # df = mean_latency_df(df)
 
     plt.figure()
     for worker_flops in sort!(unique(df.worker_flops), rev=true)
-        # for nsubpartitions in sort!(unique(df.nsubpartitions))
         dfi = df
         dfi = dfi[dfi.worker_flops .== worker_flops, :]
-        # @assert length(unique(dfi.worker_flops)) == 1    
-        # w = unique(dfi.worker_flops)[1]    
         println(mean(dfi.nsubpartitions))
 
         # scatter plot of the samples
-        plt.plot(dfi.nwait, dfi.t_compute, ".", label="c: $(round(worker_flops, sigdigits=3))")    
-        write_table(dfi.nwait, dfi.t_compute, "./data/model_raw.csv")
+        plt.plot(dfi.nwait, dfi.latency, ".", label="c: $(round(worker_flops, sigdigits=3))")    
+        # write_table(dfi.nwait, dfi.t_compute, "./data/model_raw.csv")
 
         # compute average delay and quantiles
-        # and plot it
         dfj = combine(
             groupby(dfi, :nwait), 
-            :t_compute => mean, 
-            :t_compute => ((x)->quantile(x, 0.1)) => :q1,
-            :t_compute => ((x)->quantile(x, 0.9)) => :q9,
+            :latency => mean => :latency,
+            :latency => ((x)->quantile(x, 0.1)) => :q1,
+            :latency => ((x)->quantile(x, 0.9)) => :q9,
             )
         sort!(dfj, :nwait)
-        plt.plot(dfj.nwait, dfj.t_compute_mean, "o")
-        write_table(dfj.nwait, dfj.t_compute_mean, "./data/model_means.csv")    
+        plt.plot(dfj.nwait, dfj.latency, "o")
+        # write_table(dfj.nwait, dfj.t_compute_mean, "./data/model_means.csv")    
 
-        println("Latency average flops: $worker_flops")
-        for i in 1:size(dfj, 1)
-            println("$(dfj[i, :nwait]) $(dfj[i, :t_compute_mean])")
-        end
+        # println("Latency average flops: $worker_flops")
+        # for i in 1:size(dfj, 1)
+        #     println("$(dfj[i, :nwait]) $(dfj[i, :t_compute_mean])")
+        # end
 
-        # plot predicted delay (by a local model)
-        poly, coeffs = fit_polynomial(float.(dfi.nwait), float.(dfi.t_compute), 1)
-        xs = [0, nworkers]
-        ys = poly.(xs)
-        plt.plot(xs, ys, "--")            
-        println(poly)
+        # # plot predicted delay (by a local model)
+        # poly, coeffs = fit_polynomial(float.(dfi.nwait), float.(dfi.t_compute), 1)
+        # xs = [0, nworkers]
+        # ys = poly.(xs)
+        # plt.plot(xs, ys, "--")            
+        # println(poly)
 
-        # print values
-        println("local model")
-        for i in 1:length(xs)
-            println("$(xs[i]) $(ys[i])")
-        end
+        # # print values
+        # println("local model")
+        # for i in 1:length(xs)
+        #     println("$(xs[i]) $(ys[i])")
+        # end
 
         # plot predicted delay (by the global model)
         println("c: $worker_flops")
@@ -455,21 +467,21 @@ function plot_latency(df, nworkers=6)
         println("global model")
         for i in 1:length(xs)
             println("$(xs[i]) $(ys[i])")
-        end        
+        end
 
 
-        # # plot delay predicted by the shifted exponential order statistics model
-        # # shift, β = fit_shiftexp_model(df, w)
-        # shift = get_shift(w)
-        # scale = get_scale(w)
-        # ys = [mean(ExponentialOrder(scale, nworkers, nwait)) for nwait in xs] .+ shift
-        # plt.plot(xs, ys, "--")
+        # plot delay predicted by the shifted exponential order statistics model
+        # shift, β = fit_shiftexp_model(df, w)
+        shift = get_shift(worker_flops)
+        scale = get_scale(worker_flops)
+        ys = [mean(ExponentialOrder(scale, nworkers, nwait)) for nwait in 1:nworkers] .+ shift
+        plt.plot(1:nworkers, ys, "--")
         # # write_table(xs, ys, "./data/model_shiftexp.csv")
     end
     plt.legend()
     plt.grid()
-    plt.xlabel("Nw")
-    plt.ylabel("T_compute")
+    plt.xlabel("w")
+    plt.ylabel("Latency [s]")
     return
 end
 
@@ -531,24 +543,45 @@ Plot
 - Latency order stats recorded individually for each worker for different w_target
 - Iteration latency for different w_target
 """
-function plot_orderstats(dfo; worker_flops=7.56e7, onlycompute=false)
+function plot_orderstats(df, dfo; worker_flops=7.56e7, onlycompute=false)
     order_col = onlycompute ? :compute_order : :order
     latency_col = onlycompute ? :worker_compute_latency : :worker_latency
     dfo = dfo[dfo[order_col] .<= dfo.nwait, :]    
+    df = df[isapprox.(df.worker_flops, worker_flops, rtol=0.01), :]
     dfo = dfo[isapprox.(dfo.worker_flops, worker_flops, rtol=0.01), :]
     println("worker_flops:\t$(unique(dfo.worker_flops))")
     println("nbytes:\t$(unique(dfo.nbytes))\n")
 
-    # plot the average latency as a function of the order
-    # dfi = by(dfo, [:nworkers, order_col], latency_col => mean => :mean)
-    
-    colors = ["b", "g", "r", "c", "m", "y"]
+    # fit a linear model to the overall latency
+    dfm = linear_model_df(df)
+
 
     plt.figure()
+
+    # plot latency of individual workers
+    colors = ["b", "g", "r", "c", "m", "y"]
     for nworkers in [36]
         # for nworkers in sort!(unique(dfi.nworkers))
         dfi = dfo
-        dfi = dfi[dfi.nworkers .== nworkers, :]        
+        dfi = dfi[dfi.nworkers .== nworkers, :]
+
+        # plot overall latency        
+        dfj = by(dfi, [:nworkers, :nwait], :latency => mean => :latency)
+        sort!(dfj, :nwait)
+        plt.plot(dfj.nwait, dfj.latency, "k-", label="Overall latency")        
+
+        # plot a linear model fit to the overal latency
+        dfj = dfm[dfm.nworkers .== nworkers, :]
+        dfj = dfj[dfj.worker_flops .> 0, :]
+
+        @assert size(dfj, 1) == 1
+        intercept = dfj.intercept[1]
+        slope = dfj.slope[1]
+        ts = [0, 36]
+        plt.plot(ts, intercept.+ts.*slope, "k--")
+
+        xs = zeros(0)
+        ys = zeros(0)
         for (color, nwait) in zip(colors, sort!(unique(dfi.nwait), rev=true))
             dfj = dfi
             dfj = dfj[dfj.nwait .== nwait, :]
@@ -560,12 +593,25 @@ function plot_orderstats(dfo; worker_flops=7.56e7, onlycompute=false)
             dfk = by(dfj, order_col, latency_col => mean => :mean)
             plt.plot(dfk[order_col], dfk.mean, color*"-o", label="$((nworkers, nwait))")
 
-            # if nwait == 36
-            p, coeffs = fit_polynomial(dfk[order_col], dfk.mean, 3)
-            ts = range(0, nwait, length=100)
-            plt.plot(ts, p.(ts), "k--")
-            # end
+            # store the overall iteration latency
+            sort!(dfk, order_col)
+            push!(xs, nwait)
+            push!(ys, dfk.mean[end])
+
+            # fit a polynomial to the data
+            # p, coeffs = fit_polynomial(dfk[order_col], dfk.mean, 3)
+            # ts = range(0, nwait, length=100)
+            # plt.plot(ts, p.(ts), "k--")
         end
+
+        # plot the overall iteration latency
+        # plt.plot(xs, ys, "k-")
+
+        # fit a line to the linear-looking middle part
+        # mask = (nworkers * 0.05) .<= xs .<= (nworkers * 0.75)
+        # p, coeffs = fit_polynomial(xs[mask], ys[mask], 1)
+        # ts = [0, nworkers]
+        # plt.plot(ts, p.(ts), "k-")
 
         # simulated latency
         # ys = [simulate_orderstats(1000, 100, nworkers, i) for i in 1:nworkers]
@@ -577,63 +623,6 @@ function plot_orderstats(dfo; worker_flops=7.56e7, onlycompute=false)
     plt.ylabel("Latency")
     plt.grid()
     return
-
-    return
-
-    dfo.order = dfo.order ./ dfo.nworkers
-    dfo.compute_order = dfo.compute_order ./ dfo.nworkers
-
-    # latency order stats recorded for individual workers
-    plt.figure()
-    for nwait_target in sort!(unique(dfo.nwait))
-        # for f in [3/nworkers, 0.5, 1.0]
-        # nwait_target = round(Int, f*nworkers)        
-        
-        dfi = dfo
-        dfi = dfi[dfi.nwait .== nwait_target, :]
-        # dfi = dfi[dfi.order .<= dfi.nwait, :]
-        if size(dfi, 1) == 0
-            continue
-        end            
-        # plt.plot(dfi.order, dfi.worker_latency, ".", label="w_target: $nwait_target")
-        # straggler_fraction = sum(dfi.isstraggler) / length(dfi.isstraggler)
-        straggler_fraction = sum(dfi[col] .< dfi.nwait) / size(dfi, 1)
-        dfi = dfi[dfi[col] .* dfi.nworkers .<= dfi.nwait, :]
-        # dfi = dfi[dfi.isstraggler .== false, :]
-
-        dfj = by(dfi, col, :worker_compute_latency => mean => :mean, :jobid => ((x) -> length(unique(x))) => :njobs)
-        sort!(dfj, col)
-        plt.plot(dfj[col], dfj.mean, "o", label="w_target: $nwait_target")
-
-        println("nwait_target: $nwait_target")
-        println(collect(zip(dfj.compute_order, dfj.njobs)))
-        println("straggler_fraction: $straggler_fraction")
-        println()
-
-        # if size(dfj, 1) >= 3
-        #     p, coeffs = fit_polynomial(dfj.order, dfj.mean, 3)
-        #     ts = range(0, nwait_target, length=100)
-        #     # plt.plot(ts, p.(ts))
-        #     # println(coeffs)   
-        # end     
-    end
-
-    # iteration latency for different nwait_target
-    # dfi = mean_latency_df(df)
-    # plt.plot(dfi.nwait, dfi.latency, ".")
-    dfj = by(df, :nwait, :latency => mean => :mean)    
-    plt.plot(dfj.nwait ./ nworkers, dfj.mean, "s", label="Iteration latency")
-    
-    # p, coeffs = fit_polynomial(dfj.nwait, dfj.t_compute_mean, 3)
-    # ts = range(0, nworkers, length=100)
-    # plt.plot(ts, p.(ts))
-    # println(coeffs)    
-
-    plt.legend()
-    plt.grid()
-    plt.xlabel("Order")
-    plt.ylabel("Latency [s]")
-    return    
 end
 
 function plot_orderstats_flops(df, nworkers=18; onlycompute=true)
