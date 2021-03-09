@@ -63,20 +63,14 @@ function read_localdata(i::Integer, nworkers::Integer; inputfile::String, inputd
         if flag
             il = round(Int, (partition_index - 1)/npartitions*nsamples + 1)
             iu = round(Int, partition_index/npartitions*nsamples)
-            X = h5readcsc(fid, inputdataset, il, iu)
-            nlocalsamples = size(X, 2)
-            ils = [round(Int, (i-1)/nsubpartitions*nlocalsamples + 1) for i in 1:nsubpartitions]
-            ius = [round(Int, i/nsubpartitions*nlocalsamples) for i in 1:nsubpartitions]
-            localdata = [X[:, il:iu] for (il, iu) in zip(ils, ius)]
+            dividers = round.(Int, range(il, iu+1, length=nsubpartitions+1))
+            localdata = [h5readcsc(fid, inputdataset, dividers[i], dividers[i+1]-1) for i in 1:nsubpartitions]
             return localdata, dimension, nsamples
-        else            
+        else
             il = round(Int, (partition_index - 1)/npartitions*nsamples + 1)
             iu = round(Int, partition_index/npartitions*nsamples)
-            X = fid[inputdataset][:, il:iu]
-            nlocalsamples = size(X, 2)            
-            ils = [round(Int, (i-1)/nsubpartitions*nlocalsamples + 1) for i in 1:nsubpartitions]
-            ius = [round(Int, i/nsubpartitions*nlocalsamples) for i in 1:nsubpartitions]            
-            localdata = [X[:, il:iu] for (il, iu) in zip(ils, ius)]
+            dividers = round.(Int, range(il, iu+1, length=nsubpartitions+1))
+            localdata = [fid[inputdataset][:, dividers[i]:(dividers[i+1]-1)] for i in 1:nsubpartitions]
             return localdata, dimension, nsamples
         end
     end
