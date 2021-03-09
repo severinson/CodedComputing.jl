@@ -68,7 +68,6 @@ function worker_flops_from_df(df; density=0.05117854232324947)
     nflops = float.(df.nrows)
     nflops ./= df.nworkers
     nflops .*= df.nreplicas
-    nflops .*= Missings.replace(df.pfraction, 1.0)
     nflops ./= Missings.replace(df.nsubpartitions, 1.0)
     nflops .*= 2 .* df.ncolumns .* df.ncomponents
     nflops .*= density
@@ -78,7 +77,7 @@ end
 
 Read a csv file into a DataFrame
 """
-function read_df(directory="C:/Users/albin/Dropbox/Eigenvector project/data/dataframes/pca/210208/")
+function read_df(directory="C:/Users/albin/Dropbox/Eigenvector project/data/dataframes/pca/1000genomes_shuffled/210305/")
     filename = sort!(glob("*.csv", directory))[end]
     println("Reading $filename")
     df = DataFrame(CSV.File(filename, normalizenames=true))
@@ -190,7 +189,7 @@ function orderstats_df(df)
     end
 
     # add a flag indicating if the worker is experiencing a latency burst
-    joined.burst = burst_state_from_orderstats_df(joined)
+    # joined.burst = burst_state_from_orderstats_df(joined)
 
     return joined
 end
