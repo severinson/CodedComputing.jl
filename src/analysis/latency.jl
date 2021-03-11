@@ -409,35 +409,33 @@ function plot_linear_model(df, dfo, dfm=nothing)
         # end        
     end
 
-    # empirical mean
-    dfi = dfm[dfm.worker_flops .> 0, :]
-    dfi.variable = dfi.slope .* dfi.nworkers
-    dfi = by(dfi, :worker_flops, :variable => mean => :variable)
-    plt.plot(dfi.worker_flops, dfi.variable, "ko")
+    # # empirical mean
+    # dfi = dfm[dfm.worker_flops .> 0, :]
+    # dfi.variable = dfi.slope .* dfi.nworkers
+    # dfi = by(dfi, :worker_flops, :variable => mean => :variable)
+    # plt.plot(dfi.worker_flops, dfi.variable, "ko")
 
-    # fitted line
-    a = 4.544525078502714e-5
-    b = 0.4311891522932536
-    ts = range(0, maximum(dfm.worker_flops), length=100)
+    # # fitted line
+    # a = 4.544525078502714e-5
+    # b = 0.4311891522932536
+    # ts = range(0, maximum(dfm.worker_flops), length=100)
 
-    m(x, p) = p[1] .+ p[2] .* exp.(p[3].*x)
+    # m(x, p) = p[1] .+ p[2] .* exp.(p[3].*x)
 
-    # m(x, p) = p[1] .* x.^p[2]
-    # p0 = [a, b]
-    fit = curve_fit(m, dfi.worker_flops, dfi.variable, rand(3))
-    plt.plot(ts, m(ts, fit.param), "k-")
+    # # m(x, p) = p[1] .* x.^p[2]
+    # # p0 = [a, b]
+    # fit = curve_fit(m, dfi.worker_flops, dfi.variable, rand(3))
+    # plt.plot(ts, m(ts, fit.param), "k-")
     
-    # a, b = fit.param
-    # plt.plot(ts, a.*ts.^b, "k-")
+    # # a, b = fit.param
+    # # plt.plot(ts, a.*ts.^b, "k-")
 
-
-
-    # fitted line
-    dfi = dfm[dfm.worker_flops .> 0, :]
-    poly, coeffs = fit_polynomial(log.(float.(dfi.worker_flops)), float.(dfi.slope .* dfi.nworkers), 1)
-    t = range(0, maximum(log.(dfm.worker_flops)), length=100)
-    # t = range(0, maximum(dfm.worker_flops), length=100)
-    plt.semilogx(exp.(t), poly.(t))
+    # # fitted line
+    # dfi = dfm[dfm.worker_flops .> 0, :]
+    # poly, coeffs = fit_polynomial(log.(float.(dfi.worker_flops)), float.(dfi.slope .* dfi.nworkers), 1)
+    # t = range(0, maximum(log.(dfm.worker_flops)), length=100)
+    # # t = range(0, maximum(dfm.worker_flops), length=100)
+    # plt.semilogx(exp.(t), poly.(t))
 
     # print fit line
     println("Slope ", coeffs)
@@ -652,10 +650,11 @@ function plot_orderstats(dfo; worker_flops=1.08e7, onlycompute=false)
             dfj = dfj[dfj.nwait .== nwait, :]
 
             # all samples
-            # plt.plot(dfj[order_col], dfj[latency_col], color*".")
+            plt.plot(dfj[order_col] ./ dfj.nworkers, dfj[latency_col], color*".")
             
             # mean latency
             dfk = by(dfj, order_col, latency_col => mean => :mean)
+            sort!(dfk, order_col)
             plt.plot(dfk[order_col] ./ nworkers, dfk.mean, "-o", label="$((nworkers, nwait))")
             # plt.plot(dfk[order_col], dfk.mean, "-o", label="$((nworkers, nwait))")
 
@@ -977,6 +976,41 @@ function plot_worker_latency_moments(dfo; miniterations=100000, onlycompute=true
     plt.grid()
 
     return
+end
+
+"""
+
+Plot average latency vs. worker index. Used to check for an unbalanced workload.
+"""
+function plot_latency_vs_index(dfo; nworkers=36)
+    dfo = dfo[dfo.nworkers .== nworkers, :]
+    dfo = dfo[dfo.nwait .== dfo.nworkers, :]
+    dfo = dfo[dfo.nsubpartitions .== 40, :]
+
+    # v = vec([0.046013058294510065 0.04661548733607283 0.04717171332346151 0.048663914553752165 0.04604952144607892 0.047401226679008895 0.0475423807538188 0.04825071847763072 0.048935551942152135 0.044736890596039657 0.04905559800587531 0.04656675616897368 0.04879067583789817 0.04809962375518636 0.04949227838810255 0.048543620826472816 0.04701325110412659 0.049071200809913604 0.04807153163181583 0.04561831089039209 0.04867938291185996 0.0467298886977427 0.04958418279574397 0.046713691418794605 0.04838288010242119 0.047936229493032986 0.04793848676944487 0.044739402462279566 0.047333384716176215 0.046625238376858454 0.04535431569172516 0.04669735977629103 0.048576057676228614 0.046901565040630845 0.04988098280145014 0.046766727535427696])
+    v = [0.05386300123092638, 0.054933862699269115, 0.05368342685927259, 0.0542031652059991, 0.05333776666867998, 0.053177820727389205, 0.05263823982264996, 0.05321165238786512, 0.05398119330531424, 0.05366335096970345, 0.05374068401736961, 0.05400672957786409, 0.05330386859234326, 0.05284493331388487, 0.05410580473945859, 0.0529785826439725, 0.05449267995850014, 0.053815433081681414, 0.053770737794055855, 0.05322785079874978, 0.05389343286675174, 0.054128245609753725, 0.05393979259819193, 0.05313907654430421, 0.05383527758559796, 0.05353642567903311, 0.0537138425740668, 0.05215185214435854, 0.05347711205441357, 0.05485612366530882, 0.05355829799161612, 0.053100017485247016, 0.05346381763960923, 0.05314798347672649, 0.05323480333614919, 0.053582819563781185]
+
+    plt.figure()
+    for worker_flops in sort!(unique(dfo.worker_flops))
+        dfi = dfo
+        dfi = dfi[dfi.worker_flops .== worker_flops, :]
+        dfi = by(dfi, :worker_index, :worker_latency => mean => :worker_latency)
+        sort!(dfi, :worker_index)
+        plt.plot(v ./ mean(v), dfi.worker_latency ./ mean(dfi.worker_latency), "o", label="c: $worker_flops")
+    end
+    plt.legend()
+    plt.grid()
+    plt.xlabel("worker index")
+    plt.ylabel("Avg. latency")
+    return
+end
+
+"""
+
+
+"""
+function plot_job_latency_distribution(dfo)
+
 end
 
 """
