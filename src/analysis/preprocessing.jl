@@ -184,6 +184,22 @@ function orderstats_df(df)
         joined[:compute_order] = by(joined, [:jobid, :iteration], :nworkers => ((x) -> collect(1:maximum(x))) => :order).order        
     end
 
+    dfi = joined[joined.nwait .== joined.nworkers, :]
+    dfi.mse = missing
+    for i in 1:maximum(df.nworkers)
+        dfj = dfi
+        dfj = dfj[dfj.nworkers .> i, :]        
+        dfj = dfj[dfj.worker_index .<= i, :]
+        if size(dfj, 1) == 0
+            continue
+        end
+        dfj.nworkers .= i
+        dfj.nwait .= i
+        sort!(dfj, [:jobid, :iteration, :worker_latency])
+        dfj.order .= by(dfj, [:jobid, :iteration], :nworkers => ((x) -> collect(1:maximum(x))) => :order).order
+        joined = vcat(joined, dfj)
+    end
+
     # add a flag indicating if the worker is experiencing a latency burst
     # joined.burst = burst_state_from_orderstats_df(joined)
 
@@ -235,9 +251,9 @@ end
 
 Read a latency experiment csv file into a DataFrame
 """
-function read_latency_df(directory="C:/Users/albin/Dropbox/Eigenvector project/data/dataframes/latency/210303/")
+function read_latency_df(directory="C:/Users/albin/Dropbox/Eigenvector project/dataframes/latency/210215_v3/")
     # filename = sort!(glob("*.csv", directory))[end]
-    filename = directory*"df_v1.csv"
+    filename = directory*"df_v12.csv"
     println("Reading $filename")
     df = DataFrame(CSV.File(filename, normalizenames=true))
     df.worker_flops = 2 .* df.nrows .* df.ncols .* df.ncomponents .* df.density
