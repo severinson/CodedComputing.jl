@@ -650,13 +650,13 @@ function plot_orderstats(dfo; worker_flops=1.08e7, onlycompute=false)
             dfj = dfj[dfj.nwait .== nwait, :]
 
             # all samples
-            plt.plot(dfj[order_col] ./ dfj.nworkers, dfj[latency_col], color*".")
+            # plt.plot(dfj[order_col] ./ dfj.nworkers, dfj[latency_col], color*".")
             
             # mean latency
             dfk = by(dfj, order_col, latency_col => mean => :mean)
             sort!(dfk, order_col)
-            plt.plot(dfk[order_col] ./ nworkers, dfk.mean, "-o", label="$((nworkers, nwait))")
-            # plt.plot(dfk[order_col], dfk.mean, "-o", label="$((nworkers, nwait))")
+            # plt.plot(dfk[order_col] ./ nworkers, dfk.mean, "-o", label="$((nworkers, nwait))")
+            plt.plot(dfk[order_col], dfk.mean, "-o", label="$((nworkers, nwait))")
 
             # store the overall iteration latency
             sort!(dfk, order_col)
@@ -682,7 +682,7 @@ function plot_orderstats(dfo; worker_flops=1.08e7, onlycompute=false)
         # ys = [simulate_orderstats(1000, 100, nworkers, i) for i in 1:nworkers]
         # plt.plot((1:nworkers), ys, label="Simulated ($nworkers workers)")
     end
-    plt.xlim(0, 1)
+    # plt.xlim(0, 1)
     # plt.legend()
     plt.xlabel("Order / Total number of workers")
     plt.ylabel("Latency")
@@ -1635,15 +1635,15 @@ function plot_worker_latency_process(worker_flops, models)
     return
 end
 
-function plot_minimum_latency(dfo; miniterations=10000, onlycompute=true)
+function plot_latency_vs_nflops(dfo; onlycompute=false)
     order_col = onlycompute ? :compute_order : :order
     latency_col = onlycompute ? :worker_compute_latency : :worker_latency
-    dfo = dfo[dfo.niterations .>= miniterations, :]
     dfo = dfo[dfo.nwait .== dfo.nworkers, :] # ensure all workers are available at the start of each iteration
-    df = by(dfo, :worker_flops, latency_col => minimum => :minimum)
+    df = by(dfo, :worker_flops, latency_col => mean => :mean)
     sort!(df, :worker_flops)
-    plt.figure()
-    plt.plot(df.worker_flops, df.minimum)
+    # plt.figure()
+    plt.plot(dfo.worker_flops, dfo.worker_latency, ".")
+    plt.plot(df.worker_flops, df.mean, "-o")
     plt.grid()
     return df
 end
