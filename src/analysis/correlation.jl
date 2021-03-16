@@ -51,10 +51,9 @@ end
 
 Plot the CCDF of how stale results are, as measured by the number of iterations that has passed.
 """
-function plot_staleness(df, nworkers=6, nwait=1, nsubpartitions=1)
+function plot_staleness(df, nworkers=36, nwait=3, nsubpartitions=10)
     df = df[df.kickstart .== false, :]
     df = df[df.nreplicas .== 1, :]
-    df = df[df.pfraction .== 1, :]    
     df = df[df.nworkers .== nworkers, :]
     df = df[df.nwait .== nwait, :]  
     df = df[df.nsubpartitions .== nsubpartitions, :]
@@ -71,9 +70,10 @@ function plot_staleness(df, nworkers=6, nwait=1, nsubpartitions=1)
         if ismissing(dfi.repoch_worker_1[1])
             continue
         end
-        if !ismissing(dfi.mse[1])
+        if ismissing(dfi.mse[1])
             continue
         end
+        println(jobid)
         M = staleness_matrix_from_jobid(dfi, jobid, nworkers, time=false)
         for i in 1:size(M, 1)
             for j in 1:size(M, 2)
@@ -132,11 +132,11 @@ function straggler_prob_timeseries_from_df(df; nbins=nothing, prob=true)
             continue
         end
 
-        # traces with mse are recorded in a less controlled manner
-        # so we skip these
-        if !ismissing(dfi.mse[1])
-            continue
-        end
+        # # traces with mse are recorded in a less controlled manner
+        # # so we skip these
+        # if !ismissing(dfi.mse[1])
+        #     continue
+        # end
 
         @assert length(unique(df.nworkers)) == 1
         nworkers = unique(df.nworkers)[1]
@@ -188,7 +188,6 @@ Plot the probability that a straggler remains a straggler after some time has pa
 function plot_straggler_ac(df; f=0.5)
     df = df[df.kickstart .== false, :]
     df = df[df.nreplicas .== 1, :]
-    df = df[df.pfraction .== 1, :]    
     # df = df[df.nworkers .== nworkers, :]
     # df = df[df.nwait .== nwait, :]
 
@@ -255,12 +254,16 @@ function plot_straggler_ac(df; f=0.5)
 
     # plot for different nworkers
     plt.figure()    
-    for nworkers in [6, 12, 18, 36]
+    for nworkers in [27, 36]
         nwait = round(Int, nworkers*f)
         dfi = df
         dfi = dfi[dfi.nworkers .== nworkers, :]
         dfi = dfi[dfi.nwait .== nwait, :]
+        if size(dfi, 1) == 0
+            continue
+        end
         nbins = round(Int, maximum(dfi.t_total) / 10)
+        # return straggler_prob_timeseries_from_df(dfi; nbins)
         edges, values, counts = straggler_prob_timeseries_from_df(dfi; nbins)
         plt.plot(edges[1:end-1], values, ".-", label="Nn: $nworkers")
 
@@ -410,50 +413,4 @@ function plot_worker_latency_cdf(df; nworkers=18, nsubpartitions=4)
     plt.ylim(1e-4, 1.0)
     # plt.xlim(0, 50)
     return
-end
-
-function plot_straggler_density(df)
-    nworkers = 18
-    nsubpartitions = 1
-    nwait = 9
-    dfi = df
-    dfi = dfi[dfi.nworkers .== nworkers, :]
-    dfi = dfi[dfi.nsubpartitions .== nsubpartitions, :]
-    dfi = dfi[dfi.nwait .== nwait, :]
-    dfi = dfi[dfi.nreplicas .== 1, :]
-    dfi = dfi[dfi.pfraction .== 1, :]
-
-    # for original data matrix
-    # vs = [0.04688062471391655, 0.04749676843908486, 0.04941002489203347, 0.04862445444082279, 0.048793894574690695, 0.04943647884363674, 0.051972915153795755, 0.05602539385691622, 0.059106140262184935, 0.05671962158324654, 0.04848918053618723, 0.04840049669933181, 0.04903849489666922, 0.0502636980261616, 0.05460620642087488, 0.056018742668364305, 0.05186742079503943, 0.04808694236837983]
-
-    # for shuffled data matrix
-    vs = [0.05140742522974717, 0.05067826288956093, 0.05122862096280494, 0.050645562535343865, 0.05099657254820253, 0.05138775739534186, 0.050901895214905575, 0.050316781109837165, 0.05188810059429005, 0.051392694196391135, 0.05082197380306366, 0.050276556499358506, 0.05169503754425293, 0.051862277178989835, 0.05151591182965395, 0.05201310404786811, 0.05083756996715019, 0.05134404845100367]
-    vs ./= maximum(vs)
-
-    # foo = zeros(maximum(dfi.iteration))
-    # bar = zeros(maximum(dfi.iteration))
-
-    for jobid in unique(dfi.jobid)
-        dfj = dfi
-        dfj = dfj[dfj.jobid .== jobid, :]
-        if ismissing(dfj[1, "repoch_worker_1"])
-            continue
-        end
-        M, ts = straggler_matrix_from_jobid(dfi, jobid, nworkers)
-        replace!(M, -1 => 0)
-        
-        foo = round.(sum(M, dims=1) ./ size(M, 1) .+ eps(Float64), digits=3)
-        bar = round.(vs, digits=3)
-
-        p = sortperm(bar)
-        foo = foo[p]
-        bar = bar[p]
-        for i in 1:length(foo)
-            println("$(foo[i])\t$(bar[i])")
-        end    
-        println("===========")        
-        println()
-
-        # return M
-    end
 end

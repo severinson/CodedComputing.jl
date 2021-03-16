@@ -62,9 +62,8 @@ end
 
 Return a vector composed of the number of flops performed by each worker and iteration.
 
-1000 genomes, chr20 density: 0.05117854232324947
 """
-function worker_flops_from_df(df; density=0.05117854232324947)
+function worker_flops_from_df(df; density=0.05360388070027386)
     nflops = float.(df.nrows)
     nflops ./= df.nworkers
     nflops .*= df.nreplicas
@@ -76,25 +75,22 @@ end
 """
 
 Read a csv file into a DataFrame
+"C:/Users/albin/Dropbox/Eigenvector project/dataframes/pca/1000genomes_shuffled/210305/"
 """
-function read_df(directory="C:/Users/albin/Dropbox/Eigenvector project/data/dataframes/pca/1000genomes_shuffled/210305/")
+function read_df(directory="C:/Users/albin/Dropbox/Eigenvector project/dataframes/pca/sprand/210312/")
     filename = sort!(glob("*.csv", directory))[end]
     println("Reading $filename")
     df = DataFrame(CSV.File(filename, normalizenames=true))
+    df = df[.!ismissing.(df.nworkers), :]
+    df = df[.!ismissing.(df.iteration), :]
     df[:nostale] = Missings.replace(df.nostale, false)
     df[:kickstart] = Missings.replace(df.kickstart, false)
-    df = df[.!ismissing.(df.nworkers), :]
     df = df[df.kickstart .== false, :]
     df = remove_initialization_delay!(df)
     df[:worker_flops] = worker_flops_from_df(df)
     df.npartitions = df.nworkers .* df.nsubpartitions
     rename!(df, :t_compute => :latency)
-
-    # scale up workload
-    # df[:worker_flops] .*= 22
-    # df[:t_compute] .= model_tcompute_from_df(df, samp=1)
-
-    df[:nbytes] = df.ncolumns .* df.ncomponents .* 8
+    df[:nbytes] = df.nrows .* df.ncomponents .* 4
     df[:t_total] = cumulative_time_from_df(df)    
     df
 end
@@ -141,7 +137,7 @@ end
 
 Return a df composed of the order statistic samples for each worker, iteration, and job.
 """
-function orderstats_df(df)    
+function orderstats_df(df; extend=false)
     df = df[.!ismissing.(df["latency_worker_1"]), :]    
     if size(df, 1) == 0
         return DataFrame()
@@ -188,6 +184,23 @@ function orderstats_df(df)
         joined[:compute_order] = by(joined, [:jobid, :iteration], :nworkers => ((x) -> collect(1:maximum(x))) => :order).order        
     end
 
+    if extend
+        dfi = joined[joined.nwait .== joined.nworkers, :]
+        dfi.mse = missing
+        for i in 1:maximum(df.nworkers)
+            dfj = dfi
+            dfj = dfj[dfj.nworkers .> i, :]        
+            dfj = dfj[dfj.worker_index .<= i, :]
+            if size(dfj, 1) == 0
+                continue
+            end
+            dfj.nworkers .= i
+            dfj.nwait .= i
+            sort!(dfj, [:jobid, :iteration, :worker_latency])
+            dfj.order .= by(dfj, [:jobid, :iteration], :nworkers => ((x) -> collect(1:maximum(x))) => :order).order
+            joined = vcat(joined, dfj)
+        end
+    end
     # add a flag indicating if the worker is experiencing a latency burst
     # joined.burst = burst_state_from_orderstats_df(joined)
 
@@ -239,9 +252,9 @@ end
 
 Read a latency experiment csv file into a DataFrame
 """
-function read_latency_df(directory="C:/Users/albin/Dropbox/Eigenvector project/data/dataframes/latency/210303/")
+function read_latency_df(directory="C:/Users/albin/Dropbox/Eigenvector project/dataframes/latency/210215_v3/")
     # filename = sort!(glob("*.csv", directory))[end]
-    filename = directory*"df_v1.csv"
+    filename = directory*"df_v12.csv"
     println("Reading $filename")
     df = DataFrame(CSV.File(filename, normalizenames=true))
     df.worker_flops = 2 .* df.nrows .* df.ncols .* df.ncomponents .* df.density
