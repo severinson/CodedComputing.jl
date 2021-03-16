@@ -147,6 +147,7 @@ function worker_main()
     parsed_args = parse_commandline(isroot)
     try
         localdata, recvbuf, sendbuf = worker_setup(rank, nworkers; parsed_args...)
+        GC.gc()
         worker_loop(localdata, recvbuf, sendbuf; parsed_args...)
     catch e
         print(Base.stderr, "rank $rank exiting due to $e")

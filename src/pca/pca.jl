@@ -1,4 +1,4 @@
-using ArgParse, Random
+using ArgParse, Random, SparseArrays
 
 const METADATA_BYTES = 6
 const ELEMENT_TYPE = Float32
@@ -61,16 +61,37 @@ function read_localdata(i::Integer, nworkers::Integer; inputfile::String, inputd
         inputdataset in keys(fid) || throw(ArgumentError("$inputdataset is not in $fid"))
         flag, _ = isvalidh5csc(fid, inputdataset)
         if flag
+            # read nreplicas/nworkers samples
             il = round(Int, (partition_index - 1)/npartitions*nsamples + 1)
             iu = round(Int, partition_index/npartitions*nsamples)
-            dividers = round.(Int, range(il, iu+1, length=nsubpartitions+1))
-            localdata = [h5readcsc(fid, inputdataset, dividers[i], dividers[i+1]-1) for i in 1:nsubpartitions]
+            X = h5readcsc(fid, inputdataset, il, iu)
+            nsamples = size(X, 2)            
+
+            # randomly permute the samples to break up dense blocks
+            p = 1:size(X, 1)
+            q = randperm(nsamples)
+            X = permute(X, p, q)
+            GC.gc()
+
+            # sub-partition X
+            dividers = round.(Int, range(1, nsamples+1, length=nsubpartitions+1))
+            localdata = [X[:, dividers[i]:(dividers[i+1]-1)] for i in 1:nsubpartitions]
             return localdata, dimension, nsamples
         else
+            # read nreplicas/nworkers samples            
             il = round(Int, (partition_index - 1)/npartitions*nsamples + 1)
             iu = round(Int, partition_index/npartitions*nsamples)
-            dividers = round.(Int, range(il, iu+1, length=nsubpartitions+1))
-            localdata = [fid[inputdataset][:, dividers[i]:(dividers[i+1]-1)] for i in 1:nsubpartitions]
+            X = fid[inputdataset][:, il:iu]
+            nsamples = size(X, 2)
+
+            # randomly permute the samples to break up dense blocks
+            q = randperm(nsamples)
+            X .= X[:, q]
+            GC.gc()
+            
+            # sub-partition X
+            dividers = round.(Int, range(1, nsamples+1, length=nsubpartitions+1))
+            localdata = [X[:, dividers[i]:(dividers[i+1]-1)] for i in 1:nsubpartitions]
             return localdata, dimension, nsamples
         end
     end
