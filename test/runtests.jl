@@ -102,6 +102,15 @@ end
         @test size(Mp) == size(M)
     end
 
+    # test partially out-of-core column-wise permutation
+    for n in [20, 21, 23, 23]
+        M = sprand(10, n, 0.5)
+        p = randperm(n)
+        h5permutecsc(M, filename, "Mp", p, nblocks=4, overwrite=true)
+        Mp = h5readcsc(filename, "Mp")
+        @test Mp ≈ M[:, p]
+    end
+
     # test matrix-matrix multiplication
     for n in [20, 21, 23, 23, 24]
         M = sprand(10, n, 0.5)

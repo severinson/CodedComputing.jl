@@ -212,6 +212,39 @@ function h5permutecsc(srcfile::AbstractString, srcname::AbstractString, dstfile:
     end
 end
 
+
+"""
+    h5permutecsc(X::SparseMatrixCSC, dstfid::HDF5.File, dstname::AbstractString, p::AbstractVector{<:Integer}; nblocks=ceil(Int, size(X, 2)/10000), overwrite=false)
+
+Write the permutation `X[:, p]` to `dstfid[dstname]`. The result is written to disk in `nblocks` 
+blocks to reduce memory usage.
+"""
+function h5permutecsc(X::SparseMatrixCSC, dstfid::HDF5.File, dstname::AbstractString, p::AbstractVector{<:Integer}; nblocks=ceil(Int, size(X, 2)/10000), overwrite=false)
+    m, n = size(X)
+    length(p) == size(X, 2) || throw(DimensionMismatch("p has dimension $(length(p)), but X has dimensions $(size(X))"))
+    0 < nblocks || throw(ArgumentError("nblocks must be positive"))
+    dividers = round.(Int, range(1, n+1, length=nblocks+1))
+    i = 1
+    Xi = X[:, view(p, dividers[i]:(dividers[i+1]-1))]
+    h5writecsc(dstfid, dstname, Xi; overwrite)
+    for i in 2:nblocks
+        GC.gc()        
+        Xi = X[:, view(p, dividers[i]:(dividers[i+1]-1))]
+        h5appendcsc(dstfid, dstname, Xi)
+    end
+    return
+end
+
+function h5permutecsc(X::SparseMatrixCSC, dstfile::AbstractString, dstname::AbstractString, args...; kwargs...)
+    dstfid = h5open(dstfile, "cw")
+    try
+        h5permutecsc(X, dstfid, dstname, args...; kwargs...)
+    finally
+        close(dstfid)
+    end
+    return
+end
+
 """
     h5mulcsc(A::AbstractMatrix, fid::HDF5.File, name::AbstractString; nblocks::Integer=100)
 
