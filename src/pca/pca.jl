@@ -48,6 +48,13 @@ function problem_size(filename::String, dataset::String)
     end
 end
 
+function partition_samples(X::AbstractMatrix, nsubpartitions::Integer)
+    nsamples = size(X, 2)
+    q = randperm(nsamples) # randomly permute the samples to break up dense blocks
+    dividers = round.(Int, range(1, nsamples+1, length=nsubpartitions+1))
+    [X[:, view(q, dividers[i]:(dividers[i+1]-1))] for i in 1:nsubpartitions]
+end
+
 function read_localdata(i::Integer, nworkers::Integer; inputfile::String, inputdataset::String, nreplicas::Integer, nsubpartitions::Integer, kwargs...)
     HDF5.ishdf5(inputfile) || throw(ArgumentError("$inputfile isn't an HDF5 file"))
     0 < nworkers || throw(DomainError(nworkers, "nworkers must be positive"))
@@ -60,39 +67,17 @@ function read_localdata(i::Integer, nworkers::Integer; inputfile::String, inputd
     h5open(inputfile, "r") do fid
         inputdataset in keys(fid) || throw(ArgumentError("$inputdataset is not in $fid"))
         flag, _ = isvalidh5csc(fid, inputdataset)
-        if flag
-            # read nreplicas/nworkers samples
-            il = round(Int, (partition_index - 1)/npartitions*nsamples + 1)
-            iu = round(Int, partition_index/npartitions*nsamples)
-            X = h5readcsc(fid, inputdataset, il, iu)
-            nsamples = size(X, 2)            
-
-            # randomly permute the samples to break up dense blocks
-            p = 1:size(X, 1)
-            q = randperm(nsamples)
-            X = permute(X, p, q)
-            GC.gc()
-
-            # sub-partition X
-            dividers = round.(Int, range(1, nsamples+1, length=nsubpartitions+1))
-            localdata = [X[:, dividers[i]:(dividers[i+1]-1)] for i in 1:nsubpartitions]
-            return localdata, dimension, nsamples
-        else
-            # read nreplicas/nworkers samples            
-            il = round(Int, (partition_index - 1)/npartitions*nsamples + 1)
-            iu = round(Int, partition_index/npartitions*nsamples)
-            X = fid[inputdataset][:, il:iu]
-            nsamples = size(X, 2)
-
-            # randomly permute the samples to break up dense blocks
-            q = randperm(nsamples)
-            X .= X[:, q]
-            GC.gc()
-            
-            # sub-partition X
-            dividers = round.(Int, range(1, nsamples+1, length=nsubpartitions+1))
-            localdata = [X[:, dividers[i]:(dividers[i+1]-1)] for i in 1:nsubpartitions]
-            return localdata, dimension, nsamples
+        # read nreplicas/nworkers samples        
+        if flag # sparse data
+            il = floor(Int, (partition_index - 1)/npartitions*nsamples + 1)
+            iu = floor(Int, partition_index/npartitions*nsamples)
+            X_sparse = h5readcsc(fid, inputdataset, il, iu)
+            return partition_samples(X_sparse, nsubpartitions), dimension, nsamples
+        else # dense data
+            il = floor(Int, (partition_index - 1)/npartitions*nsamples + 1)
+            iu = floor(Int, partition_index/npartitions*nsamples)
+            X_dense = fid[inputdataset][:, il:iu]
+            return partition_samples(X_dense, nsubpartitions), dimension, nsamples
         end
     end
 end
