@@ -98,3 +98,45 @@ function matrix_from_tensor(T)
     d = d1*d2
     Matrix(reshape(T, d, n)')
 end
+
+import SparseArrays.AbstractSparseMatrixCSC
+import SparseArrays.permute, SparseArrays.permute!
+import SparseArrays.getcolptr
+import SparseArrays._checkargs_sourcecompatdest_permute!, SparseArrays._checkargs_sourcecompatperms_permute!, SparseArrays._ispermutationvalid_permute!
+
+function perm!(X::AbstractSparseMatrixCSC{Tv,Ti}, A::AbstractSparseMatrixCSC{Tv,Ti}, q::AbstractVector{<:Integer}, f::Function=identity) where {Tv,TvA,Ti}
+    Xi = 1
+    getcolptr(X)[1] = Xi
+    for Xj in 1:size(A, 2) # column of X, add @inbounds
+        Aj = q[Xj] # corresponding column of A        
+        for Ai in nzrange(A, Aj) # row of A
+            rowvals(X)[Xi] = rowvals(A)[Ai]
+            nonzeros(X)[Xi] = f(nonzeros(A)[Ai])
+            Xi += 1
+        end
+        getcolptr(X)[Xj+1] = Xi
+    end
+    return X
+end
+
+function permute!(X::AbstractSparseMatrixCSC{Tv,Ti}, A::AbstractSparseMatrixCSC{Tv,Ti}, q::AbstractVector{<:Integer}) where {Tv,Ti}
+    _checkargs_sourcecompatdest_permute!(A, X)
+    _checkargs_sourcecompatperms_permute!(A, 1:size(A, 1), q)
+    if !_ispermutationvalid_permute!(q, getcolptr(X))
+        throw(ArgumentError("column-permutation argument `q` must be a valid permutation"))
+    end
+    perm!(X, A, q)
+end
+
+function permute(A::AbstractSparseMatrixCSC{Tv,Ti}, q::AbstractVector{<:Integer}) where {Tv,Ti}
+    _checkargs_sourcecompatperms_permute!(A, 1:size(A, 1), q)    
+    X = SparseMatrixCSC(size(A, 1), size(A, 2),
+                        ones(Ti, size(A, 2) + 1),
+                        Vector{Ti}(undef, nnz(A)),
+                        Vector{Tv}(undef, nnz(A)))
+    _checkargs_sourcecompatdest_permute!(A, X)                        
+    if !_ispermutationvalid_permute!(q, getcolptr(X))
+        throw(ArgumentError("column-permutation argument `q` must be a valid permutation"))
+    end
+    perm!(X, A, q)
+end
