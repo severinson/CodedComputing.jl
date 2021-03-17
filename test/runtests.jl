@@ -74,8 +74,9 @@ end
     @test typeof(M_hat) == typeof(M)
     @test M_hat ≈ hcat(M, M2)
 
-    # test permuting the columns of the matrix
-    M = hcat(M, M2)
+    # test out-of-core column-wise block permutation
+    M = sprand(10, 20, 0.5)
+    h5writecsc(filename, "M", M, overwrite=true)
     p = [1, 2, 3]
     h5permutecsc(filename, "M", filename, "Mp", p, overwrite=true)
     Mp = h5readcsc(filename, "Mp")
@@ -84,21 +85,31 @@ end
     p = [2, 1]
     h5permutecsc(filename, "M", filename, "Mp", p, overwrite=true)
     Mp = h5readcsc(filename, "Mp")
-    @test Mp[:, 1:6] ≈ M[:, 7:12]
-    @test Mp[:, 7:12] ≈ M[:, 1:6]
+    @test Mp[:, 1:10] ≈ M[:, 11:20]
+    @test Mp[:, 11:20] ≈ M[:, 1:10]
 
-    # test permuting and storing the result in a new file
-    p = [2, 1]
-    dstfile = tempname()
-    h5permutecsc(filename, "M", dstfile, "Mp", p, overwrite=true)
-    Mp = h5readcsc(dstfile, "Mp")
-    @test Mp[:, 1:6] ≈ M[:, 7:12]
-    @test Mp[:, 7:12] ≈ M[:, 1:6]    
+    p = randperm(size(M, 2))
+    h5permutecsc(filename, "M", filename, "Mp", p, overwrite=true)
+    Mp = h5readcsc(filename, "Mp")
+    @test Mp ≈ M[:, p]
+
+    for n in [20, 21, 23, 23]
+        M = sprand(10, n, 0.5)
+        h5writecsc(filename, "M", M, overwrite=true)
+        p = randperm(4)
+        h5permutecsc(filename, "M", filename, "Mp", p, overwrite=true)
+        Mp = h5readcsc(filename, "Mp")
+        @test size(Mp) == size(M)
+    end
 
     # test matrix-matrix multiplication
-    A = randn(20, 10)
-    C = h5mulcsc(A, filename, "M", nblocks=3)
-    @test C ≈ A*M
+    for n in [20, 21, 23, 23, 24]
+        M = sprand(10, n, 0.5)
+        h5writecsc(filename, "M", M, overwrite=true)        
+        A = randn(20, 10)
+        C = h5mulcsc(A, filename, "M", nblocks=4)
+        @test C ≈ A*M
+    end
 end
 
 @testset "latency.jl" begin
