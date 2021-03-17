@@ -186,16 +186,16 @@ function h5permutecsc(srcfid::HDF5.File, srcname::AbstractString, dstfid::HDF5.F
     1 < length(p) <= n || throw(DimensionMismatch("p has dimension $(length(p)), but the source matrix has dimensions $((m, n))"))
     nblocks = length(p)
     i = p[1]
-    firstcol = round(Int, (i-1)/nblocks*n+1)
-    lastcol = round(Int, i/nblocks*n)  
+    firstcol = floor(Int, (i-1)/nblocks*n+1)
+    lastcol = floor(Int, i/nblocks*n)  
     X = h5readcsc(srcfid, srcname, firstcol, lastcol)
     h5writecsc(dstfid, dstname, X; overwrite)
     for i in view(p, 2:length(p))
-        firstcol = round(Int, (i-1)/nblocks*n+1)
-        lastcol = round(Int, i/nblocks*n)
+        firstcol = floor(Int, (i-1)/nblocks*n+1)
+        lastcol = floor(Int, i/nblocks*n)
         X = h5readcsc(srcfid, srcname, firstcol, lastcol)
         h5appendcsc(dstfid, dstname, X)
-        GC.gc() # force GC to make sure we don't run out of memory        
+        GC.gc() # force GC to make sure we don't run out of memory
     end
 end
 
@@ -225,8 +225,8 @@ function h5mulcsc(A::AbstractMatrix, fid::HDF5.File, name::AbstractString; nbloc
     nblocks <= n || throw(DimensionMismatch("Matrix has dimensions $((m, n)), but nblocks is $nblocks"))
     C = similar(A, size(A, 1), n)
     for i in 1:nblocks
-        firstcol = round(Int, (i-1)/nblocks*n+1)
-        lastcol = round(Int, i/nblocks*n)
+        firstcol = floor(Int, (i-1)/nblocks*n+1)
+        lastcol = floor(Int, i/nblocks*n)
         X = h5readcsc(fid, name, firstcol, lastcol)
         mul!(view(C, :, firstcol:lastcol), A, X)
         GC.gc() # force GC to make sure we don't run out of memory
