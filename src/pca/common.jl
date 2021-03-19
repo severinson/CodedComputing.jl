@@ -1,6 +1,6 @@
 using CodedComputing, MPI, MPIStragglers
 using HDF5, LinearAlgebra
-using MKLSparse # can increase performance of sparse matrix multiplication on Intel-based systems
+using MKL, MKLSparse # typically increases MKL performance
 using ArgParse
 
 MPI.Init()
