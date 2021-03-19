@@ -1,7 +1,7 @@
 using ArgParse, Random, SparseArrays
 
 const METADATA_BYTES = 6
-const ELEMENT_TYPE = Float32
+const ELEMENT_TYPE = Float64
 const CANARY_VALUE = UInt16(2^16 - 1)
 
 function update_argsettings!(s::ArgParseSettings)
