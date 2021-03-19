@@ -288,7 +288,7 @@ Fit a line to the linear-looking middle part of the orderstats plot.
 """
 function linear_model_dfo(dfo)
     dfo = dfo[dfo.nwait .== dfo.nworkers, :]
-    dfo = dfo[dfo.order .<= 0.75.*dfo.nworkers, :]
+    dfo = dfo[dfo.order .<= 0.95.*dfo.nworkers, :]
     dfo = dfo[dfo.order .>= 0.05.*dfo.nworkers, :]
     rv = by(
         dfo, [:nworkers, :worker_flops],
@@ -409,33 +409,12 @@ function plot_linear_model(df, dfo, dfm=nothing)
         # end        
     end
 
-    # # empirical mean
-    # dfi = dfm[dfm.worker_flops .> 0, :]
-    # dfi.variable = dfi.slope .* dfi.nworkers
-    # dfi = by(dfi, :worker_flops, :variable => mean => :variable)
-    # plt.plot(dfi.worker_flops, dfi.variable, "ko")
-
-    # # fitted line
-    # a = 4.544525078502714e-5
-    # b = 0.4311891522932536
-    # ts = range(0, maximum(dfm.worker_flops), length=100)
-
-    # m(x, p) = p[1] .+ p[2] .* exp.(p[3].*x)
-
-    # # m(x, p) = p[1] .* x.^p[2]
-    # # p0 = [a, b]
-    # fit = curve_fit(m, dfi.worker_flops, dfi.variable, rand(3))
-    # plt.plot(ts, m(ts, fit.param), "k-")
-    
-    # # a, b = fit.param
-    # # plt.plot(ts, a.*ts.^b, "k-")
-
-    # # fitted line
-    # dfi = dfm[dfm.worker_flops .> 0, :]
-    # poly, coeffs = fit_polynomial(log.(float.(dfi.worker_flops)), float.(dfi.slope .* dfi.nworkers), 1)
+    # fitted line
+    dfi = dfm[dfm.slope .> 0, :]
+    poly, coeffs = fit_polynomial(float.(dfm.worker_flops), float.(dfm.slope .* dfm.nworkers), 1)
     # t = range(0, maximum(log.(dfm.worker_flops)), length=100)
-    # # t = range(0, maximum(dfm.worker_flops), length=100)
-    # plt.semilogx(exp.(t), poly.(t))
+    t = range(0, maximum(dfm.worker_flops), length=100)
+    plt.semilogx(t, poly.(t))
 
     # print fit line
     println("Slope ", coeffs)
@@ -655,8 +634,8 @@ function plot_orderstats(dfo; worker_flops=1.08e7, onlycompute=false)
             # mean latency
             dfk = by(dfj, order_col, latency_col => mean => :mean)
             sort!(dfk, order_col)
-            # plt.plot(dfk[order_col] ./ nworkers, dfk.mean, "-o", label="$((nworkers, nwait))")
-            plt.plot(dfk[order_col], dfk.mean, "-o", label="$((nworkers, nwait))")
+            plt.plot(dfk[order_col] ./ nworkers, dfk.mean, "-o", label="$((nworkers, nwait))")
+            # plt.plot(dfk[order_col], dfk.mean, "-o", label="$((nworkers, nwait))")
 
             # store the overall iteration latency
             sort!(dfk, order_col)
@@ -682,10 +661,13 @@ function plot_orderstats(dfo; worker_flops=1.08e7, onlycompute=false)
         # ys = [simulate_orderstats(1000, 100, nworkers, i) for i in 1:nworkers]
         # plt.plot((1:nworkers), ys, label="Simulated ($nworkers workers)")
     end
-    # plt.xlim(0, 1)
+    plt.xlim(0, 1)    
+    # plt.xlim(0)    
     # plt.legend()
+    # plt.xlabel("Order")
     plt.xlabel("Order / Total number of workers")
-    plt.ylabel("Latency")
+    plt.ylabel("Latency [s]")
+    plt.tight_layout()
     plt.grid()
     return
 end
