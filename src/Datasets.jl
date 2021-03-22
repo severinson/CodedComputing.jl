@@ -50,3 +50,24 @@ function genome_to_hdf5(filename="./1000genomes/parsed/1000genomes.h5")
         h5appendcsc(filename, "X", load_genome_data(chr))
     end
 end
+
+"""
+
+Write a matrix generated
+"""
+function write_sprand_matrix(m, n, p, filename, name; nblocks::Integer=ceil(Int, n/10000), overwrite=true)
+    firstcol = 1
+    lastcol = floor(Int, 1/nblocks*n)
+    println("Block 1 / $nblocks")
+    h5open(filename, "cw") do fid
+        h5writecsc(filename, name, sprand(m, lastcol-firstcol+1, p); overwrite)
+        for i in 2:nblocks
+            firstcol = floor(Int, (i-1)/nblocks*n+1)
+            lastcol = floor(Int, i/nblocks*n)
+            println("Block $i / $nblocks")
+            h5appendcsc(filename, name, sprand(m, lastcol-firstcol+1, p))
+            GC.gc()
+        end
+    end
+    return
+end
