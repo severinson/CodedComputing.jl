@@ -189,6 +189,16 @@ function plot_genome_convergence(df, nworkers=unique(df.nworkers)[1], opt=maximu
             # (18, nsubpartitions, 0.9),        
             # (27, nsubpartitions, 0.9),
         ]
+    elseif nworkers == 72
+        nsubpartitions = 160
+        params = [
+            (1, nsubpartitions, 0.9),            
+            (3, nsubpartitions, 0.9),            
+            (6, nsubpartitions, 0.9),                        
+            (9, nsubpartitions, 0.9),
+            # (18, nsubpartitions, 0.9),        
+            # (27, nsubpartitions, 0.9),
+        ]        
     end
 
     df = df[df.nworkers .== nworkers, :]    
