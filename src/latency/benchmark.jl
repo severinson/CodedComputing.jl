@@ -1,4 +1,4 @@
-using CSV, DataFrames, SparseArrays
+using CSV, DataFrames, SparseArrays, MKLSparse
 
 export latency_benchmark
 
@@ -55,10 +55,12 @@ function mymul!(C::Matrix, A::SparseMatrixCSC, B::Matrix)
     C
 end
 
-function sample!(V, W, X)
-    mul!(W, X, V)
-    mul!(V, X', W)
-end
+sample!(V, W, X) = mymul!(W, X, V)
+
+# function sample!(V, W, X)
+#     mul!(W, X, V)
+#     # mul!(V, X', W)
+# end
 
 function samples(X, V; nsamples::Integer)
     W = similar(V, size(X, 1), size(V, 2))
@@ -90,22 +92,22 @@ function latency_sweep()
     V = randn(ncols, ncomponents)
 
     # dense matrices    
-    nrows_all = [1000, 2000, 4000, 8000, 16000, 32000]    
-    for nrows in nrows_all    
-        dfi = DataFrame()
-        Xd = randn(nrows, ncols)
-        timestamps, latencies = samples(Xd, V; nsamples)
-        dfi.timestamp = timestamps
-        dfi.latency = latencies
-        dfi.nrows = nrows
-        dfi.ncols = ncols
-        dfi.ncomponents = ncomponents
-        dfi.density = 1.0        
-        df = vcat(df, dfi, cols=:union)
-    end
+    # nrows_all = [1000, 2000, 4000, 8000, 16000, 32000]    
+    # for nrows in nrows_all    
+    #     dfi = DataFrame()
+    #     Xd = randn(nrows, ncols)
+    #     timestamps, latencies = samples(Xd, V; nsamples)
+    #     dfi.timestamp = timestamps
+    #     dfi.latency = latencies
+    #     dfi.nrows = nrows
+    #     dfi.ncols = ncols
+    #     dfi.ncomponents = ncomponents
+    #     dfi.density = 1.0        
+    #     df = vcat(df, dfi, cols=:union)
+    # end
 
     # sparse matrices    
-    nrows_all = [1000, 2000, 4000, 8000, 16000, 32000, 64000, 128000, 256000]
+    nrows_all = [1000, 2000, 4000, 8000, 16000, 32000, 64000, 128000, 256000, 512000]
     for nrows in nrows_all            
         dfi = DataFrame()        
         Xs = sprand(nrows, ncols, density)
