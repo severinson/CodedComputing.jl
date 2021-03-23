@@ -290,18 +290,17 @@ end
 
 Fit a line to the linear-looking middle part of the orderstats plot.
 """
-function linear_model_dfo(dfo)
+function linear_model_dfo(dfo; onlyedges=true)
     dfo = dfo[dfo.nwait .== dfo.nworkers, :]
+    if onlyedges
+        dfo = dfo[(dfo.order .== 1) .| (dfo.order .== dfo.nworkers), :]
+    end
     # dfo = dfo[dfo.order .<= 0.95.*dfo.nworkers, :]
     # dfo = dfo[dfo.order .>= 0.05.*dfo.nworkers, :]
     rv = by(
         dfo, [:nworkers, :worker_flops],
         [:order, :worker_latency] => ((x) -> NamedTuple{(:intercept, :slope)}(fit_polynomial(x.order, x.worker_latency, 1)[2])),
-    )    
-    # for nworkers in unique(rv.nworkers)
-    #     row = Dict(:nworkers=>nworkers, :worker_flops=>0, :intercept=>0, :slope=>0)
-    #     push!(rv, row)
-    # end
+    )
     sort!(rv, [:nworkers, :worker_flops])
     rv    
 end
@@ -381,7 +380,7 @@ function plot_linear_model(df, dfo, dfm=nothing)
     ys = dfi.intercept
     slope = mean(ys ./ xs)
     println("slope: $slope")
-    ts = exp.(range(log(1), log(maximum(dfm.worker_flops)), length=200))
+    ts = exp.(range(log(1), log(maximum(xs)), length=200))
     plt.loglog(ts, ts.*slope)    
 
     # # print fit line
@@ -402,51 +401,48 @@ function plot_linear_model(df, dfo, dfm=nothing)
 
     # fitted line with intersection 0
     dfm = dfm[dfm.slope .> 0, :]    
-    dfm.x = dfm.worker_flops ./ dfm.nworkers
-    dfm = by(dfm, :x, :slope => mean => :slope)
+    # dfm.x = dfm.worker_flops ./ dfm.nworkers
+    # dfm = by(dfm, :x, :slope => mean => :slope)
 
-    # xs = dfm.worker_flops ./ dfm.nworkers
-    # ys = dfm.slope
-    xs = dfm.x
+    xs = dfm.worker_flops ./ dfm.nworkers
     ys = dfm.slope
+    # xs = dfm.x
+    # ys = dfm.slope
     slope = mean(ys ./ xs)
     println("slope: $slope")
     # ts = exp.(range(log(1), log(maximum(dfm.worker_flops)), length=200))
-    ts = exp.(range(log(1), log(maximum(dfm.x)), length=200))
+    ts = exp.(range(log(1), log(maximum(dfm.worker_flops)), length=200))
     plt.loglog(ts, ts.*slope, "k--")
 
-    plt.plot(dfm.x, dfm.slope, ".")
+    for nworkers in unique(dfm.nworkers)
+        if nworkers < 3
+            continue
+        end
+        dfi = dfm
+        dfi = dfi[dfi.nworkers .== nworkers, :]
+        xs = dfi.worker_flops ./ nworkers
+        # xs = dfi.worker_flops
+        ys = dfi.slope
+        plt.loglog(xs, ys, ".", label="Nn: $nworkers")
 
-    # for nworkers in unique(dfm.nworkers)
-    #     if nworkers < 3
-    #         continue
-    #     end
-    #     dfi = dfm
-    #     dfi = dfi[dfi.nworkers .== nworkers, :]
-    #     xs = dfi.worker_flops ./ nworkers        
-    #     ys = dfi.slope
-    #     plt.loglog(xs, ys, ".", label="Nn: $nworkers")
-
-    #     # print parameters
-    #     # println("Nn: $nworkers")
-    #     # sort!(dfi, [:worker_flops])
-    #     # for i in 1:size(dfi, 1)
-    #     #     println("$(x[i]) $(dfi.slope[i])")
-    #     # end        
-    # end
+        # print parameters
+        # println("Nn: $nworkers")
+        # sort!(dfi, [:worker_flops])
+        # for i in 1:size(dfi, 1)
+        #     println("$(x[i]) $(dfi.slope[i])")
+        # end        
+    end
 
     # fitted line
     dfi = dfm[dfm.slope .> 0, :]
-    # xs = float.(dfi.worker_flops ./ dfi.nworkers)
-    # ys = float.(dfi.slope)
-    xs = dfm.x
-    ys = dfm.slope
+    xs = float.(dfi.worker_flops ./ dfi.nworkers)
+    ys = float.(dfi.slope)
     # poly, coeffs = fit_polynomial(float.(dfm.worker_flops), float.(dfm.slope .* dfm.nworkers), 1)
     # poly, coeffs = fit_polynomial(xs, ys, 2)
-    poly = Polynomials.fit(xs, ys, 2)
+    poly = Polynomials.fit(xs, ys, 1)
     # t = range(0, maximum(log.(dfm.worker_flops)), length=100)
     # t = range(0, maximum(dfm.worker_flops), length=100)
-    ts = exp.(range(log(1), log(maximum(dfm.x)), length=200))
+    ts = exp.(range(log(1), log(maximum(xs)), length=200))
     plt.loglog(ts, poly.(ts))
     println(poly.coeffs)
 
@@ -455,9 +451,24 @@ function plot_linear_model(df, dfo, dfm=nothing)
     plt.ylabel("Slope")
     # plt.xlabel("Flops")    
     # plt.ylabel("Slope x Total number of workers")
-    # plt.legend()
+    plt.legend()
     plt.xlim(0)
     plt.ylim(0)        
+    return
+end
+
+function plot_latency_flops(df)
+    plt.figure()
+    df = df[df.nwait .== df.nworkers, :]
+    for nworkers in sort!(unique(df.nworkers))
+        dfi = df
+        dfi = dfi[dfi.nworkers .== nworkers, :]
+        plt.plot(dfi.worker_flops .* dfi.nworkers, dfi.latency, ".", label="N: $nworkers")
+    end
+    plt.legend()
+    plt.grid()
+    plt.xlabel("Total number of flops per iteration")
+    plt.ylabel("Latency[s]")
     return
 end
 
@@ -662,10 +673,13 @@ function plot_orderstats(dfo; worker_flops=1.08e7, onlycompute=false, normalized
             dfk = by(dfj, order_col, latency_col => mean => :mean)
             sort!(dfk, order_col)
             if normalized
-                plt.plot(dfk[order_col] ./ nworkers, dfk.mean, "-o", label="$((nworkers, nwait))")
+                xs = dfk[order_col] ./ nworkers
+                ys = dfk.mean
             else
-                plt.plot(dfk[order_col], dfk.mean, "-o", label="$((nworkers, nwait))")
+                xs = dfk[order_col]
+                ys = dfk.mean
             end
+            plt.plot(xs, ys, "-o", label="$((nworkers, nwait))")            
 
             # store the overall iteration latency
             sort!(dfk, order_col)
@@ -673,9 +687,9 @@ function plot_orderstats(dfo; worker_flops=1.08e7, onlycompute=false, normalized
             push!(ys, dfk.mean[end])
 
             # fit a polynomial to the data
-            # p, coeffs = fit_polynomial(dfk[order_col], dfk.mean, 3)
-            # ts = range(0, nwait, length=100)
-            # plt.plot(ts, p.(ts), "k--")
+            p, coeffs = fit_polynomial(xs[[1, length(xs)]], ys[[1, length(ys)]], 1)
+            ts = range(0, maximum(xs), length=100)
+            plt.plot(ts, p.(ts), "k--")  
         end
 
         # plot the overall iteration latency
