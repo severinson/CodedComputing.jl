@@ -2,84 +2,95 @@
 
 using HDF5, DataFrames, CSV, Glob, Dates, Random
 
+function create_df(fid, nrows=2504, ncolumns=81271767)
+    rv = DataFrame()
+    row = Dict{String, Any}()
+    row["nrows"] = nrows
+    row["ncolumns"] = ncolumns
+    niterations = fid["parameters/niterations"][]
+    nworkers = fid["parameters/nworkers"][]
+    row["mse"] = missing # initialize to missing, it's computed later
+
+    # store job parameters
+    if "parameters" in keys(fid) && typeof(fid["parameters"]) <: HDF5.Group
+        g = fid["parameters"]
+        for key in keys(g)
+            value = g[key][]
+            row[key] = value
+        end
+    end
+
+    # add benchmark data
+    for i in 1:niterations
+        row["iteration"] = i
+        row["t_compute"] = fid["benchmark/t_compute"][i]
+        row["t_update"] = fid["benchmark/t_update"][i]
+        for j in 1:nworkers # worker response epochs
+            row["repoch_worker_$j"] = fid["benchmark/responded"][j, i]
+        end        
+        if "latency" in names(fid["benchmark"]) # worker latency
+            for j in 1:nworkers
+                row["latency_worker_$j"] = fid["benchmark/latency"][j, i]
+            end
+        end            
+        push!(rv, row, cols=:union)
+    end
+    rv
+end
+
+function compute_mse!(mses, iterates, Xs; mseiterations=20, Xnorm=104444.37027911078)
+    if iszero(mseiterations)
+        return mses
+    end
+    niterations = size(iterates, 3)
+    is = unique(round.(Int, exp.(range(log(1), log(niterations), length=mseiterations))))
+    for k in 1:length(is)
+        i = is[k]
+        if !ismissing(mses[i])
+            continue
+        end
+        norms = zeros(length(Xs))
+        t = @elapsed begin
+            Threads.@threads for j in 1:length(Xs)
+                norms[j] = norm(view(iterates, :, :, i)'*Xs[j])
+            end
+        end
+        mses[i] = (sum(norms) / Xnorm)^2
+        println("Iteration $i finished in $t s")
+    end
+    GC.gc()
+    mses
+end
+
 """
 
 Parse an output file and record everything in a DataFrame.
 """
-function df_from_output_file(filename::AbstractString; inputfile::AbstractString, inputname::AbstractString, Xnorm::Real, mseiterations::Integer=10)
-
-    # return a memoized result if one exists
-    df_filename = filename * ".csv"
-    if isfile(df_filename)
-        return DataFrame(CSV.File(df_filename))
-    end
-
+function df_from_output_file(filename::AbstractString, Xs; df_filename::AbstractString=filename*".csv")
     # skip non-existing/non-hdf5 files
-    rv = DataFrame()
     if !HDF5.ishdf5(filename)
         println("skipping (not a HDF5 file): $filename")
-        return rv
+        return DataFrame()
     end
-
-    h5open(filename) do fid        
-        row = Dict{String,Any}()
-        nrows, ncolumns = h5size(inputfile, inputname)
-        row["nrows"] = nrows
-        row["ncolumns"] = ncolumns
-        niterations = fid["parameters/niterations"][]
-        nworkers = fid["parameters/nworkers"][]
-
-        # store all parameters the job was run with
-        if "parameters" in keys(fid) && typeof(fid["parameters"]) <: HDF5.Group
-            g = fid["parameters"]
-            for key in keys(g)
-                value = g[key][]
-                row[key] = value
-            end
-        end
-
-        # compute explained variance        
-        mses = Vector{Union{Missing,Float64}}(missing, niterations)
+    h5open(filename) do fid
+        df = isfile(df_filename) ? DataFrame(CSV.File(df_filename)) : create_df(fid)
+        df = df[.!ismissing.(df.iteration), :]
         if "iterates" in keys(fid)
-            U = zeros(eltype(fid["iterates"]), size(fid["iterates"], 1), size(fid["iterates"], 2))
-            for i in round.(Int, range(1, niterations, length=mseiterations))
-                println("Iteration $i / $niterations ($(j / mseiterations))")
-                @time U .= fid["iterates"][:, :, i]
-                @time UtX = h5mulcsc(U', inputfile, inputname)
-                @time mses[i] = (norm(UtX) / Xnorm)^2
-                println()
-                GC.gc()
-            end
+            sort!(df, :iteration)
+            mses = Vector{Union{Float64,Missing}}(df.mse)
+            select!(df, Not(:mse))
+            df.mse = compute_mse!(mses, fid["iterates"][:, :, :], Xs)
         end
+        return df
+    end
+end
 
-        # add benchmark data
-        for i in 1:niterations
-            row["iteration"] = i
-            row["mse"] = mses[i]
-            row["t_compute"] = fid["benchmark/t_compute"][i]
-            row["t_update"] = fid["benchmark/t_update"][i]
-
-            # add worker response epochs
-            for j in 1:nworkers
-                row["repoch_worker_$j"] = fid["benchmark/responded"][j, i]
-            end
-
-            # add worker latency
-            if "latency" in names(fid["benchmark"])
-                for j in 1:nworkers
-                    row["latency_worker_$j"] = fid["benchmark/latency"][j, i]
-                end
-            end            
-
-            push!(rv, row, cols=:union)
-            GC.gc()
-        end
-    end    
-
-    # memoize the resulting df
-    CSV.write(df_filename, rv)
-
-    rv
+# 2504×81271767, about 100GB total
+function load_inputmatrix(filename::AbstractString, name::AbstractString="X"; nblocks=Threads.nthreads())
+    h5open(filename) do fid
+        m, n = h5size(fid, name)
+        return [h5readcsc(fid, name, floor(Int, (i-1)/nblocks*n+1), floor(Int, i/nblocks*n)) for i in 1:nblocks]
+    end
 end
 
 """
@@ -87,7 +98,9 @@ end
 Aggregate all DataFrames in `dir` into a single DataFrame.
 """
 function aggregate_dataframes(;dir::AbstractString, prefix::AbstractString="output", dfname::AbstractString="df.csv")
-    dfs = [DataFrame(CSV.File(filename)) for filename in glob("$(prefix)*.csv", dir)]
+    filenames = glob("$(prefix)*.csv", dir)
+    println("Aggregating $(length(filenames)) files")
+    dfs = [DataFrame(CSV.File(filename)) for filename in filenames]
     for (i, df) in enumerate(dfs)
         df[:jobid] = i # store a unique ID for each file read
     end
@@ -100,7 +113,7 @@ end
 
 Read all output files from `dir` and write summary statistics (e.g., iteration time and convergence) to DataFrames.
 """
-function parse_pca_files(;dir::AbstractString, inputfile::AbstractString, inputname="X", prefix="output", dfname="df.csv", Xnorm=104444.37027911078)
+function parse_pca_files(;dir::AbstractString, prefix="output", dfname="df.csv", Xs)
 
     # process output files
     filenames = glob("$(prefix)*.h5", dir)
@@ -109,7 +122,7 @@ function parse_pca_files(;dir::AbstractString, inputfile::AbstractString, inputn
         t = now()
         println("[$(Dates.format(now(), "HH:MM"))] parsing $filename")
         try
-            df = df_from_output_file(filename; inputfile, inputname, Xnorm)
+            df = df_from_output_file(filename, Xs)
             CSV.write(filename*".csv", df)
             # rm(filename)
         catch e
@@ -119,6 +132,8 @@ function parse_pca_files(;dir::AbstractString, inputfile::AbstractString, inputn
         end
         GC.gc()
     end
+    inputmatrix = nothing
+    GC.gc()
     aggregate_dataframes(;dir, prefix, dfname)
 end
 
