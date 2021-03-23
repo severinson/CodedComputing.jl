@@ -36,7 +36,7 @@ npasses=5
 
 # 72 workers
 nwait_all=( 1 3 6 9)
-nsubpartitions_all=( 2 5 10 40 80 120 160)
+nsubpartitions_all=( 2 5 10 40 80 120 160 240 320)
 
 # 27 workers
 # nwait_all=( 1 3 6 9 18 24)
@@ -56,7 +56,7 @@ for nsubpartitions in "${nsubpartitions_all[@]}"
 do
     niterations=$(($npasses * $nsubpartitions))
 
-    nwait=109
+    nwait=108
     echo "[SAG (--nostale)] nsubpartitions: ${nsubpartitions}, nwait: ${nwait}, niterations: $niterations, stepsize: $stepsize"
     /opt/amazon/openmpi/bin/mpirun -n "$SLURM_NTASKS" julia --project "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --saveiterates --variancereduced --nostale
     echo "[SGD] nsubpartitions: ${nsubpartitions}, nwait: ${nwait}, niterations: $niterations"
@@ -75,7 +75,7 @@ done
 # GD
 stepsize=1.0
 nsubpartitions=1
-nwait=109
+nwait=108
 niterations=$(($npasses * $nsubpartitions))
 echo "[GD] nsubpartitions: ${nsubpartitions}, nwait: ${nwait}, niterations: $niterations"
 /opt/amazon/openmpi/bin/mpirun -n "$SLURM_NTASKS" julia --project "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --saveiterates
