@@ -77,7 +77,7 @@ end
 Read a csv file into a DataFrame
 "C:/Users/albin/Dropbox/Eigenvector project/dataframes/pca/sprand/210312/"
 """
-function read_df(directory="C:/Users/albin/Dropbox/Eigenvector project/dataframes/pca/1000genomes_shuffled_full/210319/")
+function read_df(directory="C:/Users/albin/Dropbox/Eigenvector project/dataframes/pca/1000genomes_shuffled_full//t3large/210319/")
     filename = sort!(glob("*.csv", directory))[end]
     println("Reading $filename")
     df = DataFrame(CSV.File(filename, normalizenames=true))
