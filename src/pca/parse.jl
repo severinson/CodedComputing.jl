@@ -38,7 +38,7 @@ function create_df(fid, nrows=2504, ncolumns=81271767)
     rv
 end
 
-function compute_mse!(mses, iterates, Xs; mseiterations=20, Xnorm=104444.37027911078)
+function compute_mse!(mses, iterates, Xs; mseiterations=0, Xnorm=104444.37027911078)
     if iszero(mseiterations)
         return mses
     end
@@ -122,7 +122,7 @@ function parse_pca_files(;dir::AbstractString, prefix="output", dfname="df.csv",
     # process output files
     filenames = glob("$(prefix)*.h5", dir)
     shuffle!(filenames) # randomize the order to minimize overlap when using multiple concurrent processes
-    for (i, filename) in filenames
+    for (i, filename) in enumerate(filenames)
         t = now()
         println("[$i / $(length(filenames)), $(Dates.format(now(), "HH:MM"))] parsing $filename")
         try
