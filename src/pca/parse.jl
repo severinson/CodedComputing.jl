@@ -38,7 +38,7 @@ function create_df(fid, nrows=2504, ncolumns=81271767)
     rv
 end
 
-function compute_mse!(mses, iterates, Xs; mseiterations=20, Xnorm=104444.37027911078)
+function compute_mse!(mses, iterates, Xs; mseiterations=0, Xnorm=104444.37027911078)
     if iszero(mseiterations)
         return mses
     end
@@ -66,11 +66,14 @@ end
 
 Parse an output file and record everything in a DataFrame.
 """
-function df_from_output_file(filename::AbstractString, Xs; df_filename::AbstractString=filename*".csv")
+function df_from_output_file(filename::AbstractString, Xs; df_filename::AbstractString=filename*".csv", reparse=false)
     # skip non-existing/non-hdf5 files
     if !HDF5.ishdf5(filename)
         println("skipping (not a HDF5 file): $filename")
         return DataFrame()
+    end
+    if !reparse && isfile(df_filename)
+        return DataFrame(CSV.File(df_filename))
     end
     h5open(filename) do fid
         df = isfile(df_filename) ? DataFrame(CSV.File(df_filename)) : create_df(fid)
@@ -81,6 +84,7 @@ function df_from_output_file(filename::AbstractString, Xs; df_filename::Abstract
             select!(df, Not(:mse))
             df.mse = compute_mse!(mses, fid["iterates"][:, :, :], Xs)
         end
+        CSV.write(df_filename, df)
         return df
     end
 end
@@ -113,18 +117,16 @@ end
 
 Read all output files from `dir` and write summary statistics (e.g., iteration time and convergence) to DataFrames.
 """
-function parse_pca_files(;dir::AbstractString, prefix="output", dfname="df.csv", Xs)
+function parse_pca_files(;dir::AbstractString, prefix="output", dfname="df.csv", reparse=false, Xs)
 
     # process output files
     filenames = glob("$(prefix)*.h5", dir)
     shuffle!(filenames) # randomize the order to minimize overlap when using multiple concurrent processes
-    for filename in filenames
+    for (i, filename) in enumerate(filenames)
         t = now()
-        println("[$(Dates.format(now(), "HH:MM"))] parsing $filename")
+        println("[$i / $(length(filenames)), $(Dates.format(now(), "HH:MM"))] parsing $filename")
         try
-            df = df_from_output_file(filename, Xs)
-            CSV.write(filename*".csv", df)
-            # rm(filename)
+            df_from_output_file(filename, Xs; reparse)
         catch e
             printstyled(stderr,"ERROR: ", bold=true, color=:red)
             printstyled(stderr,sprint(showerror,e), color=:light_red)
