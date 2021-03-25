@@ -254,8 +254,8 @@ function plot_straggler_ac(df; f=0.5)
 
     # plot for different nworkers
     plt.figure()    
-    for nworkers in [27, 36]
-        nwait = round(Int, nworkers*f)
+    for nworkers in [36, 72, 108]
+        nwait = round(Int, nworkers/12)
         dfi = df
         dfi = dfi[dfi.nworkers .== nworkers, :]
         dfi = dfi[dfi.nwait .== nwait, :]

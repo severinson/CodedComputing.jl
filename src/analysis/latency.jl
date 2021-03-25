@@ -267,6 +267,129 @@ function plot_iterationtime_cdf(df; nworkers::Integer=12)
     plt.show()
 end
 
+function deg3_model_dfo(dfo)
+    dfo = dfo[dfo.nwait .== dfo.nworkers, :]
+    rv = by(
+        dfo, [:nworkers, :worker_flops],
+        [:order, :worker_latency] => ((x) -> NamedTuple{(:x1, :x2, :x3, :x4)}(fit_polynomial(x.order, x.worker_latency, 3)[2])),
+    )
+    sort!(rv, [:nworkers, :worker_flops])
+    rv   
+end
+
+function fit_deg3_model(dfo)
+    dfo = dfo[dfo.order .<= dfo.nwait, :]
+    A = zeros(size(dfo, 1), 8)
+    A[:, 1] .= 1
+    A[:, 2] .= dfo.order
+    A[:, 3] .= dfo.order.^2
+    A[:, 4] .= dfo.order.^3
+    A[:, 5] .= dfo.worker_flops
+    A[:, 6] .= dfo.worker_flops .* dfo.order ./ dfo.nworkers
+    A[:, 7] .= dfo.worker_flops .* (dfo.order ./ dfo.nworkers).^2
+    A[:, 8] .= dfo.worker_flops .* (dfo.order ./ dfo.nworkers).^3
+    y = dfo.worker_latency
+    mask = .!isinf.(y)
+    return A[mask, :] \ y[mask]
+end
+
+function predict_latency(c, nwait, nworkers)
+
+    b1 = -0.0005487338276092924
+    c1 = 0.00011666153003402824
+    d1 = -2.200065092782715e-6
+    e1 = 1.3139560334678954e-8
+    b2 = 7.632075760960183e-9
+    c2 = 2.1903320927807077e-9
+    d2 = -4.525831193535335e-9
+    e2 = 4.336744075595763e-9
+
+    # b1 = 0.010703608696370938
+    # c1 = -0.0030691685667751205
+    # d1 = 0.00020135985046091994
+    # e1 = -4.897385343162188e-6
+    
+    # b2 = 6.63914400628781e-9
+    # c2 = 2.159665083081131e-9
+    # d2 = -4.563978231793324e-9
+    # e2 = 4.343179512412342e-9
+
+    rv = b1 + b2*c
+    rv += c1*nwait + c2*c*nwait/nworkers
+    rv += d1*nwait^2 + d2*c*(nwait/nworkers)^2
+    rv += e1*nwait^3 + e2*c*(nwait/nworkers)^3
+    return rv
+
+    # x1 = 0.00023750325159487882 + 8.655275001289105e-9c
+    x1 = 8.808610486889335e-9c
+    x2 = 2.364427435704679e-6 + 3.857495392349022e-9(c./nworkers)
+    x3n = 3.059042830301536e-8 + 6.904996066160339e-9(c./nworkers.^2)
+    x3 = -1x3n
+    x4 = 1.7429927576815338e-10 + 5.682810836998657e-9(c./nworkers.^3)
+    x1 .+ x2.*nwait .+ x3.*nwait.^2 .+ x4.*nwait.^3
+end
+
+# x1
+# first-order function of worker_flops
+
+# x2
+# first-order function of worker_flops/nworkers
+
+# x3
+# first-order function of worker_flops/nworkers^2
+
+# x4
+# first-order function of worker_flops/nworkers^3
+
+function plot_deg3_model(dfm)
+    plt.figure()
+    cols = [:x1, :x2, :x3n, :x4]
+    for col in cols
+        dfm = dfm[dfm[col] .> 0, :]
+    end
+    for (i, col) in enumerate(cols)
+        plt.subplot(2, 2, i)
+        plt.title("$col")
+        p = i-1
+        for nworkers in sort!(unique(dfm.nworkers))
+            dfi = dfm
+            dfi = dfi[dfi.nworkers .== nworkers, :]
+            xs = dfi.worker_flops ./ nworkers.^p
+            ys = dfi[col]
+            plt.plot(xs, ys, "o", label="N: $nworkers")
+        end
+
+        xs = dfm.worker_flops ./ dfm.nworkers.^p
+        ys = dfm[col]
+
+        if col == :x1
+            intercept = 0
+        else
+            intercept = 0.1.*minimum(ys)
+        end
+        # intercept = 0
+        slope = mean((ys.-intercept) ./ xs)
+        ts = range(minimum(xs), maximum(xs), length=100)        
+        coeffs = [intercept, slope]
+
+        # p, coeffs = fit_polynomial(xs, ys, 1)
+        # plt.plot(ts, p.(ts), "k--")
+        
+        plt.plot(ts, intercept.+slope.*ts)        
+        println("$col: $coeffs")
+
+        plt.xscale("log")
+        plt.yscale("log")
+
+        plt.tight_layout()
+        plt.legend()
+        plt.grid()
+        plt.xlabel("nflops / nworkers^($p)")
+        plt.ylabel("$col")
+    end
+    return
+end
+
 """
 
 Fit a line to the linear-looking middle part of the orderstats plot.
@@ -374,14 +497,14 @@ function plot_linear_model(df, dfo, dfm=nothing)
     # ts = exp.(range(log(1), log(maximum(dfm.worker_flops)), length=100))
     # plt.loglog(ts, poly.(ts))   
     
-    # fitted line with intersection 0
+    # fitted line with intercept 0
     dfi = dfm[dfm.worker_flops .> 0, :]
     xs = dfi.worker_flops
     ys = dfi.intercept
     slope = mean(ys ./ xs)
     println("slope: $slope")
     ts = exp.(range(log(1), log(maximum(xs)), length=200))
-    plt.loglog(ts, ts.*slope)    
+    plt.loglog(ts, ts.*slope) 
 
     # # print fit line
     # println("Intercept: ", coeffs)
@@ -399,20 +522,23 @@ function plot_linear_model(df, dfo, dfm=nothing)
     # slope
     plt.figure()
 
-    # fitted line with intersection 0
+    # fitted line with intercept 0
     dfm = dfm[dfm.slope .> 0, :]    
-    # dfm.x = dfm.worker_flops ./ dfm.nworkers
-    # dfm = by(dfm, :x, :slope => mean => :slope)
-
     xs = dfm.worker_flops ./ dfm.nworkers
     ys = dfm.slope
-    # xs = dfm.x
-    # ys = dfm.slope
     slope = mean(ys ./ xs)
     println("slope: $slope")
-    # ts = exp.(range(log(1), log(maximum(dfm.worker_flops)), length=200))
-    ts = exp.(range(log(1), log(maximum(dfm.worker_flops)), length=200))
+    ts = exp.(range(log(1), log(maximum(xs)), length=200))
     plt.loglog(ts, ts.*slope, "k--")
+
+    # fitted line with guessed 0
+    xs = dfm.worker_flops ./ dfm.nworkers
+    ys = dfm.slope
+    intercept = 0.5*minimum(ys)
+    slope = mean((ys.-intercept) ./ xs)
+    println("slope: $slope")
+    ts = exp.(range(log(1), log(maximum(xs)), length=200))
+    plt.loglog(ts, intercept.+ts.*slope, "m--")
 
     for nworkers in unique(dfm.nworkers)
         if nworkers < 3
@@ -687,9 +813,14 @@ function plot_orderstats(dfo; worker_flops=1.08e7, onlycompute=false, normalized
             push!(ys, dfk.mean[end])
 
             # fit a polynomial to the data
-            p, coeffs = fit_polynomial(xs[[1, length(xs)]], ys[[1, length(ys)]], 1)
+            p, coeffs = fit_polynomial(xs, ys, 3)
+            println("N: $nworkers, $coeffs")
+            # p, coeffs = fit_polynomial(xs[[1, length(xs)]], ys[[1, length(ys)]], 1)
             ts = range(0, maximum(xs), length=100)
             plt.plot(ts, p.(ts), "k--")  
+
+            # plot predicted latency
+            plt.plot(1:nwait, predict_latency.(worker_flops, 1:nwait, nworkers), "c--")
         end
 
         # plot the overall iteration latency
@@ -1348,6 +1479,36 @@ end
 
 """
 
+"""
+function plot_worker_latency_timeseries(dfo; worker_flops)
+    dfo = dfo[isapprox.(dfo.worker_flops, worker_flops, rtol=1e-2), :]    
+    # select a job at random
+    jobid = rand(unique(dfo.jobid))
+    dfo = dfo[dfo.jobid .== jobid, :]
+    plt.figure()    
+
+    worker_index = rand(1:unique(dfo.nworkers)[1])
+    dfi = dfo[dfo.worker_index .== worker_index, :]
+    sort!(dfi, :iteration)
+    comm_latency = dfi.worker_latency .- dfi.worker_compute_latency
+    plt.plot(dfi.iteration, dfi.worker_compute_latency, "b-", label="Worker 1 (compute)")
+    plt.plot(dfi.iteration, comm_latency, "r-", label="Worker 1 (communication)")
+
+    worker_index = rand(1:unique(dfo.nworkers)[1])
+    dfi = dfo[dfo.worker_index .== worker_index, :]
+    sort!(dfi, :iteration)
+    comm_latency = dfi.worker_latency .- dfi.worker_compute_latency
+    plt.plot(dfi.iteration, dfi.worker_compute_latency, "c-", label="Worker 2 (compute)")
+    plt.plot(dfi.iteration, comm_latency, "m-", label="Worker 2 (communication)")    
+
+    plt.legend()
+    plt.grid()
+    plt.xlabel("Latency [s]")
+    plt.ylabel("Iteration")
+end
+
+"""
+
 Plot worker latency over time
 """
 function plot_worker_latency(df, n=10; miniterations=10000, onlycompute=true, worker_flops)
@@ -1374,16 +1535,16 @@ function plot_worker_latency(df, n=10; miniterations=10000, onlycompute=true, wo
 
     # compute running mean over windows of varying size
     windowlengths = [Inf, 5, 0]
-    df = compute_rmeans(df; windowlengths)
+    # df = compute_rmeans(df; windowlengths)
 
     # plot timeseries latency
-    plt.figure()
+    plt.figure()    
     plt.plot(df.time, df.worker_compute_latency, ".", label="Total latency")
     # dfi = df[df.burst, :]    
     # plt.plot(dfi.time, dfi.worker_compute_latency, "o", label="Burst latency")
-    for windowlength in reverse(windowlengths[2:end])
-        plt.plot(df.time, df["rmean_$windowlength"], ".", label="$windowlength")
-    end
+    # for windowlength in reverse(windowlengths[2:end])
+    #     plt.plot(df.time, df["rmean_$windowlength"], ".", label="$windowlength")
+    # end
 
     # plt.plot(df.time, df["rmean_0.0"], ".", label="Latency - (Mean + Markov)") 
     # plt.plot(df.time, df["rmean_10.0"], "-", label="Markov process")
@@ -1392,6 +1553,7 @@ function plot_worker_latency(df, n=10; miniterations=10000, onlycompute=true, wo
     plt.legend()
     plt.xlabel("Time [s]")
     plt.ylabel("Latency [s]")
+    return
 
     ### plot latency distribution
     plt.figure()
