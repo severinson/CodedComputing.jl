@@ -28,7 +28,7 @@ function create_df(fid, nrows=2504, ncolumns=81271767)
         for j in 1:nworkers # worker response epochs
             row["repoch_worker_$j"] = fid["benchmark/responded"][j, i]
         end        
-        if "latency" in names(fid["benchmark"]) # worker latency
+        if "latency" in keys(fid["benchmark"]) # worker latency
             for j in 1:nworkers
                 row["latency_worker_$j"] = fid["benchmark/latency"][j, i]
             end
@@ -66,7 +66,7 @@ end
 
 Parse an output file and record everything in a DataFrame.
 """
-function df_from_output_file(filename::AbstractString, Xs; df_filename::AbstractString=filename*".csv", reparse=false)
+function df_from_output_file(filename::AbstractString, Xs; df_filename::AbstractString=filename*".csv", mseiterations=0, reparse=false)
     # skip non-existing/non-hdf5 files
     if !HDF5.ishdf5(filename)
         println("skipping (not a HDF5 file): $filename")
@@ -78,11 +78,11 @@ function df_from_output_file(filename::AbstractString, Xs; df_filename::Abstract
     h5open(filename) do fid
         df = isfile(df_filename) ? DataFrame(CSV.File(df_filename)) : create_df(fid)
         df = df[.!ismissing.(df.iteration), :]
-        if "iterates" in keys(fid)
+        if "iterates" in keys(fid) && mseiterations > 0
             sort!(df, :iteration)
             mses = Vector{Union{Float64,Missing}}(df.mse)
             select!(df, Not(:mse))
-            df.mse = compute_mse!(mses, fid["iterates"][:, :, :], Xs)
+            df.mse = compute_mse!(mses, fid["iterates"][:, :, :], Xs; mseiterations)
         end
         CSV.write(df_filename, df)
         return df
@@ -117,7 +117,7 @@ end
 
 Read all output files from `dir` and write summary statistics (e.g., iteration time and convergence) to DataFrames.
 """
-function parse_pca_files(;dir::AbstractString, prefix="output", dfname="df.csv", reparse=false, Xs)
+function parse_pca_files(;dir::AbstractString, prefix="output", dfname="df.csv", reparse=false, Xs, mseiterations=0)
 
     # process output files
     filenames = glob("$(prefix)*.h5", dir)
@@ -126,7 +126,7 @@ function parse_pca_files(;dir::AbstractString, prefix="output", dfname="df.csv",
         t = now()
         println("[$i / $(length(filenames)), $(Dates.format(now(), "HH:MM"))] parsing $filename")
         try
-            df_from_output_file(filename, Xs; reparse)
+            df_from_output_file(filename, Xs; mseiterations, reparse)
         catch e
             printstyled(stderr,"ERROR: ", bold=true, color=:red)
             printstyled(stderr,sprint(showerror,e), color=:light_red)
