@@ -168,14 +168,15 @@ function coordinator_main()
     nworkers = MPI.Comm_size(comm) - 1
     parsed_args[:nworkers] = nworkers
     niterations::Int = parsed_args[:niterations]
-    niterations > 0 || throw(DomainError(niterations, "The number of iterations must be non-negative"))
+    niterations > 0 || throw(DomainError(niterations, "niterations is $niterations, but must be non-negative"))
     saveiterates::Bool = parsed_args[:saveiterates]
     nreplicas::Int = parsed_args[:nreplicas]
-    mod(nworkers, nreplicas) == 0 || throw(ArgumentError("nworkers must be divisible by nreplicas"))
+    mod(nworkers, nreplicas) == 0 || throw(ArgumentError("nworkers is $nworkers, but must be divisible by nreplicas"))
     npartitions = div(nworkers, nreplicas)
     nwait::Int = isnothing(parsed_args[:nwait]) ? npartitions : parsed_args[:nwait]
     parsed_args[:nwait] = nwait
-    0 < nwait <= npartitions || throw(DomainError(nwait, "nwait must be in [1, npartitions]"))
+    0 < nwait <= npartitions || throw(DomainError(nwait, "nwait is $nwait, but must be in [1, npartitions]"))
+    println("Job started with nwait: $nwait, npartitions: $npartitions, niterations: $niterations")
 
     # worker pool and communication buffers
     pool = AsyncPool(nworkers)
