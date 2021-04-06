@@ -2,6 +2,11 @@
 
 using HDF5, DataFrames, CSV, Glob, Dates, Random
 
+"""
+
+Create a DataFrame for a particular job. `nrows=2504` and `ncolumns=81271767` is correct for the 
+1000 Genomes dataset.
+"""
 function create_df(fid, nrows=2504, ncolumns=81271767)
     rv = DataFrame()
     row = Dict{String, Any}()
@@ -38,6 +43,11 @@ function create_df(fid, nrows=2504, ncolumns=81271767)
     rv
 end
 
+"""
+
+Compute the explained variance (here referred to as mse). `Xnorm=104444.37027911078` is correct 
+for the 1000 Genomes dataset.
+"""
 function compute_mse!(mses, iterates, Xs; mseiterations=0, Xnorm=104444.37027911078)
     if iszero(mseiterations)
         return mses
@@ -63,10 +73,19 @@ function compute_mse!(mses, iterates, Xs; mseiterations=0, Xnorm=104444.37027911
 end
 
 """
+    df_from_output_file(filename::AbstractString, Xs::Vector{<:AbstractMatrix}; df_filename::AbstractString=replace(filename, ".h5"=>".csv"), mseiterations=0, reparse=false)
 
-Parse an output file and record everything in a DataFrame.
+Parse the .h5 file `filename` (resulting from a run of the PCA kernel) into a DataFrame, which is 
+written to disk as a .csv file with name `df_filename`. If `reparse = false` and `df_filename` 
+already exists, then the existing `.csv` file is read from disk and returned, otherwise the `.h5`
+file is parsed again.
+
+To compute the explained variance of each iteration (here referred to as mse), the data matrix `X`
+must be provided as a vector `Xs`, corresponding to a horizontal partitioning of the data matrix, 
+i.e., `X = hcat(Xs, ...)`. Explained variance is computed for of up to `mseiterations` different 
+iterations.
 """
-function df_from_output_file(filename::AbstractString, Xs; df_filename::AbstractString=filename*".csv", mseiterations=0, reparse=false)
+function df_from_output_file(filename::AbstractString, Xs::Union{Nothing, Vector{<:AbstractMatrix}}; df_filename::AbstractString=replace(filename, ".h5"=>".csv"), mseiterations=0, reparse=false)
     # skip non-existing/non-hdf5 files
     if !HDF5.ishdf5(filename)
         println("skipping (not a HDF5 file): $filename")
@@ -139,17 +158,15 @@ function parse_pca_files(;dir::AbstractString, prefix="output", dfname="df.csv",
     aggregate_dataframes(;dir, prefix, dfname)
 end
 
+
+"""
+
+Run `parse_pca_files` in a loop.
+"""
 function parse_loop(args...; kwargs...)
     while true
         GC.gc()
         parse_benchmark_files(args...; kwargs...)        
         sleep(60)        
     end
-end
-
-# if run as a script
-if abspath(PROGRAM_FILE) == @__FILE__
-    dir = ARGS[1]
-    inputfile = ARGS[2]
-    parse_benchmark_files(;dir, inputfile)
 end

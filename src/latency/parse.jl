@@ -59,7 +59,7 @@ function parse_latency_files(;dir::AbstractString, prefix="output", dfname="df.c
         println("Parsing $filename")
         try
             df = df_from_latency_file(filename)
-            CSV.write(filename*".csv", df)
+            CSV.write(replace(filename, ".h5"=>".csv"), df)
             rm(filename)
         catch e
             printstyled(stderr,"ERROR: ", bold=true, color=:red)
