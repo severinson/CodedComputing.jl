@@ -3,47 +3,6 @@ using Glob
 
 """
 
-For each job, replace the delay of the first iteration by the average delay of the remaining iterations.
-Since we are not interested in the time spent on initialization in the first iteration.
-"""
-function remove_initialization_delay!(df)
-    jobids = unique(df.jobid)
-    t_update = zeros(length(jobids))
-    t_compute = zeros(length(jobids))
-    for (i, jobid) in enumerate(jobids)
-        dfi = df
-        dfi = dfi[dfi.jobid .== jobid, :]
-        dfi = dfi[dfi.iteration .>= 2, :]
-        t_update[i] = mean(dfi.t_update)
-        t_compute[i] = mean(dfi.t_compute)
-    end
-    df[df.iteration .== 1, "t_update"] .= t_update
-
-    # don't do it for t_compute, since workers are properly ininitialized anyway, and the averaging messes with kickstart
-    # df[df.iteration .== 1, "t_compute"] .= t_compute
-
-    df
-end
-
-"""
-
-Return t_compute, computed from the model fit to the 1000 genomes chromosome 20 data.
-Set `samp` to a value larger than 1 to increase the effect of straggling, and to a value in [0, 1) to reduce the effect.
-"""
-function model_tcompute_from_df(df; samp=1.0)
-    
-    # t_compute for everything but kickstart iterations
-    rv = get_offset.(df.worker_flops) .+ samp.*get_slope.(df.worker_flops, df.nworkers) .* df.nwait
-
-    # handle kickstart
-    mask = df.kickstart .== true .& df.iteration .== 1
-    rv[mask] .= get_offset.(df[mask, :worker_flops]) .+ samp.*get_slope.(df[mask, :worker_flops], df[mask, :nworkers]) .* df[mask, :nworkers]
-
-    return rv
-end
-
-"""
-
 Return a vector composed of the cumulative compute time for each job.
 """
 function cumulative_time_from_df(df)
@@ -77,7 +36,7 @@ end
 Read a csv file into a DataFrame
 "C:/Users/albin/Dropbox/Eigenvector project/dataframes/pca/sprand/210312/"
 """
-function read_df(directory="C:/Users/albin/Dropbox/Eigenvector project/dataframes/pca/1000genomes_shuffled_full/210319/")
+function read_df(directory="C:/Users/albin/Dropbox/Eigenvector project/dataframes/pca/1000genomes_shuffled_full/c5xlargeuse1/210319/")
     filename = sort!(glob("*.csv", directory))[end]
     println("Reading $filename")
     df = DataFrame(CSV.File(filename, normalizenames=true))
@@ -86,7 +45,7 @@ function read_df(directory="C:/Users/albin/Dropbox/Eigenvector project/dataframe
     df[:nostale] = Missings.replace(df.nostale, false)
     df[:kickstart] = Missings.replace(df.kickstart, false)
     df = df[df.kickstart .== false, :]
-    df = remove_initialization_delay!(df)
+    select!(df, Not(:kickstart)) # drop the kickstart column
     df[:worker_flops] = worker_flops_from_df(df)
     df.npartitions = df.nworkers .* df.nsubpartitions
     rename!(df, :t_compute => :latency)
@@ -261,32 +220,4 @@ function read_latency_df(directory="C:/Users/albin/Dropbox/Eigenvector project/d
     sort!(df, [:jobid, :iteration])
     df.time = by(df, :jobid, :latency => cumsum => :time).time # cumulative time since the start of the computation
     df[df.ncols .== 2504, :]
-end
-
-"""
-
-Split the DataFrame by algorithm (sgd, dsag, sag, gd)
-"""
-function split_df_by_algorithm(df)
-    error("Not implemented")
-    rv = Dict{String,DataFrame}()
-    for (algo, variancereduced) in Iterators.product(unique(df.algorithm), unique(df.variancereduced))
-        if ismissing(variancereduced)
-            continue
-        end
-        dfi = df
-        dfi = dfi[dfi.algorithm .== algo, :]        
-        if algo == "pca.jl"
-            dfi = dfi[dfi.variancereduced .== variancereduced, :]
-        end
-        if size(dfi, 1) == 0
-            continue
-        end
-        label = algo[1:end-3]
-        if variancereduced
-            label *= "vr"
-        end
-        rv[label] = dfi
-    end
-    rv
 end
