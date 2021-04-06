@@ -99,7 +99,7 @@ end
 
 
 
-function plot_genome_convergence(df, nworkers=unique(df.nworkers)[1], opt=maximum(skipmissing(df.mse)))
+function plot_genome_convergence(df, nworkers=unique(df.nworkers)[1], opt=maximum(skipmissing(df.mse)); latency="empirical")
     println("nworkers: $nworkers, opt: $opt")
 
     # (nwait, nsubpartitions, stepsize)
@@ -182,12 +182,12 @@ function plot_genome_convergence(df, nworkers=unique(df.nworkers)[1], opt=maximu
         # varying nwait      
         nsubpartitions = 160
         params = [
-            # (1, nsubpartitions, 0.9),            
+            (1, nsubpartitions, 0.9),            
             (3, nsubpartitions, 0.9),            
-            # (6, nsubpartitions, 0.9),                        
-            # (9, nsubpartitions, 0.9),            
-            # (18, nsubpartitions, 0.9),        
-            # (27, nsubpartitions, 0.9),
+            (6, nsubpartitions, 0.9),                        
+            (9, nsubpartitions, 0.9),            
+            (18, nsubpartitions, 0.9),        
+            (27, nsubpartitions, 0.9),
         ]
     elseif nworkers == 72
         nsubpartitions = 160
@@ -198,7 +198,31 @@ function plot_genome_convergence(df, nworkers=unique(df.nworkers)[1], opt=maximu
             (9, nsubpartitions, 0.9),
             # (18, nsubpartitions, 0.9),        
             # (27, nsubpartitions, 0.9),
-        ]        
+        ]
+        # nwait = 9
+        # params = [
+        #     (nwait, 120, 0.9),            
+        #     (nwait, 160, 0.9),            
+        #     # (nwait, nsubpartitions, 0.9),                        
+        #     # (nwait, nsubpartitions, 0.9),
+        # ]   
+    elseif nworkers == 108
+        nsubpartitions = 160
+        params = [
+            (1, nsubpartitions, 0.9),            
+            (3, nsubpartitions, 0.9),            
+            (6, nsubpartitions, 0.9),                        
+            (9, nsubpartitions, 0.9),
+        ]      
+
+        # nwait = 3
+        # params = [
+        #     (nwait, 120, 0.9),            
+        #     (nwait, 160, 0.9),            
+        #     (nwait, 240, 0.9),            
+        #     (nwait, 320, 0.9),            
+        #     (nwait, 640, 0.9),            
+        # ]                
     end
 
     df = df[df.nworkers .== nworkers, :]    
@@ -248,16 +272,20 @@ function plot_genome_convergence(df, nworkers=unique(df.nworkers)[1], opt=maximu
         if nwait < nworkers # for nwait = nworkers, DSAG and SAG are the same
             dfj = dfj[dfj.nostale .== false, :]
         end
-        filename = "./data/dsag_$(nworkers)_$(nwait)_$(nsubpartitions)_$(stepsize).csv"
+        filename = "./dsag_$(nworkers)_$(nwait)_$(nsubpartitions)_$(stepsize).csv"
         println("DSAG: $(length(unique(dfj.jobid))) jobs")
         if size(dfj, 1) > 0
             dfj = combine(groupby(dfj, :iteration), :mse => mean => :mse, :t_total => mean => :t_total)
-            if size(dfj, 1) > 0
-                xs = dfj.t_total
-                ys = opt.-dfj.mse
-                plt.semilogy(xs, ys, ".-", label="DSAG w=$nwait, p=$nsubpartitions")
-                # write_table(xs, ys, filename)
+            if latency == "empirical"
+                println("Plotting DSAG with empirical latency")
+            else
+                dfj.t_total .= predict_latency(mean(dfi.worker_flops), nwait, nworkers; type=latency) .* dfj.iteration
+                println("Plotting DSAG with model latency for $latency")
             end
+            xs = dfj.t_total
+            ys = opt.-dfj.mse
+            plt.semilogy(xs, ys, ".-", label="DSAG w=$nwait, p=$nsubpartitions")
+            write_table(xs, ys, filename)
         end
 
         # ### SAG
@@ -298,7 +326,8 @@ function plot_genome_convergence(df, nworkers=unique(df.nworkers)[1], opt=maximu
 
     # Plot SAG
     # for nsubpartitions in sort!(unique(df.nsubpartitions))
-    nsubpartitions = 80
+    nsubpartitions = 160
+    # for nsubpartitions in [80, 120, 160, 240, 320]
     stepsize = 0.9
     dfi = df
     dfi = dfi[dfi.nwait .== nworkers, :]
@@ -307,10 +336,18 @@ function plot_genome_convergence(df, nworkers=unique(df.nworkers)[1], opt=maximu
     dfi = dfi[dfi.nsubpartitions .== nsubpartitions, :]
     println("SAG p: $nsubpartitions, $(length(unique(dfi.jobid))) jobs")
     dfj = by(dfi, :iteration, :mse => mean => :mse, :t_total => mean => :t_total)
+    if latency == "empirical"
+        println("Plotting SAG with empirical latency")
+    else
+        dfj.t_total .= predict_latency(mean(dfi.worker_flops), nworkers, nworkers; type=latency) .* dfj.iteration
+        println("Plotting SAG with model latency for $latency")
+    end
     if size(dfj, 1) > 0
         xs = dfj.t_total
         ys = opt.-dfj.mse
         plt.semilogy(xs, ys, "o-", label="SAG p=$nsubpartitions")
+        filename = "./sag_$(nworkers)_$(nsubpartitions)_$(stepsize).csv"
+        write_table(xs, ys, filename)
     end
     # end
 
@@ -339,14 +376,23 @@ function plot_genome_convergence(df, nworkers=unique(df.nworkers)[1], opt=maximu
     dfi = dfi[dfi.stepsize .== stepsize, :]
     println("GD $(length(unique(dfi.jobid))) jobs")
     dfj = by(dfi, :iteration, :mse => mean => :mse, :t_total => mean => :t_total)
+    if latency == "empirical"
+        println("Plotting GD with empirical latency")
+    else
+        dfj.t_total .= predict_latency(mean(dfi.worker_flops), nworkers, nworkers; type=latency) .* dfj.iteration
+        println("Plotting GD with model latency for $latency")
+    end    
     if size(dfj, 1) > 0
         xs = dfj.t_total
         ys = opt.-dfj.mse
         plt.semilogy(xs, ys, "ms-", label="GD")
+        filename = "./gd_$(nworkers)_$(nsubpartitions)_$(stepsize).csv"
+        write_table(xs, ys, filename)
     end    
 
 
-    plt.xlim(0)
+    plt.xlim(1e-2, 1e2)
+    plt.xscale("log")
     plt.grid()
     plt.legend()    
     plt.xlabel("Time [s]")

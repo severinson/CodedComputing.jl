@@ -112,10 +112,57 @@ end
 
 """
 
+Plot latency as a function of `nworkers` for a fixed total workload.
+"""
+function plot_predictions(c0=1.6362946777247114e9; df=nothing, dfo=nothing)
+    if !isnothing(dfo)
+        dfo = dfo[dfo.order .<= dfo.nwait, :]
+    end
+    nworkers = 1:500    
+    c = c0 ./ nworkers
+    plt.figure()
+
+    for psi in [1/12, 0.5, 1.0]
+        nwait = psi.*nworkers
+        # return nworkers, predict_latency.(c, nwait, nworkers)
+        plt.plot(nworkers, predict_latency.(c, nwait, nworkers), label="$psi")
+
+        if !isnothing(df)
+            dfi = df
+            dfi = dfi[dfi.nwait .== round.(Int, psi.*dfi.nworkers), :]
+            dfi = dfi[isapprox.(dfi.worker_flops .* dfi.nworkers, c0, rtol=1e-2), :]
+            if size(dfi, 1) > 0
+                # plt.plot(dfo.nworkers, dfo.worker_latency, ".") # all points
+                dfj = by(dfi, :nworkers, :latency => mean => :latency)
+                plt.plot(dfj.nworkers, dfj.latency, "s", label="psi: $psi (df)") # averages
+            end
+        end
+
+        if !isnothing(dfo)
+            dfi = dfo
+            dfi = dfi[dfi.order .== round.(Int, psi.*dfi.nworkers), :]
+            dfi = dfi[isapprox.(dfi.worker_flops .* dfi.nworkers, c0, rtol=1e-2), :]        
+            if size(dfi, 1) > 0            
+                # plt.plot(dfo.nworkers, dfo.worker_latency, ".") # all points
+                dfj = by(dfi, :nworkers, :worker_latency => mean => :worker_latency)
+                plt.plot(dfj.nworkers, dfj.worker_latency, "o", label="psi: $psi (dfo)") # averages
+            end
+        end        
+    end
+
+    plt.legend()
+    plt.xlabel("nworkers")
+    plt.ylabel("Latency [s]")
+    plt.grid()
+    return
+end
+
+"""
+
 Plot latency as a function of nworkers for some value of σ0
 σ0=1.393905852e9 is the workload associated with processing all data on 1 worker
 """
-function plot_predictions(σ0=1.393905852e9; df=nothing)
+function plot_predictions_old(σ0=1.393905852e9; df=nothing)
 
     nworkers_all = 1:50
     σ0s = 10.0.^range(5, 12, length=20)    
@@ -273,6 +320,7 @@ function deg3_model_dfo(dfo)
         dfo, [:nworkers, :worker_flops],
         [:order, :worker_latency] => ((x) -> NamedTuple{(:x1, :x2, :x3, :x4)}(fit_polynomial(x.order, x.worker_latency, 3)[2])),
     )
+    rv.x3n = -1 .* rv.x3
     sort!(rv, [:nworkers, :worker_flops])
     rv   
 end
@@ -290,63 +338,55 @@ function fit_deg3_model(dfo)
     A[:, 8] .= dfo.worker_flops .* (dfo.order ./ dfo.nworkers).^3
     y = dfo.worker_latency
     mask = .!isinf.(y)
-    return A[mask, :] \ y[mask]
+    x = A[mask, :] \ y[mask]
+    for (i, label) in enumerate(["b1", "c1", "d1", "e1", "b2", "c2", "d2", "e2"])
+        println("$label = $(x[i])")
+    end
+    x
 end
 
-function predict_latency(c, nwait, nworkers)
+function deg3_coeffs(type="c5xlarge")
+    if type == "c5xlarge"
+        # b1 = -0.0005487338276092924
+        b1 = 0
+        c1 = 0.00011666153003402824
+        d1 = -2.200065092782715e-6
+        e1 = 1.3139560334678954e-8
+        b2 = 7.632075760960183e-9
+        c2 = 2.1903320927807077e-9
+        d2 = -4.525831193535335e-9
+        e2 = 4.336744075595763e-9
+        return b1, c1, d1, e1, b2, c2, d2, e2
+    elseif type == "t3large"
+        b1 = -0.0012538429018191268
+        c1 = 5.688267095613402e-5
+        d1 = 1.8724136277744778e-6
+        e1 = -1.2889725208620691e-8
+        b2 = 8.140573448894689e-9
+        c2 = 5.388607340950452e-9
+        d2 = -1.1648036394321019e-8
+        e2 = 7.880211300623262e-9
+        return b1, c1, d1, e1, b2, c2, d2, e2
+    end    
+    error("no instance type $type")
+end
 
-    b1 = -0.0005487338276092924
-    c1 = 0.00011666153003402824
-    d1 = -2.200065092782715e-6
-    e1 = 1.3139560334678954e-8
-    b2 = 7.632075760960183e-9
-    c2 = 2.1903320927807077e-9
-    d2 = -4.525831193535335e-9
-    e2 = 4.336744075595763e-9
-
-    # b1 = 0.010703608696370938
-    # c1 = -0.0030691685667751205
-    # d1 = 0.00020135985046091994
-    # e1 = -4.897385343162188e-6
-    
-    # b2 = 6.63914400628781e-9
-    # c2 = 2.159665083081131e-9
-    # d2 = -4.563978231793324e-9
-    # e2 = 4.343179512412342e-9
-
+function predict_latency(c, nwait, nworkers; type="c5xlarge")
+    b1, c1, d1, e1, b2, c2, d2, e2 = deg3_coeffs(type)
     rv = b1 + b2*c
     rv += c1*nwait + c2*c*nwait/nworkers
     rv += d1*nwait^2 + d2*c*(nwait/nworkers)^2
     rv += e1*nwait^3 + e2*c*(nwait/nworkers)^3
-    return rv
-
-    # x1 = 0.00023750325159487882 + 8.655275001289105e-9c
-    x1 = 8.808610486889335e-9c
-    x2 = 2.364427435704679e-6 + 3.857495392349022e-9(c./nworkers)
-    x3n = 3.059042830301536e-8 + 6.904996066160339e-9(c./nworkers.^2)
-    x3 = -1x3n
-    x4 = 1.7429927576815338e-10 + 5.682810836998657e-9(c./nworkers.^3)
-    x1 .+ x2.*nwait .+ x3.*nwait.^2 .+ x4.*nwait.^3
+    rv
 end
-
-# x1
-# first-order function of worker_flops
-
-# x2
-# first-order function of worker_flops/nworkers
-
-# x3
-# first-order function of worker_flops/nworkers^2
-
-# x4
-# first-order function of worker_flops/nworkers^3
 
 function plot_deg3_model(dfm)
     plt.figure()
-    cols = [:x1, :x2, :x3n, :x4]
+    cols = [:x1, :x2, :x3n, :x4]    
     for col in cols
         dfm = dfm[dfm[col] .> 0, :]
     end
+    b1, c1, d1, e1, b2, c2, d2, e2 = deg3_coeffs()        
     for (i, col) in enumerate(cols)
         plt.subplot(2, 2, i)
         plt.title("$col")
@@ -362,19 +402,26 @@ function plot_deg3_model(dfm)
         xs = dfm.worker_flops ./ dfm.nworkers.^p
         ys = dfm[col]
 
-        if col == :x1
-            intercept = 0
-        else
-            intercept = 0.1.*minimum(ys)
-        end
-        # intercept = 0
-        slope = mean((ys.-intercept) ./ xs)
-        ts = range(minimum(xs), maximum(xs), length=100)        
-        coeffs = [intercept, slope]
+        # if col == :x1
+        #     intercept = 0
+        # else
+        #     intercept = 0.1.*minimum(ys)
+        # end
+        # slope = mean((ys.-intercept) ./ xs)
 
-        # p, coeffs = fit_polynomial(xs, ys, 1)
-        # plt.plot(ts, p.(ts), "k--")
+
+        if col == :x1
+            intercept, slope = b1, b2
+        elseif col == :x2
+            intercept, slope = c1, c2
+        elseif col == :x3n
+            intercept, slope = -1*d1, -1*d2
+        elseif col == :x4
+            intercept, slope = e1, e2
+        end
+        coeffs = [intercept, slope]        
         
+        ts = range(minimum(xs), maximum(xs), length=100)                
         plt.plot(ts, intercept.+slope.*ts)        
         println("$col: $coeffs")
 
@@ -805,7 +852,8 @@ function plot_orderstats(dfo; worker_flops=1.08e7, onlycompute=false, normalized
                 xs = dfk[order_col]
                 ys = dfk.mean
             end
-            plt.plot(xs, ys, "-o", label="$((nworkers, nwait))")            
+            plt.plot(xs, ys, "-o", label="N_n: $nworkers")
+            write_table(xs, ys, "orderstats_$(nworkers)_empirical.csv")
 
             # store the overall iteration latency
             sort!(dfk, order_col)
@@ -816,11 +864,16 @@ function plot_orderstats(dfo; worker_flops=1.08e7, onlycompute=false, normalized
             p, coeffs = fit_polynomial(xs, ys, 3)
             println("N: $nworkers, $coeffs")
             # p, coeffs = fit_polynomial(xs[[1, length(xs)]], ys[[1, length(ys)]], 1)
-            ts = range(0, maximum(xs), length=100)
-            plt.plot(ts, p.(ts), "k--")  
+            xs = range(0, maximum(xs), length=100)
+            ys = p.(xs)
+            plt.plot(xs, ys, "k--")
+            write_table(xs, ys, "orderstats_$(nworkers)_local.csv")
 
             # plot predicted latency
-            plt.plot(1:nwait, predict_latency.(worker_flops, 1:nwait, nworkers), "c--")
+            xs = 1:nwait
+            ys = predict_latency.(worker_flops, 1:nwait, nworkers, type="c5xlarge")
+            plt.plot(xs, ys, "m--")
+            write_table(xs, ys, "orderstats_$(nworkers)_local.csv")
         end
 
         # plot the overall iteration latency
@@ -838,12 +891,12 @@ function plot_orderstats(dfo; worker_flops=1.08e7, onlycompute=false, normalized
     end
     if normalized
         plt.xlim(0, 1)    
-        plt.xlabel("Order / Total number of workers")        
+        plt.xlabel("w / Total number of workers")        
     else
         plt.xlim(0)    
-        plt.xlabel("Order")        
+        plt.xlabel("w")        
     end
-    # plt.legend()
+    plt.legend()
     plt.ylabel("Latency [s]")
     plt.tight_layout()
     plt.grid()
@@ -1485,6 +1538,7 @@ function plot_worker_latency_timeseries(dfo; worker_flops)
     # select a job at random
     jobid = rand(unique(dfo.jobid))
     dfo = dfo[dfo.jobid .== jobid, :]
+    dfo = dfo[dfo.iteration .<= 1000, :]
     plt.figure()    
 
     worker_index = rand(1:unique(dfo.nworkers)[1])
@@ -1493,6 +1547,8 @@ function plot_worker_latency_timeseries(dfo; worker_flops)
     comm_latency = dfi.worker_latency .- dfi.worker_compute_latency
     plt.plot(dfi.iteration, dfi.worker_compute_latency, "b-", label="Worker 1 (compute)")
     plt.plot(dfi.iteration, comm_latency, "r-", label="Worker 1 (communication)")
+    write_table(dfi.iteration, dfi.worker_compute_latency, "comp_latency_1.csv")
+    write_table(dfi.iteration, comm_latency, "comm_latency_1.csv")
 
     worker_index = rand(1:unique(dfo.nworkers)[1])
     dfi = dfo[dfo.worker_index .== worker_index, :]
@@ -1500,6 +1556,8 @@ function plot_worker_latency_timeseries(dfo; worker_flops)
     comm_latency = dfi.worker_latency .- dfi.worker_compute_latency
     plt.plot(dfi.iteration, dfi.worker_compute_latency, "c-", label="Worker 2 (compute)")
     plt.plot(dfi.iteration, comm_latency, "m-", label="Worker 2 (communication)")    
+    write_table(dfi.iteration, dfi.worker_compute_latency, "comp_latency_2.csv")
+    write_table(dfi.iteration, comm_latency, "comm_latency_2.csv")
 
     plt.legend()
     plt.grid()
