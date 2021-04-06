@@ -108,7 +108,12 @@ function df_from_output_file(filename::AbstractString, Xs::Union{Nothing, Vector
     end
 end
 
-# 2504×81271767, about 100GB total
+
+"""
+
+Read the sparse matrix stored in dataset with `name` in `filename` and partitions it column-wise 
+into `nblocks` partitions.
+"""
 function load_inputmatrix(filename::AbstractString, name::AbstractString="X"; nblocks=Threads.nthreads())
     h5open(filename) do fid
         m, n = h5size(fid, name)
@@ -129,6 +134,42 @@ function aggregate_dataframes(;dir::AbstractString, prefix::AbstractString="outp
     end
     df = vcat(dfs..., cols=:union)
     CSV.write(joinpath(dir, dfname), df)
+    df
+end
+
+"""
+
+Return a vector composed of the number of flops performed by each worker and iteration. The density
+of the 1000 Genomes data matrix is `0.05360388070027386`.
+"""
+function worker_flops_from_df(df; density=0.05360388070027386)
+    nflops = float.(df.nrows)
+    nflops ./= df.nworkers
+    nflops .*= df.nreplicas
+    nflops ./= Missings.replace(df.nsubpartitions, 1.0)
+    nflops .*= 2 .* df.ncolumns .* df.ncomponents
+    nflops .*= density
+end
+
+"""
+
+Read a csv file into a DataFrame
+"C:/Users/albin/Dropbox/Eigenvector project/dataframes/pca/sprand/210312/"
+"""
+function clean_pca_df(df::DataFrame)
+    df = df[.!ismissing.(df.nworkers), :]
+    df = df[.!ismissing.(df.iteration), :]
+    df[:nostale] = Missings.replace(df.nostale, false)
+    df[:kickstart] = Missings.replace(df.kickstart, false)
+    df = df[df.kickstart .== false, :]
+    select!(df, Not(:kickstart)) # drop the kickstart column
+    df[:worker_flops] = worker_flops_from_df(df)
+    df.npartitions = df.nworkers .* df.nsubpartitions
+    rename!(df, :t_compute => :latency)
+    rename!(df, :t_update => :update_latency)
+    df[:nbytes] = df.nrows .* df.ncomponents .* 4 # Float32 entries => 4 bytes per entry
+    sort!(df, [:jobid, :iteration])
+    df.time = by(df, :jobid, :latency => cumsum => :time).time # cumulative time since the start of the computation    
     df
 end
 
@@ -155,7 +196,8 @@ function parse_pca_files(;dir::AbstractString, prefix="output", dfname="df.csv",
     end
     inputmatrix = nothing
     GC.gc()
-    aggregate_dataframes(;dir, prefix, dfname)
+    df = aggregate_dataframes(;dir, prefix, dfname)
+    clean_pca_df(df)
 end
 
 

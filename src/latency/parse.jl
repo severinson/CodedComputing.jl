@@ -16,9 +16,6 @@ function df_from_latency_file(filename::AbstractString)
 
     h5open(filename) do fid        
         row = Dict{String,Any}()
-
-        # row["nrows"] = size(inputmatrix, 1)
-        # row["ncolumns"] = size(inputmatrix, 2)
         niterations = fid["parameters/niterations"][]
         nworkers = fid["parameters/nworkers"][]
 
@@ -49,6 +46,17 @@ end
 
 """
 
+Read a latency experiment csv file into a DataFrame
+"""
+function clean_latency_df(df::DataFrame)
+    df.worker_flops = 2 .* df.nrows .* df.ncols .* df.ncomponents .* df.density
+    sort!(df, [:jobid, :iteration])
+    df.time = by(df, :jobid, :latency => cumsum => :time).time # cumulative time since the start of the computation
+    df
+end
+
+"""
+
 Read all output files from `dir` and write summary statistics (e.g., iteration time and convergence) to DataFrames.
 """
 function parse_latency_files(;dir::AbstractString, prefix="output", dfname="df.csv")
@@ -68,7 +76,8 @@ function parse_latency_files(;dir::AbstractString, prefix="output", dfname="df.c
         end
         GC.gc()
     end
-    aggregate_dataframes(;dir, prefix, dfname)
+    df = aggregate_dataframes(;dir, prefix, dfname)
+    clean_latency_df(df)
 end
 
 function latency_parse_loop(args...; kwargs...)
