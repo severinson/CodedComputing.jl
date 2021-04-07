@@ -169,7 +169,8 @@ function clean_pca_df(df::DataFrame)
     rename!(df, :t_update => :update_latency)
     df[:nbytes] = df.nrows .* df.ncomponents .* 4 # Float32 entries => 4 bytes per entry
     sort!(df, [:jobid, :iteration])
-    df.time = by(df, :jobid, :latency => cumsum => :time).time # cumulative time since the start of the computation    
+    df.time = by(df, :jobid, :latency => cumsum => :time).time # cumulative time since the start of the computation
+    df.time .+= by(df, :jobid, :update_latency => cumsum => :time).time
     df
 end
 
