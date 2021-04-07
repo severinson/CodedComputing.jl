@@ -14,7 +14,14 @@ Hence, the total latency of each iteration is the sum of the communication and c
 
 Each run of either kernel results in a `.h5` file (i.e., a [HDF5 file](https://en.wikipedia.org/wiki/Hierarchical_Data_Format)), which is parsed to produce a `.csv` file containing the latency associated with each worker and iteration, the explained variance, and the parameters of that run. Each row corresponds to one iteration of the algorithm. Finally, the `.csv` files associated with each run are concatenated to produce a single `.csv` file containing all traces for one experiment setup (i.e., for a particular dataset).
 
-To parse `.h5` files resulting from runs of the PCA kernel, see the `parse_pca_files` and `df_from_output_file` functions in `src/pca/parse.jl`. To parse `.h5` files resulting from runs of the latency kernel, see the corresponding functions in `src/latency/parse.jl`.
+To parse `.h5` files resulting from runs of the PCA kernel, see the `parse_pca_files` and `df_from_output_file` functions in `src/pca/parse.jl`. To parse `.h5` files resulting from runs of the latency kernel, see the corresponding functions in `src/latency/parse.jl`. 
+
+Use the following code to load a `.csv` file into a [DataFrames.jl](https://dataframes.juliadata.org/stable/) DataFrame:
+```julia
+using CSV, DataFrames
+df = DataFrame(CSV.File(<filename>))
+```
+The rows of this DataFrame correspond to iterations, and the latency of all workers participating in a particular iteration are recorded in the same row. If needed, convert the DataFrame to tall format using the `tall_from_wide` function in `src/Analysis.jl`, which expands the DataFrame such that each row corresponds to one worker for a particular iteration and job.
 
 See the bottom of this file for a description of the columns of the resulting DataFrame.
 
@@ -22,28 +29,7 @@ See the bottom of this file for a description of the columns of the resulting Da
 
 We have collected latency traces on Amazon Web Services (AWS) using these two kernels, which are available as `.csv` files [here](https://www.dropbox.com/sh/wa3s4yeasqeko5h/AABLPknDQO6TU2s-NDhzpI1Ia?dl=0). Traces collected using the latency and PCA kernels are prefixed with `latency` and `pca`, respectively. For the PCA files, the next section of the filename indicates the dataset used (see below). Finally, the last two sections of the filename indicates the AWS [instance type](https://aws.amazon.com/ec2/instance-types/) and [region](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-regions-availability-zones.html#concepts-available-regions) used.
 
-The `.h5` files and corresponding `.csv` files are available in the corresponding `.zip` files in the traces directory.
-
-<!-- 
-We give a more detailed overview of both kernels below.
-
-**Latency kernel**
-
-1. Before the start of the computation, each worker generates a sparse matrix, denoted by `X`, using the `sprand` function, and a dense matrix, denoted by `W`, using the `randn` function. The dimensions of `X` and `W` and the density of `X` are given as command-line arguments. Both matrices contain `Float64` entries.
-2. At the start of each iteration, the coordinator sends 
-
-
-Files suffixed with `tall` are converted from wide to tall format. Each row corresponds to the latency of an individual worker. 
-
-I want to update the kernels to use H5Sparse
-
-- Kernels and associated files
-- Code for creating the datasets
-- Code for parsing the .h5 files
-- Code for parsing the .csv files
-
--->
-
+The `.h5` files and corresponding `.csv` files that each trace file is the concatenation of are available in the `.zip` file with the same filename.
 
 ### Datasets
 
@@ -99,7 +85,7 @@ LAPACK: libmkl_rt.so.1
 
 ## DataFrame columns
 
-Each row of the concatenated DataFrame corresponds to one iteration of a particular job, and the DataFrame has columns:
+Each row of the concatenated DataFrame corresponds to one iteration of a particular job. The DataFrame resulting from the PCA kernel have the following columns.
 
 * `iteration`: Iteration index
 * `jobid`: Unique ID for each run of the kernel, i.e., each unique `jobid` corresponds to one `.h5` file
@@ -124,3 +110,40 @@ Each row of the concatenated DataFrame corresponds to one iteration of a particu
 * `update_latency`: Latency associated with computing the updated iterate at the coordinator
 * `variancereduced`: If `true`, the variance-reduced DSAG method was used for this job, whereas, if `false`, SGD was used
 * `worker_flops`: Estimated number of FLOPS per worker and iteration
+
+DataFrames resulting from the latency kernel have the following columns. Columns with no explanation have the same meaning as above.
+
+* `nwait`:
+* `timeout`: Amount of time that the coordinator waits between iterations
+* `nworkers`:
+* `ncomponents`
+* `nbytes`
+* `niterations`
+* `nrows`
+* `latency`
+* `iteration`
+* `ncols`
+* `density`: Matrix density
+* `timestamp`: Iteration timestamp in nanoseconds
+* `jobid`
+* `worker_flops`
+* `time`
+* `repoch_worker_<i>`
+* `latency_worker_<i>`
+* `compute_latency_worker_<i>`: Compute latency of the `i`-th worker
+
+Converting the DataFrame to tall format deletes the following columns:
+
+* `latency_worker_<i>`
+* `repoch_worker_<i>`
+* `compute_latency_worker_<i>`
+
+And introduces:
+
+* `worker_index`: Index of the worker that this row corresponds to
+* `isstraggler`: Is `true` if the worker was a straggler in this iteration
+* `worker_latency`: Overall latency of this worker
+* `worker_compute_latency`: Compute latency of this worker
+* `repoch`: Iteration that the result received from the `i`-th worker was computed for, i.e., the result is stale if it is less than `iteration`
+* `order`: Completion order of this worker for this iteration, e.g., if `order=3`, then this worker was the third fastest in this iteration
+* `compute_order`: Same as `order`, but for `worker_compute_latency`
