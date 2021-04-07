@@ -1,6 +1,6 @@
 module CodedComputing
 
-using LinearAlgebra, SparseArrays, HDF5
+using LinearAlgebra, SparseArrays, HDF5, DataFrames
 
 include("Linalg.jl")
 include("Datasets.jl")
