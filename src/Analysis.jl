@@ -50,9 +50,33 @@ end
 
 """
 
+Extend a tall DataFrame, such that there is order statistics latency for numbers of workers other than `nwait`.
+"""
+function extend_dfo(dfo)
+    rv = DataFrame()
+    dfo = filter([:nwait, :nworkers] => (x, y)->(x == y), dfo)
+    dfo.mse = missing
+    for i in 1:maximum(df.nworkers)
+        dfi = dfo
+        dfi = filter([:nworkers, :worker_index] => (x, y)->((x >= i) && (y <= i)), dfi)
+        if size(dfi, 1) == 0
+            continue
+        end
+        dfi.nworkers .= i
+        dfi.nwait .= i
+        sort!(dfi, [:jobid, :iteration, :worker_latency])        
+        dfi.order .= by(dfi, [:jobid, :iteration], :nworkers => ((x) -> collect(1:maximum(x))) => :order).order
+        append!(rv, dfi, cols=:union)
+        GC.gc()
+    end
+    rv
+end
+
+"""
+
 Return a df composed of the order statistic samples for each worker, iteration, and job.
 """
-function tall_from_wide(df; extend=false)
+function tall_from_wide(df)
     df = df[.!ismissing.(df["latency_worker_1"]), :]    
     if size(df, 1) == 0
         return DataFrame()
@@ -72,6 +96,7 @@ function tall_from_wide(df; extend=false)
     df1 = stack(df1, ["latency_worker_$i" for i in 1:nworkers], value_name=:worker_latency)
     select!(df1, Not(:variable), :variable => ((x) -> parse.(Int, last.(split.(x, "_")))) => :worker_index)
     dropmissing!(df1, :worker_latency)
+    GC.gc()
     
     # stack by worker receive epoch
     df2 = stack(df, ["repoch_worker_$i" for i in 1:nworkers], [:jobid, :iteration], value_name=:repoch)
@@ -79,6 +104,7 @@ function tall_from_wide(df; extend=false)
     dropmissing!(df2, :repoch)
     df2[:isstraggler] = df2.repoch .< df2.iteration
     joined = innerjoin(df1, df2, on=[:jobid, :iteration, :worker_index]) 
+    GC.gc()    
 
     # stack by worker compute latency
     if "compute_latency_worker_1" in names(df)
@@ -87,6 +113,7 @@ function tall_from_wide(df; extend=false)
         dropmissing!(df3, :worker_compute_latency)
         joined = innerjoin(joined, df3, on=[:jobid, :iteration, :worker_index])
     end
+    GC.gc()    
 
     # the latency of stragglers is infinite
     joined[joined.isstraggler, :worker_latency] .= Inf
@@ -98,28 +125,20 @@ function tall_from_wide(df; extend=false)
         sort!(joined, [:jobid, :iteration, :worker_compute_latency])
         joined[:compute_order] = by(joined, [:jobid, :iteration], :nworkers => ((x) -> collect(1:maximum(x))) => :order).order        
     end
-
-    if extend
-        dfi = joined[joined.nwait .== joined.nworkers, :]
-        dfi.mse = missing
-        for i in 1:maximum(df.nworkers)
-            dfj = dfi
-            dfj = dfj[dfj.nworkers .> i, :]        
-            dfj = dfj[dfj.worker_index .<= i, :]
-            if size(dfj, 1) == 0
-                continue
-            end
-            dfj.nworkers .= i
-            dfj.nwait .= i
-            sort!(dfj, [:jobid, :iteration, :worker_latency])
-            dfj.order .= by(dfj, [:jobid, :iteration], :nworkers => ((x) -> collect(1:maximum(x))) => :order).order
-            joined = vcat(joined, dfj)
-        end
-    end
-    # add a flag indicating if the worker is experiencing a latency burst
-    # joined.burst = burst_state_from_orderstats_df(joined)
+    GC.gc()
 
     return joined
+end
+
+"""
+
+Remove columns not necessary for analysis (to save space).
+"""
+function strip_columns!(df)
+    for column in ["iteratedataset", "saveiterates", "outputdataset", "inputdataset", "inputfile", "algorithm", "outputfile"]
+        select!(df, Not(column))
+    end
+    df
 end
 
 includet("analysis/convergence.jl")

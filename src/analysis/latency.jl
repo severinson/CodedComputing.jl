@@ -1220,14 +1220,6 @@ end
 
 """
 
-
-"""
-function plot_job_latency_distribution(dfo)
-
-end
-
-"""
-
 Compute Markov process state transition probability matrix
 """
 function compute_markov_state_matrix(df)
