@@ -152,17 +152,26 @@ And introduces:
 
 ```julia
 # initialization
-using Revise, CodedComputing
-includet("src/Analysis.jl")
-using CSV, DataFrames
+using Revise # optional, needed for changes made to the source code be reflected in the REPL
+using CodedComputing
+includet("src/Analysis.jl") # use include instead of includet if you're not using Revise
 
 # pca load data from disk
+using CSV, DataFrames
 df = DataFrame(CSV.File("<path-to-traces-directory>/pca-1000genomes-c5.xlarge-eu-north-1.csv"))
-dfo = tall_from_wide(df, extend=true) # will take a few minutes
+strip_columns!(df) # optional, to reduce DataFrame size
+reindex_workers_by_order!(df) # needed to compute order statistics
 
-# plot latency vs. order
+# plot the coefficients of the degree-3 polynomial model
+dfm = mean_latency_df(df) # compute average order statistics latency for each unique pair (nworkers, worker_flops)
+df3 = fit_local_deg3_model(dfm) # fit a degree-3 polynomial to the order statistics latency for each row of dfm
+plot_deg3_model(df3)
+
+# plot latency order statistics
+plot_orderstats(df, worker_flops=2.27e7)
 
 # plot prob. of a worker remaining a straggler
+
 
 # plot model parameters
 

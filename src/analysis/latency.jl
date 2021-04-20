@@ -1,101 +1,13 @@
 # Code for analyzing and plotting latency
 
-# linear model
-# get_βs() = [0.005055059937837611, 8.075122937312302e-8, 1.1438758464435006e-16]
-# get_γs() = [0.03725188744901591, 3.109510011653974e-8, 6.399147477943208e-16]
-
-# get_offset(w) = 0.005055059937837611 .+ 8.075122937312302e-8w .+ 1.1438758464435006e-16w.^2
-# get_slope(w, nworkers) = 0.03725188744901591 .+ 3.109510011653974e-8(w./nworkers) .+ 6.399147477943208e-16(w./nworkers).^2
-
-# get_offset(w) = 7.927948909471475e-9w
-# get_slope(w, nworkers) = (-0.7293548623181831 .+ 0.046797154093631756log(c))./nworkers
-
-# linear model based on fully shuffled data
-get_offset(c) = 7.517223358654102e-9c
-get_slope(c, nworkers) = (0.0034845934661738285 .+ 1.6086658767640374e-9c) ./ nworkers
-
 # shifted exponential model
 # get_shift(w) = 0.2514516116132241 .+ 6.687583396247953e-8w .+ 2.0095825408761404e-16w.^2
 # get_scale(w) = 0.23361469930191084 .+ 7.2464826067975726e-9w .+ 5.370433628859458e-17w^2
 
-get_shift(w) = 7.511478910765988e-9w
-get_scale(w) = 0.012667298954788542 .+ 5.788848515637547e-10w
+# get_shift(w) = 7.511478910765988e-9w
+# get_scale(w) = 0.012667298954788542 .+ 5.788848515637547e-10w
 
-"""
 
-Fit a shifted exponential latency model to the data.
-"""
-function fit_shiftexp_model(df, worker_flops)
-    # df = df[df.nwait .== nwait, :]
-    df = df[isapprox.(df.worker_flops, worker_flops, rtol=1e-2), :]
-    df = df[df.nreplicas .== 1, :]
-    df = df[df.kickstart .== false, :]
-    if size(df[df.nwait .==1, :], 1) == 0
-        return NaN, NaN
-    end
-
-    # get the shift from waiting for 1 worker
-    shift = quantile(df[df.nwait .== 1, :latency], 0.01)
-    ts = df.latency .- shift
-
-    # get the scale from waiting for all workers
-    β = 0.0
-    for nworkers in unique(df.nworkers)
-        dfi = df
-        dfi = dfi[dfi.nworkers .== nworkers, :]
-        nwait = nworkers
-        ts = dfi[dfi.nwait .== nwait, :latency] .- shift
-        # σ = var(ts)
-        # β1 = sqrt(σ / sum(1/i^2 for i in (nworkers-nwait+1):nworkers))        
-        μ = mean(ts)
-        βi = μ / sum(1/i for i in (nworkers-nwait+1):nworkers)
-        β += βi * size(dfi, 1) / size(df, 1)
-    end
-    return shift, β
-end
-
-"""
-
-Plot the shifted exponential shift and scale as a function of w.
-"""
-function plot_shiftexp_model(df)
-    ws = sort!(unique(df.worker_flops))
-    models = [fit_shiftexp_model(df, w) for w in ws]
-    shifts = [m[1] for m in models]
-    scales = [m[2] for m in models]
-
-    # filter out nans
-    mask = findall(.!isnan, scales)
-    ws = ws[mask]
-    shifts = shifts[mask]
-    scales = scales[mask]
-
-    plt.figure()
-    plt.plot(ws, shifts, "o")
-
-    poly = Polynomials.fit(ws, shifts, 1)
-    println(poly.coeffs)    
-    ts = range(0, maximum(df.worker_flops), length=100)
-    plt.plot(ts, poly.(ts))
-
-    plt.grid()
-    plt.xlabel("w")    
-    plt.ylabel("shift")
-
-    plt.figure()
-    plt.plot(ws, scales, "o")
-
-    poly = Polynomials.fit(ws, scales, 1)
-    println(poly.coeffs)
-    ts = range(0, maximum(df.worker_flops), length=100)
-    plt.plot(ts, poly.(ts))    
-
-    plt.grid()
-    plt.xlabel("w")    
-    plt.ylabel("scale")    
-
-    return
-end
 
 """
 
@@ -322,32 +234,10 @@ function deg3_model_dfo(dfo)
     )
     rv.x3n = -1 .* rv.x3
     sort!(rv, [:nworkers, :worker_flops])
-    rv   
+    rv
 end
 
-
-
-function fit_deg3_model_old(dfo)
-    dfo = dfo[dfo.order .<= dfo.nwait, :]
-    A = zeros(size(dfo, 1), 8)
-    A[:, 1] .= 1
-    A[:, 2] .= dfo.order
-    A[:, 3] .= dfo.order.^2
-    A[:, 4] .= dfo.order.^3
-    A[:, 5] .= dfo.worker_flops
-    A[:, 6] .= dfo.worker_flops .* dfo.order ./ dfo.nworkers
-    A[:, 7] .= dfo.worker_flops .* (dfo.order ./ dfo.nworkers).^2
-    A[:, 8] .= dfo.worker_flops .* (dfo.order ./ dfo.nworkers).^3
-    y = dfo.worker_latency
-    mask = .!isinf.(y)
-    x = A[mask, :] \ y[mask]
-    for (i, label) in enumerate(["b1", "c1", "d1", "e1", "b2", "c2", "d2", "e2"])
-        println("$label = $(x[i])")
-    end
-    x
-end
-
-function plot_deg3_model(dfm)
+function plot_deg3_model_old(dfm)
     plt.figure()
     cols = [:x1, :x2, :x3n, :x4]    
     for col in cols

@@ -1,9 +1,6 @@
 using CSV, DataFrames, PyPlot, Statistics, Polynomials, LinearAlgebra, Distributions, RollingFunctions
 using StatsBase
 
-using PyCall
-tikzplotlib = pyimport("tikzplotlib")
-
 """
 
 Fit a linear model (i.e., a line) to the data X, y.
@@ -78,20 +75,24 @@ Update the worker indices such that the fastest worker has index 1 and so on.
 """
 function reindex_workers_by_order!(df)
     maxworkers = maximum(df.nworkers)
-    buffer = zeros(maxworkers)
+    latencies = zeros(maxworkers)
+    repochs = zeros(Int, maxworkers)
     latency_columns = ["latency_worker_$i" for i in 1:maxworkers]
     repoch_columns = ["repoch_worker_$i" for i in 1:maxworkers]
     for i in 1:size(df, 1)
-        buffer .= Inf
+        latencies .= Inf
         nworkers = df.nworkers[i]
         for j in 1:nworkers
             repoch = df[i, repoch_columns[j]]
             isstraggler = ismissing(repoch) || repoch < df.iteration[i]
-            buffer[j] = isstraggler ? Inf : df[i, latency_columns[j]]
+            latencies[j] = isstraggler ? Inf : df[i, latency_columns[j]]
         end
-        sort!(view(buffer, 1:nworkers))
+        latencies_view = view(latencies, 1:nworkers)
+        repochs_view = view(repochs, 1:nworkers)
+        p = sortperm(latencies_view)
         for j in 1:nworkers
-            df[i, latency_columns[j]] = buffer[j]
+            df[i, latency_columns[j]] = latencies[p[j]]
+            df[i, repoch_columns[j]] = repochs[p[j]]
         end
     end
     df
