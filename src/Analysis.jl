@@ -74,6 +74,31 @@ end
 
 """
 
+Update the worker indices such that the fastest worker has index 1 and so on.
+"""
+function reindex_workers_by_order!(df)
+    maxworkers = maximum(df.nworkers)
+    buffer = zeros(maxworkers)
+    latency_columns = ["latency_worker_$i" for i in 1:maxworkers]
+    repoch_columns = ["repoch_worker_$i" for i in 1:maxworkers]
+    for i in 1:size(df, 1)
+        buffer .= Inf
+        nworkers = df.nworkers[i]
+        for j in 1:nworkers
+            repoch = df[i, repoch_columns[j]]
+            isstraggler = ismissing(repoch) || repoch < df.iteration[i]
+            buffer[j] = isstraggler ? Inf : df[i, latency_columns[j]]
+        end
+        sort!(view(buffer, 1:nworkers))
+        for j in 1:nworkers
+            df[i, latency_columns[j]] = buffer[j]
+        end
+    end
+    df
+end
+
+"""
+
 Return a df composed of the order statistic samples for each worker, iteration, and job.
 """
 function tall_from_wide(df)
@@ -147,3 +172,4 @@ includet("analysis/latency.jl")
 includet("analysis/simulation.jl")
 includet("analysis/sweep.jl")
 includet("analysis/netcoding.jl")
+includet("analysis/newplots.jl")

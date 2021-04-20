@@ -147,3 +147,26 @@ And introduces:
 * `repoch`: Iteration that the result received from the `i`-th worker was computed for, i.e., the result is stale if it is less than `iteration`
 * `order`: Completion order of this worker for this iteration, e.g., if `order=3`, then this worker was the third fastest in this iteration
 * `compute_order`: Same as `order`, but for `worker_compute_latency`
+
+## Reproducing the plots in the paper
+
+```julia
+# initialization
+using Revise, CodedComputing
+includet("src/Analysis.jl")
+using CSV, DataFrames
+
+# pca load data from disk
+df = DataFrame(CSV.File("<path-to-traces-directory>/pca-1000genomes-c5.xlarge-eu-north-1.csv"))
+dfo = tall_from_wide(df, extend=true) # will take a few minutes
+
+# plot latency vs. order
+
+# plot prob. of a worker remaining a straggler
+
+# plot model parameters
+
+# plot predicted and empirical latency
+
+# plot rate of convergence
+```

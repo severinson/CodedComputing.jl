@@ -325,7 +325,9 @@ function deg3_model_dfo(dfo)
     rv   
 end
 
-function fit_deg3_model(dfo)
+
+
+function fit_deg3_model_old(dfo)
     dfo = dfo[dfo.order .<= dfo.nwait, :]
     A = zeros(size(dfo, 1), 8)
     A[:, 1] .= 1
@@ -343,41 +345,6 @@ function fit_deg3_model(dfo)
         println("$label = $(x[i])")
     end
     x
-end
-
-function deg3_coeffs(type="c5xlarge")
-    if type == "c5xlarge"
-        # b1 = -0.0005487338276092924
-        b1 = 0
-        c1 = 0.00011666153003402824
-        d1 = -2.200065092782715e-6
-        e1 = 1.3139560334678954e-8
-        b2 = 7.632075760960183e-9
-        c2 = 2.1903320927807077e-9
-        d2 = -4.525831193535335e-9
-        e2 = 4.336744075595763e-9
-        return b1, c1, d1, e1, b2, c2, d2, e2
-    elseif type == "t3large"
-        b1 = -0.0012538429018191268
-        c1 = 5.688267095613402e-5
-        d1 = 1.8724136277744778e-6
-        e1 = -1.2889725208620691e-8
-        b2 = 8.140573448894689e-9
-        c2 = 5.388607340950452e-9
-        d2 = -1.1648036394321019e-8
-        e2 = 7.880211300623262e-9
-        return b1, c1, d1, e1, b2, c2, d2, e2
-    end    
-    error("no instance type $type")
-end
-
-function predict_latency(c, nwait, nworkers; type="c5xlarge")
-    b1, c1, d1, e1, b2, c2, d2, e2 = deg3_coeffs(type)
-    rv = b1 + b2*c
-    rv += c1*nwait + c2*c*nwait/nworkers
-    rv += d1*nwait^2 + d2*c*(nwait/nworkers)^2
-    rv += e1*nwait^3 + e2*c*(nwait/nworkers)^3
-    rv
 end
 
 function plot_deg3_model(dfm)
@@ -796,7 +763,7 @@ Plot
 - Latency order stats recorded individually for each worker for different w_target
 - Iteration latency for different w_target
 """
-function plot_orderstats(dfo; worker_flops=1.08e7, onlycompute=false, normalized=false)
+function plot_orderstats_old(dfo; worker_flops=1.08e7, onlycompute=false, normalized=false)
     order_col = onlycompute ? :compute_order : :order
     latency_col = onlycompute ? :worker_compute_latency : :worker_latency
     dfo = dfo[dfo[order_col] .<= dfo.nwait, :]    
