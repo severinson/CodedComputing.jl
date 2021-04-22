@@ -6,14 +6,14 @@ Return a matrix of size `niterations` by `nworkers`, where a `1` in position `i,
 worker `j` was a straggler in iteration `i`. Non-stragglers are marked with `-1`.
 """
 function straggler_matrix_from_jobid(df, jobid, nworkers)
-    df = df[df.jobid .== jobid, :]
+    df = filter(:jobid => (x)->x==jobid, df)
     sort!(df, :iteration)
     rv = fill(-1, size(df, 1), nworkers)
     for i in 1:nworkers
         rv[df["repoch_worker_$(i)"] .< df.iteration, i] .= 1
     end
     ts = zeros(size(df, 1))
-    ts[2:end] .= df.t_total[1:end-1]
+    ts[2:end] .= df.time[1:end-1]
     rv, ts
 end
 
@@ -125,27 +125,19 @@ function straggler_prob_timeseries_from_df(df; nbins=nothing, prob=true)
     jobids = unique(df.jobid)
     println("Computing AC over $(length(jobids)) jobs")
     for jobid in jobids
-
         dfi = df
         dfi = dfi[dfi.jobid .== jobid, :]
         if ismissing(dfi.repoch_worker_1[1])
             continue
         end
-
-        # # traces with mse are recorded in a less controlled manner
-        # # so we skip these
-        # if !ismissing(dfi.mse[1])
-        #     continue
-        # end
-
-        @assert length(unique(df.nworkers)) == 1
-        nworkers = unique(df.nworkers)[1]
+        @assert length(unique(dfi.nworkers)) == 1
+        nworkers = unique(dfi.nworkers)[1]
 
         M, ts = straggler_matrix_from_jobid(df, jobid, nworkers)
         # println("jobid: $jobid, iterations: $(size(M, 1))")
 
         # autocorrelation
-        C = StatsBase.autocor(M, 0:size(M, 1)-1, demean=false)  
+        C = StatsBase.autocor(M, 0:size(M, 1)-1, demean=false)
 
         # fix normalization made by the autocor function        
         for i in 1:size(C, 1)
@@ -177,7 +169,6 @@ function straggler_prob_timeseries_from_df(df; nbins=nothing, prob=true)
         end
     end
     values ./= counts
-    # println("Count: $counts")
     return edges, values, counts
 end
 
@@ -185,9 +176,10 @@ end
 
 Plot the probability that a straggler remains a straggler after some time has passed.
 """
-function plot_straggler_ac(df; f=0.5)
-    df = df[df.kickstart .== false, :]
-    df = df[df.nreplicas .== 1, :]
+function plot_straggler_ac(df; phi=0.5)
+    df = filter([:nwait, :nworkers] => (x, y)->x==y, df)
+    df = filter(:nreplicas => (x)->x==1, df)
+
     # df = df[df.nworkers .== nworkers, :]
     # df = df[df.nwait .== nwait, :]
 
@@ -255,23 +247,22 @@ function plot_straggler_ac(df; f=0.5)
     # plot for different nworkers
     plt.figure()    
     for nworkers in [36, 72, 108]
-        nwait = round(Int, nworkers/12)
+        nwait = round(Int, phi*nworkers)
         dfi = df
-        dfi = dfi[dfi.nworkers .== nworkers, :]
-        dfi = dfi[dfi.nwait .== nwait, :]
+        dfi = filter(:nworkers => (x)->x==nworkers, dfi)
         if size(dfi, 1) == 0
             continue
         end
         nbins = round(Int, maximum(dfi.t_total) / 10)
         # return straggler_prob_timeseries_from_df(dfi; nbins)
         edges, values, counts = straggler_prob_timeseries_from_df(dfi; nbins)
-        plt.plot(edges[1:end-1], values, ".-", label="Nn: $nworkers")
+        plt.plot(edges[1:end-1], values, ".-", label="$nworkers workers")
 
-        # print values
-        println("Nn: $nworkers")
-        for i in 1:length(values)
-            println("$(edges[i]) $(values[i])")
-        end
+        # # print values
+        # println("Nn: $nworkers")
+        # for i in 1:length(values)
+        #     println("$(edges[i]) $(values[i])")
+        # end
     end    
 
     plt.legend()

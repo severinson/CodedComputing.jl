@@ -180,9 +180,16 @@ plot_predictions(1.6362946777247114e9, df=df)
 df = DataFrame(CSV.File("<path-to-traces-directory>/pca-1000genomes-c5.xlarge-eu-north-1.csv"))
 strip_columns!(df) # optional, to reduce DataFrame size
 
-## make the plot
+## verify that the workload is balanced between workers
+plot_latency_balance(df, nsubpartitions=1)
+
+## plot latency time-series
+plot_timeseries(df, jobid=873, workers=[1,2])
+
+## plot the straggler => straggler state transition probability
 plot_transition_probability(df, worker_flops=1.14e7)
 
 # plot rate of convergence
+
 
 ```

@@ -387,7 +387,7 @@ function straggler_transition_probabilities(df, w)
 
         for j in 1:nworkers
             platencies[j] = dfi[1, latency_columns[j]]            
-        end     
+        end
         sort!(view(platencies, 1:nworkers))
         pr12s .= 0
         pr21s .= 0
@@ -436,8 +436,6 @@ this iteration.
 """
 function plot_transition_probability(df; ϕ=1/2, worker_flops=1.14e7)
     df = filter(:worker_flops => (x)->isapprox(x, worker_flops, rtol=1e-2), df)
-    1.14e7
-    1.52e7
     plt.figure()
     for nworkers in sort!(unique(df.nworkers))
         w = round(Int, nworkers*ϕ)
@@ -458,5 +456,54 @@ function plot_transition_probability(df; ϕ=1/2, worker_flops=1.14e7)
     plt.grid()
     plt.xlabel("Fraction of workers")
     plt.ylabel("Pr. still a straggler")
+    return
+end
+
+"""
+
+Plot the average latency of each worker computed over the first half of jobs vs. the average 
+latency computed over the second half of jobs. Use this plot to verify that the workload is 
+balanced across workers; the latency of a given worker will be correlated between jobs if the
+workload is unbalanced.
+"""
+function plot_latency_balance(df; nsubpartitions=1)
+    df = filter(:nsubpartitions => (x)->x==nsubpartitions, df)
+    df = filter([:nwait, :nworkers] => (x, y)->x==y, df)
+    plt.figure()
+    for nworkers in sort!(unique(df.nworkers))
+        xs = 1:nworkers
+        dfi = filter(:nworkers => (x)->x==nworkers, df)
+        j = round(Int, size(dfi, 1)/2)
+        l1 = [mean(skipmissing(dfi[1:j, "latency_worker_$i"])) for i in 1:nworkers]
+        l2 = [mean(skipmissing(dfi[(j+1):end, "latency_worker_$i"])) for i in 1:nworkers]
+        plt.plot(l1, l2, "o", label="$nworkers workers")
+    end
+    plt.xlabel("Avg. latency (first half of jobs)")
+    plt.ylabel("Avg. latency (second half of jobs)")
+    plt.grid()
+    plt.legend()
+    return
+end
+
+### latency timeseries plots
+
+"""
+
+Plot the iteration latency of workers with indices in `workers` of job `jobid`.
+"""
+function plot_timeseries(df; jobid=rand(df.jobid), workers=[1, 2])
+    println("jobid: $jobid")
+    df = filter(:jobid => (x)->x==jobid, df)
+    plt.figure()
+    for worker in workers
+        xs = df.iteration
+        ys = df[:, "latency_worker_$worker"]
+        plt.plot(xs, ys, label="Worker $worker")
+        write_table(xs, ys, "./results/timeseries_$(jobid)_$(worker).csv")
+    end
+    plt.grid()
+    plt.legend()
+    plt.xlabel("Iteration")
+    plt.ylabel("Per-worker iteration latency [s]")
     return
 end
