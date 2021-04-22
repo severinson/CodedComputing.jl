@@ -151,31 +151,38 @@ And introduces:
 ## Reproducing the plots in the paper
 
 ```julia
+using Revise, CodedComputing; includet("src\\Analysis.jl"); using CSV, DataFrames; df = DataFrame(CSV.File("C:\\Users\\albin\\Dropbox\\PhD\\Eigenvector project\\AWS traces\\traces\\pca-1000genomes-c5.xlarge-eu-north-1.csv")); strip_columns!(df);
+
 # initialization
 using Revise # optional, needed for changes made to the source code be reflected in the REPL
 using CodedComputing
 includet("src/Analysis.jl") # use include instead of includet if you're not using Revise
 
-# pca load data from disk
+## load pca data from disk
 using CSV, DataFrames
 df = DataFrame(CSV.File("<path-to-traces-directory>/pca-1000genomes-c5.xlarge-eu-north-1.csv"))
 strip_columns!(df) # optional, to reduce DataFrame size
 reindex_workers_by_order!(df) # needed to compute order statistics
 
-# plot the coefficients of the degree-3 polynomial model
+# plot latency order statistics
+plot_orderstats(df, worker_flops=2.27e7)
+
+## plot the coefficients of a degree-3 polynomial fitted to the average latency for pairs (nworkers, worker_flops)
 dfm = mean_latency_df(df) # compute average order statistics latency for each unique pair (nworkers, worker_flops)
 df3 = fit_local_deg3_model(dfm) # fit a degree-3 polynomial to the order statistics latency for each row of dfm
 plot_deg3_model(df3)
 
-# plot latency order statistics
-plot_orderstats(df, worker_flops=2.27e7)
-
-# plot prob. of a worker remaining a straggler
-
-
-# plot model parameters
-
 # plot predicted and empirical latency
+plot_predictions(1.6362946777247114e9, df=df)
+
+# plot straggling transition probability
+## re-load the data without re-indexing, since we need to track the latency of individual workers
+df = DataFrame(CSV.File("<path-to-traces-directory>/pca-1000genomes-c5.xlarge-eu-north-1.csv"))
+strip_columns!(df) # optional, to reduce DataFrame size
+
+## make the plot
+plot_transition_probability(df, worker_flops=1.14e7)
 
 # plot rate of convergence
+
 ```

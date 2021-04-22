@@ -24,53 +24,6 @@ end
 
 """
 
-Plot latency as a function of `nworkers` for a fixed total workload.
-"""
-function plot_predictions(c0=1.6362946777247114e9; df=nothing, dfo=nothing)
-    if !isnothing(dfo)
-        dfo = dfo[dfo.order .<= dfo.nwait, :]
-    end
-    nworkers = 1:500    
-    c = c0 ./ nworkers
-    plt.figure()
-
-    for psi in [1/12, 0.5, 1.0]
-        nwait = psi.*nworkers
-        # return nworkers, predict_latency.(c, nwait, nworkers)
-        plt.plot(nworkers, predict_latency.(c, nwait, nworkers), label="$psi")
-
-        if !isnothing(df)
-            dfi = df
-            dfi = dfi[dfi.nwait .== round.(Int, psi.*dfi.nworkers), :]
-            dfi = dfi[isapprox.(dfi.worker_flops .* dfi.nworkers, c0, rtol=1e-2), :]
-            if size(dfi, 1) > 0
-                # plt.plot(dfo.nworkers, dfo.worker_latency, ".") # all points
-                dfj = by(dfi, :nworkers, :latency => mean => :latency)
-                plt.plot(dfj.nworkers, dfj.latency, "s", label="psi: $psi (df)") # averages
-            end
-        end
-
-        if !isnothing(dfo)
-            dfi = dfo
-            dfi = dfi[dfi.order .== round.(Int, psi.*dfi.nworkers), :]
-            dfi = dfi[isapprox.(dfi.worker_flops .* dfi.nworkers, c0, rtol=1e-2), :]        
-            if size(dfi, 1) > 0            
-                # plt.plot(dfo.nworkers, dfo.worker_latency, ".") # all points
-                dfj = by(dfi, :nworkers, :worker_latency => mean => :worker_latency)
-                plt.plot(dfj.nworkers, dfj.worker_latency, "o", label="psi: $psi (dfo)") # averages
-            end
-        end        
-    end
-
-    plt.legend()
-    plt.xlabel("nworkers")
-    plt.ylabel("Latency [s]")
-    plt.grid()
-    return
-end
-
-"""
-
 Plot latency as a function of nworkers for some value of σ0
 σ0=1.393905852e9 is the workload associated with processing all data on 1 worker
 """
