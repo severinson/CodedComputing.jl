@@ -10,6 +10,7 @@ function plot_orderstats(df; nworkers=nothing, worker_flops=2.27e7)
         df = filter(:worker_flops => (x)->isapprox(x, worker_flops, rtol=1e-2), df)
     end
     df = filter([:nwait, :nworkers] => (x, y)->x==y, df)
+    df = filter(:iteration => (x)->x>1, df)
     if size(df, 1) == 0
         println("No rows match constraints")
         return
@@ -25,7 +26,8 @@ function plot_orderstats(df; nworkers=nothing, worker_flops=2.27e7)
         if size(dfi, 1) == 0
             continue
         end
-        for worker_flops in sort!(unique(dfi.worker_flops))
+        for worker_flops in [1.13e7, 1.51e7, 2.27e7, 4.54e7]
+            # for worker_flops in sort!(unique(dfi.worker_flops))
             println((nworkers, worker_flops))
             dfj = filter(:worker_flops => (x)->isapprox(x, worker_flops, rtol=1e-2), dfi)
             if size(dfj, 1) == 0
@@ -41,6 +43,8 @@ function plot_orderstats(df; nworkers=nothing, worker_flops=2.27e7)
             ys = view(ys, 1:nworkers)
             plt.plot(xs, ys, "-o", label="Nn: $nworkers, c: $worker_flops")
             write_table(xs, ys, "./results/orderstats_$(nworkers)_$(worker_flops).csv")
+
+            println("Acuteness: $(ys[end] / ys[1])")
 
             # latency predicted by the degree-3 model (local)
             p, _ = fit_polynomial(xs, ys, 3)            
@@ -186,9 +190,25 @@ function fit_local_deg3_model(dfm)
 end
 
 function plot_deg3_model(df3)
+
+    # coefficients of global model
+    nflops1 = 10 .^ range(log10(minimum(df3.worker_flops)), log10(maximum(df3.worker_flops)), length=100)
+    nflops2 = 10 .^ range(log10(minimum(df3.worker_flops./df3.nworkers)), log10(maximum(df3.worker_flops./df3.nworkers)), length=100)
+    nflops3 = 10 .^ range(log10(minimum(df3.worker_flops./df3.nworkers.^2)), log10(maximum(df3.worker_flops./df3.nworkers.^2)), length=100)
+    nflops4 = 10 .^ range(log10(minimum(df3.worker_flops./df3.nworkers.^3)), log10(maximum(df3.worker_flops./df3.nworkers.^3)), length=100)
+    b1, c1, d1, e1, b2, c2, d2, e2 = deg3_coeffs("c5xlarge")
+    α1 = b1 .+ b2.*nflops1
+    α2 = c1 .+ c2.*nflops2
+    α3 = -(d1 .+ d2.*nflops3)
+    α4 = e1 .+ e2.*nflops4
+    coefficients = [α1, α2, α3, α4]
+    nflops_all = [nflops1, nflops2, nflops3, nflops4]
+
     plt.figure()
     for (i, col) in enumerate([:x1, :x2, :x3, :x4])
         plt.subplot(2, 2, i)
+
+        # coefficients of local model
         for nworkers in sort!(unique(df3.nworkers))
             dfi = filter(:nworkers => (x)->x==nworkers, df3)
             xs = dfi[:worker_flops] ./ nworkers^(i-1)
@@ -199,6 +219,12 @@ function plot_deg3_model(df3)
             plt.plot(xs, ys, ".", label="$nworkers workers")
             write_table(xs, ys, "./results/deg3_$(col)_$(nworkers).csv")
         end
+
+        xs = nflops_all[i]
+        ys = coefficients[i]
+        plt.plot(xs, ys, "k-")
+        write_table(xs, ys, "./results/deg3_global_$(col).csv")
+
         if i == 3
             plt.ylabel("-$col")
         else
@@ -313,11 +339,11 @@ end
 Plot latency as a function of `nworkers` for a fixed total number of flops across all workers per 
 iteration, denoted by `c0`.
 """
-function plot_predictions(c0=1.6362946777247114e9; df=nothing)
+function plot_predictions(c0=1.6362946777247114e9; df=nothing, maxworkers=200)
     if !isnothing(df)
         df = filter([:nwait, :nworkers] => (x, y)->x==y, df)
     end
-    nworkers = 1:200
+    nworkers = 1:maxworkers
     c = c0 ./ nworkers
     plt.figure()
     for ϕ in [0.5, 1.0]
@@ -340,7 +366,7 @@ function plot_predictions(c0=1.6362946777247114e9; df=nothing)
                 push!(ys, mean(dfj[:, "latency_worker_$(round(Int, ϕ*nworkers))"]))
             end
             plt.plot(xs, ys, "o", label="$ϕ (empirical")
-            write_table(xs, ys, "./results/emp_"*description*".csv")            
+            write_table(xs, ys, "./results/emp_"*description*".csv")
         end      
     end
     plt.yscale("log")
@@ -434,7 +460,7 @@ Plot the empirical distribution of the probability that a worker that is not amo
 fastest workers in the previous iteration is also not among the `ϕ*nworkers` fastest workers in 
 this iteration.
 """
-function plot_transition_probability(df; ϕ=1/2, worker_flops=1.14e7)
+function plot_transition_probability(df; ϕ=1/2, worker_flops=1.51e7)
     df = filter(:worker_flops => (x)->isapprox(x, worker_flops, rtol=1e-2), df)
     plt.figure()
     for nworkers in sort!(unique(df.nworkers))
@@ -444,12 +470,14 @@ function plot_transition_probability(df; ϕ=1/2, worker_flops=1.14e7)
         pr22 = 1 .- skipmissing(dfp.pr21)
         sort!(pr22)
         xs = range(0, 1, length=length(pr22))
+        write_table(xs, pr22, "./results/tp_$(nworkers)_$(ϕ)_$(round(worker_flops, sigdigits=3)).csv")
         plt.plot(xs, pr22, label="$nworkers workers")
     end
     
     # plot iid model
     xs = [0, 0, 1, 1]
     ys = [0, 1-ϕ, 1-ϕ, 1]
+    write_table(xs, ys, "./results/tp_iid_$(ϕ).csv")
     plt.plot(xs, ys, "k-", label="iid model")
 
     plt.legend()
@@ -507,3 +535,643 @@ function plot_timeseries(df; jobid=rand(df.jobid), workers=[1, 2])
     plt.ylabel("Per-worker iteration latency [s]")
     return
 end
+
+### convergence plots
+
+"""
+
+Plot the rate of convergence over time for DSAG, SAG, SGD, and coded computing. Let 
+`latency=empirical` to plot against empirical latency, or let `latency=c5xlarge` to plot against 
+latency computed by the model, fitted to traces recorded on `c5xlarge` instances.
+"""
+function plot_convergence(df, nworkers, opt=maximum(skipmissing(df.mse)); latency="empirical")
+    df = filter(:nworkers => (x)->x==nworkers, df)
+    df = filter(:nreplicas => (x)->x==1, df)
+    df = filter(:mse => (x)->!ismissing(x), df)
+    println("nworkers: $nworkers, opt: $opt")
+
+    # parameters are recorded as a tuple (nwait, nsubpartitions, stepsize)
+    if nworkers == 36
+
+        # # varying npartitions
+        # nwait = 3
+        # params = [
+        #     # (nwait, 10, 0.9),            
+        #     # (nwait, 40, 0.9),
+        #     # (nwait, 80, 0.9),
+        #     (nwait, 160, 0.9),
+        # ]
+
+        # varying nwait      
+        nsubpartitions = 160
+        params = [
+            (1, nsubpartitions, 0.9),
+            (3, nsubpartitions, 0.9),            
+            (6, nsubpartitions, 0.9),                        
+            (9, nsubpartitions, 0.9),            
+        ]
+    elseif nworkers == 72
+        nsubpartitions = 160
+        params = [
+            (1, nsubpartitions, 0.9),            
+            (3, nsubpartitions, 0.9),            
+            (6, nsubpartitions, 0.9),                        
+            (9, nsubpartitions, 0.9),
+        ]
+        # nwait = 9
+        # params = [
+        #     (nwait, 120, 0.9),            
+        #     (nwait, 160, 0.9),            
+        #     # (nwait, nsubpartitions, 0.9),                        
+        #     # (nwait, nsubpartitions, 0.9),
+        # ]   
+    elseif nworkers == 108
+        nsubpartitions = 160
+        params = [
+            (1, nsubpartitions, 0.9),            
+            (3, nsubpartitions, 0.9),            
+            (6, nsubpartitions, 0.9),                        
+            (9, nsubpartitions, 0.9),
+        ]      
+        # nwait = 3
+        # params = [
+        #     (nwait, 120, 0.9),            
+        #     (nwait, 160, 0.9),            
+        #     (nwait, 240, 0.9),            
+        #     (nwait, 320, 0.9),            
+        #     (nwait, 640, 0.9),            
+        # ]  
+    else
+        error("parameters not defined")
+    end
+
+    plt.figure()    
+
+    for (nwait, nsubpartitions, stepsize) in params
+
+        dfi = df
+        dfi = dfi[dfi.nwait .== nwait, :]
+        dfi = dfi[dfi.nsubpartitions .== nsubpartitions, :]
+        dfi = dfi[dfi.stepsize .== stepsize, :]
+        println("nwait: $nwait, nsubpartitions: $nsubpartitions, stepsize: $stepsize")
+
+        ### DSAG
+        dfj = dfi
+        dfj = dfj[dfj.variancereduced .== true, :]
+        if nwait < nworkers # for nwait = nworkers, DSAG and SAG are the same
+            dfj = dfj[dfj.nostale .== false, :]
+        end
+        # return dfj
+        println("DSAG: $(length(unique(dfj.jobid))) jobs")
+        if size(dfj, 1) > 0
+            dfj = combine(groupby(dfj, :iteration), :mse => mean => :mse, :time => mean => :time)
+            if latency == "empirical"
+                println("Plotting DSAG with empirical latency")
+            else
+                dfj.time .= predict_latency(nwait, mean(dfi.worker_flops), nworkers; type=latency) .* dfj.iteration
+                println("Plotting DSAG with model latency for $latency")
+            end
+            xs = dfj.time
+            ys = opt.-dfj.mse
+            plt.semilogy(xs, ys, ".-", label="DSAG w=$nwait, p=$nsubpartitions")
+            filename = "./results/dsag_$(nworkers)_$(nwait)_$(nsubpartitions)_$(stepsize).csv"            
+            write_table(xs, ys, filename)
+        end
+        println()
+    end
+
+    # Plot SAG
+    # for nsubpartitions in sort!(unique(df.nsubpartitions))
+    nsubpartitions = 160
+    # for nsubpartitions in [80, 120, 160, 240, 320]
+    stepsize = 0.9
+    dfi = df
+    dfi = dfi[dfi.nwait .== nworkers, :]
+    dfi = dfi[dfi.variancereduced .== true, :]
+    dfi = dfi[dfi.stepsize .== stepsize, :]    
+    dfi = dfi[dfi.nsubpartitions .== nsubpartitions, :]
+    # dfi = dfi[dfi.nostale .== true, :]
+    println("SAG p: $nsubpartitions, $(length(unique(dfi.jobid))) jobs")
+    dfj = by(dfi, :iteration, :mse => mean => :mse, :time => mean => :time)
+    sort!(dfj, :iteration)    
+    if latency == "empirical"
+        println("Plotting SAG with empirical latency")
+    else
+        dfj.time .= predict_latency(nworkers, mean(dfi.worker_flops), nworkers; type=latency) .* dfj.iteration
+        println("Plotting SAG with model latency for $latency")
+    end
+    if size(dfj, 1) > 0
+        xs = dfj.time
+        ys = opt.-dfj.mse
+        plt.semilogy(xs, ys, "o-", label="SAG p=$nsubpartitions")
+        filename = "./results/sag_$(nworkers)_$(nsubpartitions)_$(stepsize).csv"
+        write_table(xs, ys, filename)        
+    end
+    # end
+
+    # Plot SGD
+    nsubpartitions = 160
+    stepsize = 0.9
+    dfi = df
+    dfi = dfi[dfi.nwait .== nworkers, :]
+    dfi = dfi[dfi.nsubpartitions .== nsubpartitions, :]
+    dfi = dfi[dfi.variancereduced .== false, :]
+    dfi = dfi[dfi.stepsize .== stepsize, :]
+    println("SGD p: $nsubpartitions, $(length(unique(dfi.jobid))) jobs")
+    dfj = by(dfi, :iteration, :mse => mean => :mse, :time => mean => :time)
+    sort!(dfj, :iteration)
+    if latency == "empirical"
+        println("Plotting SGD with empirical latency")
+    else
+        dfj.time .= predict_latency(nworkers, mean(dfi.worker_flops), nworkers; type=latency) .* dfj.iteration
+        println("Plotting SGD with model latency for $latency")
+    end    
+    if size(dfj, 1) > 0
+        xs = dfj.time
+        ys = opt.-dfj.mse
+        plt.semilogy(xs, ys, "c^-", label="SGD p=$nsubpartitions")
+        filename = "./results/sgd_$(nworkers)_$(nsubpartitions)_$(stepsize).csv"
+        write_table(xs, ys, filename)        
+    end
+
+    # Plot GD
+    stepsize = 1.0
+    dfi = df
+    dfi = dfi[dfi.nwait .== nworkers, :]
+    dfi = dfi[dfi.nsubpartitions .== 1, :]
+    dfi = dfi[dfi.variancereduced .== false, :]
+    dfi = dfi[dfi.stepsize .== stepsize, :]
+    println("GD $(length(unique(dfi.jobid))) jobs")
+    dfj = by(dfi, :iteration, :mse => mean => :mse, :time => mean => :time)
+    if latency == "empirical"
+        println("Plotting GD with empirical latency")
+    else
+        dfj.time .= predict_latency(nworkers, mean(dfi.worker_flops), nworkers; type=latency) .* dfj.iteration
+        println("Plotting GD with model latency for $latency")
+    end    
+    if size(dfj, 1) > 0
+        xs = dfj.time
+        ys = opt.-dfj.mse
+        plt.semilogy(xs, ys, "ms-", label="GD")
+        filename = "./results/gd_$(nworkers)_$(stepsize).csv"
+        write_table(xs, ys, filename)
+    end
+
+    # plot coded computing
+    r = 2 # replication factor
+    Nw = 1 # number of workers to wait for
+    samp = 1 # workload up-scaling
+
+    # get the average error per iteration of GD
+    dfi = df
+    dfi = dfi[dfi.nsubpartitions .== 1, :]
+    dfi = dfi[dfi.nwait .== nworkers, :]
+    dfi = dfi[dfi.stepsize .== 1, :]
+    dfi = dfi[dfi.variancereduced .== false, :]
+    dfi = dfi[dfi.nostale .== false, :]
+    dfj = combine(groupby(dfi, :iteration), :mse => mean => :mse)
+    sort!(dfj, :iteration)
+    ys = opt .- dfj.mse
+
+    # compute the iteration time for a scheme with a factor r replication
+    @assert length(unique(dfi.worker_flops)) == 1
+    worker_flops = r*mean(dfi.worker_flops)
+    t_iter = predict_latency(Nw, worker_flops, nworkers)
+    xs = t_iter .* dfj.iteration
+
+    # make the plot
+    plt.semilogy(xs, ys, "--k", label="Bound r: $r, Nw: $Nw")
+    # write_table(xs, ys, "./data/bound_$(nworkers)_$(Nw)_$(r).csv")
+    filename = "./results/bound_$(nworkers)_$(stepsize).csv"
+    write_table(xs, ys, filename)    
+
+    plt.xlim(1e-2, 1e2)
+    plt.xscale("log")
+    plt.grid()
+    plt.legend()    
+    plt.xlabel("Time [s]")
+    plt.ylabel("Explained Variance Sub-optimality Gap")
+    return
+end
+
+### non-iid Gamma model
+
+
+function predict_latency_gamma(nwait, worker_flops, nworkers; nsamples=1000)
+    rv = 0.0
+    for _ in 1:nsamples
+        s = NonIDOrderStatistic([generate_worker(worker_flops) for _ in 1:nworkers], nwait)
+        rv += rand(s)
+    end
+    rv / nsamples
+end
+
+function generate_worker(worker_flops)
+    # θ = rand(LogNormal(-12.247053451934311, 1.2408290648874947))
+    θ = rand(LogNormal(-10.126739380338421, 1.341671598647381))
+
+    # generate mean latency of the worker
+    mean_mean = 0.002625168709710719 + 8.31727218867972e-9worker_flops
+    var_mean = (0.0013312703118151395 + 5.276769935086533e-10worker_flops)^2
+    θm = var_mean / mean_mean
+    αm = mean_mean / θm
+    mean = rand(Gamma(αm, θm))
+    α = mean / θ
+
+    Gamma(α, θ)
+end
+
+function plot_worker_latency_distribution(df; jobid=1080, worker_indices=[10, 36])
+    jobid = 1080
+    df = filter(:jobid => (x)->x==jobid, df)
+    plt.figure()
+    for i in worker_indices
+        xs = sort(df[:, "latency_worker_$(i)"])
+        ys = range(0, 1, length=length(xs))
+        plt.plot(xs, ys)
+        d = Distributions.fit(Gamma, xs)
+        plt.plot(xs, cdf.(d, xs), "k--")
+    end
+
+    # plot some generated distributions
+    worker_flops = df.worker_flops[1]
+    for _ in 1:3
+        w = generate_worker(worker_flops)
+        xs = range(quantile(w, 0.001), quantile(w, 0.999), length=100)
+        plt.plot(xs, cdf.(w, xs), "k-")
+    end
+
+    plt.grid()
+    return
+end
+
+"""
+
+Fit a `Gamma` distribution to the latency of each worker for each job.
+"""
+function gamma_df(df)
+    df = filter([:nwait, :nworkers] => (x,y)->x==y, df)
+    rv = DataFrame()
+    row = Dict{String, Any}()
+    maxworkers = maximum(df.nworkers)
+    latency_columns = ["latency_worker_$i" for i in 1:maxworkers]    
+    for jobid in unique(df.jobid)
+        dfi = filter(:jobid => (x)->x==jobid, df)
+        nworkers = dfi.nworkers[1]
+        row["nworkers"] = nworkers
+        row["worker_flops"] = dfi.worker_flops[1]
+        row["nbytes"] = dfi.nbytes[1]
+        row["nsamples"] = size(dfi, 1)
+        row["jobid"] = jobid
+        for i in 1:nworkers
+            d = Distributions.fit(Gamma, float.(dfi[:, latency_columns[i]]))
+            row["α"], row["θ"] = params(d)
+            row["worker_index"] = i
+            push!(rv, row, cols=:union)
+        end
+    end
+    rv.mean = rv[:, "α"] .* rv[:, "θ"]
+    rv.var = rv[:, "α"] .* rv[:, "θ"].^2
+    rv
+end
+
+function gamma_mean_df(dfg)
+    rv = DataFrame()
+    row = Dict{String, Any}()    
+    for worker_flops in unique(dfg.worker_flops)
+        dfi = filter(:worker_flops => (x)->isapprox(x, worker_flops, rtol=1e-2), dfg)
+        d = Distributions.fit(Gamma, dfi.mean)
+        row["worker_flops"] = worker_flops
+        row["nbytes"] = dfi.nbytes[1]
+        α, θ = params(d)
+        row["α"] = α
+        row["θ"] = θ
+        row["mean_mean"], row["var_mean"] = α*θ, α*θ^2
+        push!(rv, row, cols=:union)
+    end
+    rv
+end
+
+function plot_gamma_var_distribution(dfg; nbins=100, minsamples=100)
+    rv = DataFrame()
+    row = Dict{String,Any}()
+    # c = mean(dfse.scale.^2 ./ (dfse.shift .+ dfse.scale))
+    edges = 10.0.^range(log10(minimum(dfg.mean)), log10(maximum(dfg.mean)), length=nbins+1)
+    plt.figure()
+    for i in [1, 2, 3]
+        dfi = filter(:mean => (x)->edges[i] <= x < edges[i+1], dfg)
+        if size(dfi, 1) < minsamples
+            continue
+        end
+        println(size(dfi, 1))
+        row["nsamples"] = size(dfi, 1)
+        row["mean"] = mean(dfi.mean)
+        row["var"] = mean(dfi.var)
+        noise = sort!(dfi.var ./ dfi.mean)
+        ys = range(0, 1, length=length(noise))
+        plt.plot(noise, ys)
+
+        d = Distributions.fit(LogNormal, noise)
+        plt.plot(noise, cdf.(d, noise), "k--")
+        # row["noise_shift"], row["noise_scale"] = params(d)
+        # push!(rv, row, cols=:union)
+    end
+    plt.xscale("log")
+    rv
+end
+
+function plot_gamma_mean_distribution(dfg)
+    plt.figure()
+    for worker_flops in sort!(unique(dfg.worker_flops))
+        dfi = filter(:worker_flops => (x)->isapprox(x, worker_flops, rtol=1e-2), dfg)
+        xs = sort(dfi.mean)
+        ys = range(0, 1, length=length(xs))
+        plt.plot(xs, ys)
+        
+        d = Distributions.fit(Gamma, xs)
+        plt.plot(xs, cdf.(d, xs), "k--")
+    end
+    plt.grid()
+    return
+end
+
+function plot_gamma_mean(dfgm)
+    plt.figure()
+    xs = dfgm.worker_flops
+    ys = dfgm.mean_mean
+    plt.plot(xs, ys, ".", label="Mean")
+    p, coeffs = fit_polynomial(xs, ys, 1)
+    println(coeffs)
+    ts = sort(xs)
+    plt.plot(ts, p.(ts), "k--")
+
+    ys = sqrt.(dfgm.var_mean)
+    plt.plot(xs, ys, ".", label="Var")
+    p, coeffs = fit_polynomial(xs, ys, 1)
+    println(coeffs)    
+    plt.plot(ts, p.(ts), "k--")
+
+    plt.xscale("log")
+    plt.yscale("log")
+    plt.legend()
+    return
+end
+
+function plot_gamma_var(dfg; nbins=20, minsamples=100)
+    plt.figure()
+    plt.plot(dfg.mean, dfg.var ./ dfg.mean, ".")
+
+
+    # edges = 10.0.^range(log10(minimum(dfg.mean)), log10(maximum(dfg.mean)), length=nbins+1)
+    # xs = zeros(0)
+    # ys = zeros(0)
+    # for i in 1:nbins
+    #     dfi = filter(:mean => (x)->edges[i] <= x < edges[i+1], dfg)
+    #     if size(dfi, 1) < minsamples
+    #         continue
+    #     end
+    #     push!(xs, mean(dfi.mean))
+    #     push!(ys, mean(dfi.var ./ dfi.mean))
+    # end
+    # plt.plot(xs, ys, "k-")
+
+    plt.grid()
+    plt.xscale("log")
+    plt.yscale("log")
+    return
+end
+
+"""
+
+Plot the mean of the Gamma distrinution vs. flops.
+"""
+function plot_gamma_mean_vs_nflops(dfg)
+    plt.figure()
+    plt.plot(dfg.worker_flops, dfg.α.*dfg.θ, ".")
+    plt.grid()
+    return
+end
+
+### non-iid shifted exponential model
+
+"""
+
+Fit a `ShiftedExponential` distribution to the latency of each worker for each job.
+"""
+function shiftexp_df(df)
+    df = filter([:nwait, :nworkers] => (x,y)->x==y, df)
+    rv = DataFrame()
+    row = Dict{String, Any}()
+    maxworkers = maximum(df.nworkers)
+    latency_columns = ["latency_worker_$i" for i in 1:maxworkers]    
+    for jobid in unique(df.jobid)
+        dfi = filter(:jobid => (x)->x==jobid, df)
+        nworkers = dfi.nworkers[1]
+        row["nworkers"] = nworkers
+        row["worker_flops"] = dfi.worker_flops[1]
+        row["nbytes"] = dfi.nbytes[1]
+        for i in 1:nworkers
+            se = Distributions.fit(ShiftedExponential, float.(dfi[:, latency_columns[i]]))
+            row["shift"], row["scale"] = params(se)
+            row["worker_index"] = i
+            push!(rv, row, cols=:union)
+        end
+    end
+    rv
+end
+
+"""
+
+Fit a two-dimensional `MvNormal` distribution to the shift and scale of the worker latency 
+distribution for each unique value of `worker_flops`.
+"""
+function meta_shiftexp_df(dfse)
+    rv = DataFrame()
+    row = Dict{String, Any}()    
+    for worker_flops in unique(dfse.worker_flops)
+        dfi = filter(:worker_flops => (x)->isapprox(x, worker_flops, rtol=1e-2), dfse)
+        d = Distributions.fit(MvNormal, hcat(dfi.shift, dfi.scale)')
+        row["worker_flops"] = worker_flops
+        row["nbytes"] = dfi.nbytes[1]
+        row["mean_shift"] = d.μ[1]
+        row["mean_scale"] = d.μ[2]
+        row["var_shift"] = d.Σ[1, 1]
+        row["var_scale"] = d.Σ[2, 2]
+        row["cov"] = d.Σ[1, 2]
+        push!(rv, row, cols=:union)
+    end
+    rv
+end
+
+function noise_df(dfse; nbins=100, minsamples=100)
+    rv = DataFrame()
+    row = Dict{String,Any}()
+    # c = mean(dfse.scale.^2 ./ (dfse.shift .+ dfse.scale))
+    edges = 10.0.^range(log10(minimum(dfse.shift)), log10(maximum(dfse.shift)), length=nbins+1)
+    for i in 1:nbins
+        dfi = filter(:shift => (x)->x>=edges[i], dfse)
+        dfi = filter(:shift => (x)->x<edges[i+1], dfi)
+        if size(dfi, 1) < minsamples
+            continue
+        end
+        println(size(dfi, 1))
+        row["nsamples"] = size(dfi, 1)
+        row["shift"] = mean(dfi.shift)
+        row["scale"] = mean(dfi.scale)
+        noise = dfi.scale.^2 ./ (dfi.shift .+ dfi.scale)
+        d = Distributions.fit(ShiftedExponential, noise)
+        row["noise_shift"], row["noise_scale"] = params(d)
+        push!(rv, row, cols=:union)
+    end
+    rv
+end
+
+function plot_noise(dfse; nbins=50)
+    dfn = noise_df(dfse; nbins)
+    plt.figure()
+    plt.subplot(1, 2, 1)
+    xs = dfn.shift .+ dfn.scale
+    plt.plot(xs, -dfn.noise_shift, ".")
+    plt.xscale("log")
+    plt.yscale("log")
+    plt.grid()
+
+    plt.subplot(1, 2, 2)
+    plt.plot(xs, dfn.noise_scale, ".")    
+    plt.xscale("log")
+    plt.yscale("log")
+    plt.grid()    
+
+    plt.tight_layout()
+    return
+end
+
+function plot_meta_shiftexp(dfn)
+    plt.figure()
+    plt.subplot(3, 2, 1)
+    xs = dfn.worker_flops
+    ys = dfn.mean_shift
+    plt.plot(xs, ys, ".")
+    plt.ylabel("μ(shift)")
+    plt.xlabel("nflops")
+    plt.grid()
+    plt.xscale("log")
+    plt.yscale("log")
+
+    p, _ = fit_polynomial(xs, ys, 1)
+    plt.plot(xs, p.(xs), "k-")
+
+    plt.subplot(3, 2, 2)
+    xs = dfn.worker_flops
+    # xs = dfn.var_shift
+    ys = sqrt.(dfn.mean_scale)
+    plt.plot(xs, ys, ".")
+    plt.ylabel("μ(scale)")
+    plt.xlabel("nflops")    
+    plt.grid()
+    # plt.xscale("log")
+    # plt.yscale("log")  
+
+    p, _ = fit_polynomial(xs, ys, 1)
+    plt.plot(xs, p.(xs), "k-")    
+
+    plt.subplot(3, 2, 3)
+    xs = dfn.worker_flops
+    ys = sqrt.(dfn.var_shift)
+    plt.plot(xs, ys, ".")
+    plt.ylabel("σ(shift)")
+    plt.xlabel("nflops")            
+    plt.grid()
+    plt.xscale("log")
+    plt.yscale("log")
+
+    p, _ = fit_polynomial(xs, ys, 1)
+    plt.plot(xs, p.(xs), "k-")    
+
+    plt.subplot(3, 2, 4)
+    xs = dfn.worker_flops
+    ys = sqrt.(dfn.var_scale)
+    plt.plot(xs, ys, ".")
+    plt.ylabel("σ(scale)")
+    plt.xlabel("nflops")        
+    plt.grid()
+    # plt.xscale("log")
+    # plt.yscale("log")
+
+    p, _ = fit_polynomial(xs, ys, 1)
+    plt.plot(xs, p.(xs), "k-")    
+
+    plt.subplot(3, 2, 5)
+    plt.plot(dfn.worker_flops, dfn.cov, ".")
+    plt.ylabel("cov(scale, shift)")
+    plt.xlabel("nflops")        
+    plt.grid()
+    plt.xscale("log")
+    plt.yscale("log")
+
+    plt.subplot(3, 2, 6)
+    ys = dfn.cov ./ (sqrt.(dfn.var_shift) .* sqrt.(dfn.var_scale))
+    plt.plot(dfn.worker_flops, ys, ".")
+    plt.ylabel("cor(scale, shift)")
+    plt.xlabel("nflops")        
+    plt.grid()
+    plt.xscale("log")
+    plt.yscale("log")    
+
+    plt.tight_layout()
+    return
+end
+
+# function non_iid_shifted_exponential_fit(df; worker_flops=1.14e7)
+#     df = filter([:nwait, :nworkers] => (x,y)->x==y, df)
+#     df = filter(:worker_flops => (x)->isapprox(x, worker_flops, rtol=1e-2), df)
+#     rv = Vector{ShiftedExponential}(undef, 0)
+#     for jobid in unique(df.jobid)
+#         dfi = filter(:jobid => (x)->x==jobid, df)
+#         se = Distributions.fit(ShiftedExponential, dfi.latency_worker_2)
+#         push!(rv, se)
+#     end
+#     rv
+# end
+
+function non_iid_shifted_exponential_plot(rvs)
+    ps = params.(rvs)
+    shifts = [p[1] for p in ps]
+    scales = [p[2] for p in ps]
+    
+    # plt.figure()
+    # plt.plot(shifts, scales, ".")
+    # return
+
+    samples = zeros(2, length(rvs))
+    samples[1, :] .= shifts
+    samples[2, :] .= scales
+    return Distributions.fit(MvNormal, samples)
+    
+    # shifts    
+    plt.figure()
+    xs = [p[1] for p in ps]
+    sort!(xs)
+    ys = range(0, 1, length=length(ps))   
+    plt.plot(xs, ys)
+
+    rv = Distributions.fit(Gamma, xs)
+    println(rv)
+    plt.plot(xs, cdf.(rv, xs), "k--")
+
+    plt.title("Shift")
+
+    # scales
+    plt.figure()
+    xs = [p[2] for p in ps]
+    sort!(xs)
+    ys = range(0, 1, length=length(ps))
+    plt.plot(xs, ys)
+
+    rv = Distributions.fit(Gamma, xs)
+    println(rv)
+    plt.plot(xs, cdf.(rv, xs), "k--")    
+
+    plt.title("Scale")        
+end
+
