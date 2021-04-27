@@ -1,5 +1,6 @@
 using Random, Statistics, Distributions
 export ExponentialOrder, OrderStatistic, NonIDOrderStatistic, TukeyLambda
+export ShiftedExponential
 
 """
     ExponentialOrder(scale::Real, total::Int, order::Int)
@@ -19,6 +20,50 @@ function ExponentialOrder(scale::Real, total::Int, order::Int)
     theta = var / mean # scale
     return Gamma(alpha, theta)
 end
+
+### Shifted exponential distribution
+
+struct ShiftedExponential{T<:Real} <: ContinuousUnivariateDistribution
+    shift::T
+    exponential::Exponential{T}
+    ShiftedExponential{T}(s::T, θ::T) where T = new{T}(s, Exponential(θ))
+end
+
+function ShiftedExponential(s::T, θ::T) where {T<:Real}
+    θ > zero(θ) || throw(DomainError(θ), "θ must be positive")
+    ShiftedExponential{T}(s, θ)
+end
+
+function ShiftedExponential(s::T, θ::T) where {T<:Integer}
+    ShiftedExponential(float(s), float(θ))
+end
+
+struct ShiftedExponentialStats <: SufficientStats
+    vx::Float64     # variance of x
+    sx::Float64     # (weighted) sum of x
+    sw::Float64     # sum of sample weights
+end
+
+Distributions.suffstats(::Type{<:ShiftedExponential}, x::AbstractArray{T}) where {T<:Real} = ShiftedExponentialStats(var(x), sum(x), length(x))
+
+function Distributions.fit_mle(::Type{<:ShiftedExponential}, ss::ShiftedExponentialStats)
+    θ = sqrt(ss.vx)
+    s = ss.sx / ss.sw - θ
+    ShiftedExponential(s, θ)
+end
+
+Distributions.quantile(d::ShiftedExponential, p::Real) = Distributions.quantile(d.exponential, p) + d.shift
+
+Distributions.pdf(d::ShiftedExponential, p::Real) = pdf(d.exponential, p-d.shift)
+Distributions.cdf(d::ShiftedExponential, p::Real) = cdf(d.exponential, p-d.shift)
+Base.rand(rng::AbstractRNG, d::ShiftedExponential) = rand(rng, d.exponential) + d.shift
+Base.minimum(d::ShiftedExponential) = d.shift
+Base.maximum(::ShiftedExponential) = Inf
+Statistics.mean(d::ShiftedExponential) = mean(d.exponential) + d.shift
+Statistics.var(d::ShiftedExponential) = var(d.exponential)
+Distributions.params(d::ShiftedExponential) = (d.shift, params(d.exponential)...)
+
+### Order statistics sampling
 
 struct OrderStatistic{S<:Union{Discrete,Continuous},Spl<:Sampleable{Univariate,S},T} <: Sampleable{Univariate,S}
     spl::Spl

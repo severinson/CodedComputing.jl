@@ -51,14 +51,13 @@ end
 
 Plot the CCDF of how stale results are, as measured by the number of iterations that has passed.
 """
-function plot_staleness(df, nworkers=36, nwait=3, nsubpartitions=10)
-    df = df[df.kickstart .== false, :]
-    df = df[df.nreplicas .== 1, :]
-    df = df[df.nworkers .== nworkers, :]
-    df = df[df.nwait .== nwait, :]  
-    df = df[df.nsubpartitions .== nsubpartitions, :]
+function plot_staleness(df; nworkers=36, nwait=1, nsubpartitions=160)
+    df = filter(:nreplicas => (x)->x==1, df)
+    df = filter(:nworkers => (x)->x==nworkers, df)
+    df = filter(:nwait => (x)->x==nwait, df)
+    df = filter(:nsubpartitions => (x)->x==nsubpartitions, df)
 
-    # let's assume results are never more than 10 iterations stale    
+    # assume results are never more than 10 iterations stale    
     edges = 0:9
     values = zeros(10) 
     count = 0
@@ -66,14 +65,14 @@ function plot_staleness(df, nworkers=36, nwait=3, nsubpartitions=10)
     jobids = unique(df.jobid)
     for jobid in jobids
         dfi = df
-        dfi = dfi[dfi.jobid .== jobid, :]
+        dfi = dfi[dfi.jobid .== jobid, :]        
         if ismissing(dfi.repoch_worker_1[1])
             continue
         end
         if ismissing(dfi.mse[1])
             continue
         end
-        println(jobid)
+        println("jobid: $jobid")
         M = staleness_matrix_from_jobid(dfi, jobid, nworkers, time=false)
         for i in 1:size(M, 1)
             for j in 1:size(M, 2)

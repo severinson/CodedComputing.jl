@@ -167,6 +167,23 @@ function strip_columns!(df)
     df
 end
 
+"""
+
+For each job, to remove initialization delay (e.g., due to compilation), replace the latency of 
+the first iteration with the average latency of all subsequent iteration for that job.
+"""
+function remove_initialization_latency!(df)
+    for jobid in unique(df.jobid)
+        dfi = filter(:jobid => (x)->x==jobid, df)
+        sort!(dfi, :iteration)
+        dfj = filter(:iteration => (x)->x>1, dfi)
+        Δ = dfi.update_latency[1] + dfi.latency[1]
+        Δ -= mean(dfj.update_latency) + mean(dfj.latency)
+        df[df.jobid .== jobid, :time] .-= Δ
+    end
+    df
+end
+
 includet("analysis/convergence.jl")
 includet("analysis/correlation.jl")
 includet("analysis/latency.jl")

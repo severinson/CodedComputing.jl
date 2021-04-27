@@ -151,7 +151,7 @@ And introduces:
 ## Reproducing the plots in the paper
 
 ```julia
-using Revise, CodedComputing; includet("src\\Analysis.jl"); using CSV, DataFrames; df = DataFrame(CSV.File("C:\\Users\\albin\\Dropbox\\PhD\\Eigenvector project\\AWS traces\\traces\\pca-1000genomes-c5.xlarge-eu-north-1.csv")); strip_columns!(df);
+using Revise, CodedComputing; includet("src\\Analysis.jl"); using CSV, DataFrames; df = DataFrame(CSV.File("C:\\Users\\albin\\Dropbox\\PhD\\Eigenvector project\\AWS traces\\traces\\pca-1000genomes-c5.xlarge-eu-north-1.csv")); strip_columns!(df); remove_initialization_latency!(df);
 
 # initialization
 using Revise # optional, needed for changes made to the source code be reflected in the REPL
@@ -162,6 +162,7 @@ includet("src/Analysis.jl") # use include instead of includet if you're not usin
 using CSV, DataFrames
 df = DataFrame(CSV.File("<path-to-traces-directory>/pca-1000genomes-c5.xlarge-eu-north-1.csv"))
 strip_columns!(df) # optional, to reduce DataFrame size
+remove_initialization_latency!(df) # remove latency in the first iteration that is due to, e.g., compilation
 reindex_workers_by_order!(df) # needed to compute order statistics
 
 # plot latency order statistics
@@ -178,7 +179,8 @@ plot_predictions(1.6362946777247114e9, df=df)
 # plot straggling transition probability
 ## re-load the data without re-indexing, since we need to track the latency of individual workers
 df = DataFrame(CSV.File("<path-to-traces-directory>/pca-1000genomes-c5.xlarge-eu-north-1.csv"))
-strip_columns!(df) # optional, to reduce DataFrame size
+strip_columns!(df)
+remove_initialization_latency!(df)
 
 ## verify that the workload is balanced between workers
 plot_latency_balance(df, nsubpartitions=1)
@@ -188,6 +190,9 @@ plot_timeseries(df, jobid=873, workers=[1,2])
 
 ## plot the straggler => straggler state transition probability
 plot_transition_probability(df, worker_flops=1.14e7)
+
+## plot the probability of a result having been received by the coordinator as a function of the number of iterations that has passed
+plot_staleness(df, nworkers=36, nwait=1, nsubpartitions=160)
 
 # plot rate of convergence
 
