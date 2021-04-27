@@ -196,5 +196,17 @@ plot_staleness(df, nworkers=36, nwait=1, nsubpartitions=160)
 
 # plot rate of convergence
 
+# Gamma model
+## Plot the latency distribution of a few individual workers
+plot_worker_latency_distribution(df, jobid=1080, worker_indices=[10, 36])
+
+## fit a Gamma distribution to the latency recorded for each worker and job
+dfg = gamma_df(df)
+
+## show how the avg. per-worker latency scales with nflops, and the distribution of the avg. per-worker latency.
+plot_gamma_mean_distribution(dfg)
+
+## fit a shifted-exponential distribution to the avg. per-worker latency for each value of nflops
+dfm = gamma_mean_df(dfg)
 
 ```
