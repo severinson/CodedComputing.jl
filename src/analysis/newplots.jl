@@ -825,6 +825,10 @@ function gamma_df(df; minsamples=200)
         for i in 1:nworkers
             d = Distributions.fit(Gamma, float.(dfi[:, latency_columns[i]]))
             row["α"], row["θ"] = params(d)
+            
+            d = Distributions.fit(ShiftedExponential, float.(dfi[:, latency_columns[i]]))
+            row["s"], row["sθ"] = params(d)
+
             row["worker_index"] = i
             push!(rv, row, cols=:union)
         end
@@ -1034,7 +1038,7 @@ function plot_gamma_var_distribution(dfg)
     plt.figure()
     plt.subplot(1, 2, 1)
     xs = dfg.mean
-    ys = dfg.θ # equal to dfg.var ./ dfg.mean    
+    ys = dfg.θ # equal to dfg.var ./ dfg.mean
     plt.plot(xs, ys, ".")
     plt.xlabel("avg. per-worker latency")
     # plt.ylabel("per-worker latency var. / avg. per-worker latency")
@@ -1117,7 +1121,12 @@ function gamma_worker_distribution(worker_flops)
     
     # shape parameter is computed from the above
     α = mean / θ
-    Gamma(α, θ)
+    return Gamma(α, θ)
+
+    # # per-worker latency is ShiftedExponential
+    # sθ = sqrt(θ * mean)
+    # s = mean - sθ
+    # ShiftedExponential(s, sθ)
 end
 
 """
@@ -1152,227 +1161,4 @@ function predict_latency_gamma(nwait, worker_flops, nworkers; nsamples=1000)
         rv += rand(s)
     end
     rv / nsamples
-end
-
-### non-iid shifted exponential model
-
-"""
-
-Fit a `ShiftedExponential` distribution to the latency of each worker for each job.
-"""
-function shiftexp_df(df)
-    df = filter([:nwait, :nworkers] => (x,y)->x==y, df)
-    rv = DataFrame()
-    row = Dict{String, Any}()
-    maxworkers = maximum(df.nworkers)
-    latency_columns = ["latency_worker_$i" for i in 1:maxworkers]    
-    for jobid in unique(df.jobid)
-        dfi = filter(:jobid => (x)->x==jobid, df)
-        nworkers = dfi.nworkers[1]
-        row["nworkers"] = nworkers
-        row["worker_flops"] = dfi.worker_flops[1]
-        row["nbytes"] = dfi.nbytes[1]
-        for i in 1:nworkers
-            se = Distributions.fit(ShiftedExponential, float.(dfi[:, latency_columns[i]]))
-            row["shift"], row["scale"] = params(se)
-            row["worker_index"] = i
-            push!(rv, row, cols=:union)
-        end
-    end
-    rv
-end
-
-"""
-
-Fit a two-dimensional `MvNormal` distribution to the shift and scale of the worker latency 
-distribution for each unique value of `worker_flops`.
-"""
-function meta_shiftexp_df(dfse)
-    rv = DataFrame()
-    row = Dict{String, Any}()    
-    for worker_flops in unique(dfse.worker_flops)
-        dfi = filter(:worker_flops => (x)->isapprox(x, worker_flops, rtol=1e-2), dfse)
-        d = Distributions.fit(MvNormal, hcat(dfi.shift, dfi.scale)')
-        row["worker_flops"] = worker_flops
-        row["nbytes"] = dfi.nbytes[1]
-        row["mean_shift"] = d.μ[1]
-        row["mean_scale"] = d.μ[2]
-        row["var_shift"] = d.Σ[1, 1]
-        row["var_scale"] = d.Σ[2, 2]
-        row["cov"] = d.Σ[1, 2]
-        push!(rv, row, cols=:union)
-    end
-    rv
-end
-
-function noise_df(dfse; nbins=100, minsamples=100)
-    rv = DataFrame()
-    row = Dict{String,Any}()
-    # c = mean(dfse.scale.^2 ./ (dfse.shift .+ dfse.scale))
-    edges = 10.0.^range(log10(minimum(dfse.shift)), log10(maximum(dfse.shift)), length=nbins+1)
-    for i in 1:nbins
-        dfi = filter(:shift => (x)->x>=edges[i], dfse)
-        dfi = filter(:shift => (x)->x<edges[i+1], dfi)
-        if size(dfi, 1) < minsamples
-            continue
-        end
-        println(size(dfi, 1))
-        row["nsamples"] = size(dfi, 1)
-        row["shift"] = mean(dfi.shift)
-        row["scale"] = mean(dfi.scale)
-        noise = dfi.scale.^2 ./ (dfi.shift .+ dfi.scale)
-        d = Distributions.fit(ShiftedExponential, noise)
-        row["noise_shift"], row["noise_scale"] = params(d)
-        push!(rv, row, cols=:union)
-    end
-    rv
-end
-
-function plot_noise(dfse; nbins=50)
-    dfn = noise_df(dfse; nbins)
-    plt.figure()
-    plt.subplot(1, 2, 1)
-    xs = dfn.shift .+ dfn.scale
-    plt.plot(xs, -dfn.noise_shift, ".")
-    plt.xscale("log")
-    plt.yscale("log")
-    plt.grid()
-
-    plt.subplot(1, 2, 2)
-    plt.plot(xs, dfn.noise_scale, ".")    
-    plt.xscale("log")
-    plt.yscale("log")
-    plt.grid()    
-
-    plt.tight_layout()
-    return
-end
-
-function plot_meta_shiftexp(dfn)
-    plt.figure()
-    plt.subplot(3, 2, 1)
-    xs = dfn.worker_flops
-    ys = dfn.mean_shift
-    plt.plot(xs, ys, ".")
-    plt.ylabel("μ(shift)")
-    plt.xlabel("nflops")
-    plt.grid()
-    plt.xscale("log")
-    plt.yscale("log")
-
-    p, _ = fit_polynomial(xs, ys, 1)
-    plt.plot(xs, p.(xs), "k-")
-
-    plt.subplot(3, 2, 2)
-    xs = dfn.worker_flops
-    # xs = dfn.var_shift
-    ys = sqrt.(dfn.mean_scale)
-    plt.plot(xs, ys, ".")
-    plt.ylabel("μ(scale)")
-    plt.xlabel("nflops")    
-    plt.grid()
-    # plt.xscale("log")
-    # plt.yscale("log")  
-
-    p, _ = fit_polynomial(xs, ys, 1)
-    plt.plot(xs, p.(xs), "k-")    
-
-    plt.subplot(3, 2, 3)
-    xs = dfn.worker_flops
-    ys = sqrt.(dfn.var_shift)
-    plt.plot(xs, ys, ".")
-    plt.ylabel("σ(shift)")
-    plt.xlabel("nflops")            
-    plt.grid()
-    plt.xscale("log")
-    plt.yscale("log")
-
-    p, _ = fit_polynomial(xs, ys, 1)
-    plt.plot(xs, p.(xs), "k-")    
-
-    plt.subplot(3, 2, 4)
-    xs = dfn.worker_flops
-    ys = sqrt.(dfn.var_scale)
-    plt.plot(xs, ys, ".")
-    plt.ylabel("σ(scale)")
-    plt.xlabel("nflops")        
-    plt.grid()
-    # plt.xscale("log")
-    # plt.yscale("log")
-
-    p, _ = fit_polynomial(xs, ys, 1)
-    plt.plot(xs, p.(xs), "k-")    
-
-    plt.subplot(3, 2, 5)
-    plt.plot(dfn.worker_flops, dfn.cov, ".")
-    plt.ylabel("cov(scale, shift)")
-    plt.xlabel("nflops")        
-    plt.grid()
-    plt.xscale("log")
-    plt.yscale("log")
-
-    plt.subplot(3, 2, 6)
-    ys = dfn.cov ./ (sqrt.(dfn.var_shift) .* sqrt.(dfn.var_scale))
-    plt.plot(dfn.worker_flops, ys, ".")
-    plt.ylabel("cor(scale, shift)")
-    plt.xlabel("nflops")        
-    plt.grid()
-    plt.xscale("log")
-    plt.yscale("log")    
-
-    plt.tight_layout()
-    return
-end
-
-# function non_iid_shifted_exponential_fit(df; worker_flops=1.14e7)
-#     df = filter([:nwait, :nworkers] => (x,y)->x==y, df)
-#     df = filter(:worker_flops => (x)->isapprox(x, worker_flops, rtol=1e-2), df)
-#     rv = Vector{ShiftedExponential}(undef, 0)
-#     for jobid in unique(df.jobid)
-#         dfi = filter(:jobid => (x)->x==jobid, df)
-#         se = Distributions.fit(ShiftedExponential, dfi.latency_worker_2)
-#         push!(rv, se)
-#     end
-#     rv
-# end
-
-function non_iid_shifted_exponential_plot(rvs)
-    ps = params.(rvs)
-    shifts = [p[1] for p in ps]
-    scales = [p[2] for p in ps]
-    
-    # plt.figure()
-    # plt.plot(shifts, scales, ".")
-    # return
-
-    samples = zeros(2, length(rvs))
-    samples[1, :] .= shifts
-    samples[2, :] .= scales
-    return Distributions.fit(MvNormal, samples)
-    
-    # shifts    
-    plt.figure()
-    xs = [p[1] for p in ps]
-    sort!(xs)
-    ys = range(0, 1, length=length(ps))   
-    plt.plot(xs, ys)
-
-    rv = Distributions.fit(Gamma, xs)
-    println(rv)
-    plt.plot(xs, cdf.(rv, xs), "k--")
-
-    plt.title("Shift")
-
-    # scales
-    plt.figure()
-    xs = [p[2] for p in ps]
-    sort!(xs)
-    ys = range(0, 1, length=length(ps))
-    plt.plot(xs, ys)
-
-    rv = Distributions.fit(Gamma, xs)
-    println(rv)
-    plt.plot(xs, cdf.(rv, xs), "k--")    
-
-    plt.title("Scale")        
 end
