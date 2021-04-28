@@ -1,6 +1,6 @@
 using CodedComputing, MPI, MPIStragglers
 using HDF5, LinearAlgebra
-using MKL, MKLSparse # typically increases MKL performance
+using MKLSparse
 using ArgParse
 
 MPI.Init()
