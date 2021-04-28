@@ -10,7 +10,7 @@ const rank = MPI.Comm_rank(comm)
 const isroot = MPI.Comm_rank(comm) == root
 const data_tag = 0
 const control_tag = 1
-const COMMON_BYTES = 0 # number of bytes reserved for communication from worker_main to coordinator_main
+const COMMON_BYTES = 8 # number of bytes reserved for communication from worker_main to coordinator_main
 
 """
 
@@ -118,8 +118,9 @@ function worker_loop(localdata, recvbuf, sendbuf; kwargs...)
         return
     end
     # trigger compilation for both version of worker_task!
-    state = worker_task!(recvbuf, sendbuf, localdata; kwargs...)
-    state = worker_task!(recvbuf, sendbuf, localdata; state, kwargs...)
+    t = @elapsed state = worker_task!(recvbuf, sendbuf, localdata; kwargs...)
+    t = @elapsed state = worker_task!(recvbuf, sendbuf, localdata; state, kwargs...)    
+    reinterpret(Float64, view(sendbuf, 1:COMMON_BYTES))[1] = t # send the recorded compute latency to the coordinator    
     MPI.Isend(sendbuf, root, data_tag, comm)
 
     # manually call the GC now to avoid pauses later during execution
@@ -137,7 +138,8 @@ function worker_loop(localdata, recvbuf, sendbuf; kwargs...)
         if index == 1 # exit message on control channel
             break
         end
-        state = worker_task!(recvbuf, sendbuf, localdata; state=state, kwargs...)
+        t = @elapsed state = worker_task!(recvbuf, sendbuf, localdata; state=state, kwargs...)
+        reinterpret(Float64, view(sendbuf, 1:COMMON_BYTES))[1] = t # send the recorded compute latency to the coordinator
         MPI.Isend(sendbuf, root, data_tag, comm)
     end
     return
@@ -202,11 +204,16 @@ function coordinator_main()
     # store which workers responded in each iteration
     responded = zeros(Int, nworkers, niterations)
 
-    # store latency for each worker and iteration
+    # total per-worker latency (recorded by the coordinator)
     latency = zeros(nworkers, niterations)
 
-    # to record iteration time
+    # per-worker compute latency (recorded by the workers and send to the coordinator)
+    compute_latency = zeros(nworkers, niterations)
+
+    # total latency until results have been received from enough workers
     ts_compute = zeros(niterations)
+
+    # latency of the iterate update computed by the coordinator
     ts_update = zeros(niterations)
 
     # function called inside kmap! whenever a result is received from a worker
@@ -260,6 +267,10 @@ function coordinator_main()
     end
     responded[:, epoch] .= repochs
     latency[:, epoch] .= pool.latency
+    for i in 1:nworkers
+        t = repochs[i] == epoch ? reinterpret(Float64, view(recvbufs[i], 1:COMMON_BYTES))[1] : NaN
+        compute_latency[i, epoch] = t
+    end
     ts_update[epoch] = @elapsed begin
         state = coordinator_task!(V, ∇, recvbufs, sendbuf, epoch, repochs; parsed_args...)    
     end
@@ -277,6 +288,10 @@ function coordinator_main()
         end
         responded[:, epoch] .= repochs
         latency[:, epoch] .= pool.latency
+        for i in 1:nworkers
+            t = repochs[i] == epoch ? reinterpret(Float64, view(recvbufs[i], 1:COMMON_BYTES))[1] : NaN
+            compute_latency[i, epoch] = t
+        end
         ts_update[epoch] = @elapsed begin
             state = coordinator_task!(V, ∇, recvbufs, sendbuf, epoch, repochs; state, parsed_args...)    
         end
@@ -309,6 +324,7 @@ function coordinator_main()
         fid["benchmark/t_update"] = ts_update
         fid["benchmark/responded"] = responded
         fid["benchmark/latency"] = latency
+        fid["benchmark/compute_latency"] = compute_latency
     end
     return
 end
