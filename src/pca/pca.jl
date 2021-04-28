@@ -87,7 +87,7 @@ function worker_setup(rank::Integer, nworkers::Integer; ncomponents::Integer, kw
     isnothing(ncomponents) || 0 < ncomponents || throw(DomainError(ncomponents, "ncomponents must be positive"))
     localdata, dimension, nsamples = read_localdata(rank, nworkers; kwargs...)
     recvbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*ncomponents)
-    sendbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*ncomponents + METADATA_BYTES)
+    sendbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*ncomponents + COMMON_BYTES + METADATA_BYTES)
     localdata, recvbuf, sendbuf
 end
 
@@ -110,18 +110,18 @@ function coordinator_setup(nworkers::Integer; inputfile::String, inputdataset::S
 
     # communication buffers
     sendbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*ncomponents)
-    recvbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*nworkers*ncomponents + METADATA_BYTES*nworkers)
+    recvbuf = Vector{UInt8}(undef, (sizeof(ELEMENT_TYPE)*dimension*ncomponents + COMMON_BYTES + METADATA_BYTES) * nworkers)
     reinterpret(ELEMENT_TYPE, view(sendbuf, :)) .= view(V, :)
 
     V, recvbuf, sendbuf
 end
 
-metadata_view(buffer) = view(buffer, 1:METADATA_BYTES)
-data_view(buffer) = reinterpret(ELEMENT_TYPE, @view buffer[METADATA_BYTES+1:end])
+metadata_view(buffer) = view(buffer, COMMON_BYTES+1:(COMMON_BYTES + METADATA_BYTES))
+data_view(buffer) = reinterpret(ELEMENT_TYPE, @view buffer[(COMMON_BYTES + METADATA_BYTES+1):end])
 
 function worker_task!(recvbuf, sendbuf, localdata; state=nothing, nsubpartitions::Integer, ncomponents::Integer, kwargs...)
     0 < ncomponents || throw(DomainError(ncomponents, "ncomponents must be positive"))        
-    sizeof(recvbuf) + METADATA_BYTES == sizeof(sendbuf) || throw(DimensionMismatch("recvbuf has size $(sizeof(recvbuf)), but sendbuf has size $(sizeof(sendbuf))"))
+    sizeof(recvbuf) + COMMON_BYTES + METADATA_BYTES == sizeof(sendbuf) || throw(DimensionMismatch("recvbuf has size $(sizeof(recvbuf)), but sendbuf has size $(sizeof(sendbuf))"))
     length(localdata) == nsubpartitions || throw(DimensionMismatch("Expected localdata to be of length nsubpartitions"))    
     
     # select a random sub-partition

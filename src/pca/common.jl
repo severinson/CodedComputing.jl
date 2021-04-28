@@ -10,6 +10,7 @@ const rank = MPI.Comm_rank(comm)
 const isroot = MPI.Comm_rank(comm) == root
 const data_tag = 0
 const control_tag = 1
+const COMMON_BYTES = 0 # number of bytes reserved for communication from worker_main to coordinator_main
 
 """
 
