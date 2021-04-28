@@ -26,8 +26,8 @@ function plot_orderstats(df; nworkers=nothing, worker_flops=2.27e7)
         if size(dfi, 1) == 0
             continue
         end
-        for worker_flops in [1.13e7, 1.51e7, 2.27e7, 4.54e7]
-            # for worker_flops in sort!(unique(dfi.worker_flops))
+        # for worker_flops in [1.13e7, 1.51e7, 2.27e7, 4.54e7]
+        for worker_flops in sort!(unique(dfi.worker_flops))
             println((nworkers, worker_flops))
             dfj = filter(:worker_flops => (x)->isapprox(x, worker_flops, rtol=1e-2), dfi)
             if size(dfj, 1) == 0
@@ -41,30 +41,30 @@ function plot_orderstats(df; nworkers=nothing, worker_flops=2.27e7)
             end
             xs = 1:nworkers
             ys = view(orderstats, 1:nworkers)
-            plt.plot(xs, ys, "-o", label="Nn: $nworkers, c: $worker_flops")
+            plt.plot(xs, ys, "-o", label="$nworkers workers, $(round(worker_flops, sigdigits=3)) workload")
             write_table(xs, ys, "./results/orderstats_$(nworkers)_$(worker_flops).csv")
 
             println("Acuteness: $(ys[end] / ys[1])")
 
-            # latency predicted by the degree-3 model (local)
-            p, _ = fit_polynomial(xs, ys, 3)            
-            ys = p.(1:nworkers)
-            plt.plot(xs, ys, "c--")
-            write_table(xs, ys, "./results/orderstats_deg3l_$(nworkers)_$(worker_flops).csv")
+            # # latency predicted by the degree-3 model (local)
+            # p, _ = fit_polynomial(xs, ys, 3)            
+            # ys = p.(1:nworkers)
+            # plt.plot(xs, ys, "c--")
+            # write_table(xs, ys, "./results/orderstats_deg3l_$(nworkers)_$(worker_flops).csv")
 
             # latency predicted by the degree-3 model (global)
             ys = predict_latency.(1:nworkers, worker_flops, nworkers)
-            plt.plot(xs, ys, "k--")
+            plt.plot(xs, ys, "k--", label="Degree-3 polynomial model")
             write_table(xs, ys, "./results/orderstats_deg3_$(nworkers)_$(worker_flops).csv")
 
-            # latency predicted by the shifted exponential model
-            ys = predict_latency_shiftexp.(1:nworkers, worker_flops, nworkers)
-            plt.plot(xs, ys, "m--")
-            write_table(xs, ys, "./results/orderstats_shiftexp_$(nworkers)_$(worker_flops).csv")
+            # # latency predicted by the shifted exponential model
+            # ys = predict_latency_shiftexp.(1:nworkers, worker_flops, nworkers)
+            # plt.plot(xs, ys, "m--")
+            # write_table(xs, ys, "./results/orderstats_shiftexp_$(nworkers)_$(worker_flops).csv")
 
             # latency predicted by the gamma model
             ys = predict_latency_gamma(worker_flops, nworkers)
-            plt.plot(xs, ys, "k-")
+            plt.plot(xs, ys, "m-", label="Non-iid order stats. model")
         end
     end
     plt.legend()
@@ -760,24 +760,31 @@ end
 
 ### non-iid Gamma model
 
-# Question: how do I evaluate the performance of my model?
-# I mostly care about the average order statistics latency
-# Hence, the way to evaluate the model is to compute the MSE.
+"""
 
+Plot the latency distribution of individual workers.
+"""
 function plot_worker_latency_distribution(df; jobid=1080, worker_indices=[10, 36])
     df = filter(:jobid => (x)->x==jobid, df)
+    worker_flops = df.worker_flops[1]
+    nbytes = df.nbytes[1]
     plt.figure()
     for i in worker_indices
         xs = sort(df[:, "latency_worker_$(i)"])
         ys = range(0, 1, length=length(xs))
-        plt.plot(xs, ys)
-        d = Distributions.fit(ShiftedExponential, xs)
-        plt.plot(xs, cdf.(d, xs), "k--", label="Worker $i")
+        plt.plot(xs, ys, label="Worker $i")
+        d = Distributions.fit(Gamma, xs)
+        ts = range(quantile(d, 0.000001), quantile(d, 0.999999), length=100)
+        if i == worker_indices[end]
+            plt.plot(ts, cdf.(d, ts), "k--", label="Fitted Gamma dist.")
+        else
+            plt.plot(ts, cdf.(d, ts), "k--")
+        end
     end
     plt.xlabel("Per-worker iteration latency [s]")
     plt.ylabel("CDF")
-    worker_flops = df.worker_flops[1]
-    plt.title("job $jobid")
+    plt.legend()
+    plt.title("job $jobid ($(round(worker_flops, sigdigits=3)) flops, $nbytes bytes)")
 
     # # plot some generated distributions
     # worker_flops = df.worker_flops[1]
@@ -788,6 +795,8 @@ function plot_worker_latency_distribution(df; jobid=1080, worker_indices=[10, 36
     # end
 
     plt.grid()
+    plt.tight_layout()
+    # plt.savefig("per_worker_distribution.png", dpi=600)    
     return
 end
 
@@ -795,7 +804,7 @@ end
 
 Fit a `Gamma` distribution to the latency of each worker for each job.
 """
-function gamma_df(df; minsamples=100)
+function gamma_df(df; minsamples=200)
     df = filter([:nwait, :nworkers] => (x,y)->x==y, df)
     rv = DataFrame()
     row = Dict{String, Any}()
@@ -825,6 +834,59 @@ function gamma_df(df; minsamples=100)
     rv
 end
 
+
+"""
+
+Plot the parameters of the `Gamma` distribution fitted to the per-worker latency.
+"""
+function plot_gamma_df(dfg)
+    plt.figure()
+    plt.subplot(3, 2, 1)
+    plt.plot(dfg.worker_flops, dfg.α, ".")
+    plt.xlabel("Workload [flops]")
+    plt.ylabel("α")
+    plt.xscale("log")
+    plt.yscale("log")
+
+    plt.subplot(3, 2, 2)
+    plt.plot(dfg.worker_flops, dfg.θ, ".")
+    plt.xlabel("Workload [flops]")
+    plt.ylabel("θ")    
+    plt.xscale("log")
+    plt.yscale("log")    
+    
+    plt.subplot(3, 2, 3)
+    plt.plot(dfg.worker_flops, dfg.mean, ".")
+    plt.xlabel("Workload [flops]")
+    plt.ylabel("mean (=α*θ)")
+    plt.xscale("log")
+    plt.yscale("log")    
+    
+    plt.subplot(3, 2, 4)
+    plt.plot(dfg.worker_flops, dfg.var, ".")    
+    plt.xlabel("Workload [flops]")
+    plt.ylabel("var (=α*θ^2)")
+    plt.xscale("log")
+    plt.yscale("log")   
+    
+    plt.subplot(3, 2, 5)
+    plt.plot(dfg.α, dfg.θ, ".")    
+    plt.xlabel("α")
+    plt.ylabel("θ")
+    plt.xscale("log")
+    plt.yscale("log")       
+
+    plt.subplot(3, 2, 6)
+    plt.plot(dfg.mean, dfg.θ, ".")    
+    plt.xlabel("mean")
+    plt.ylabel("θ")
+    plt.xscale("log")
+    plt.yscale("log")       
+
+    plt.tight_layout()
+    return
+end
+
 """
 
 Show how the avg. per-worker latency scales with nflops, and the distribution of the avg. 
@@ -834,33 +896,40 @@ function plot_gamma_mean_distribution(dfg)
     plt.figure()
     plt.subplot(1, 2, 1)
     plt.plot(dfg.worker_flops, dfg.mean, ".")
-    plt.xlabel("nflops")
+    plt.xlabel("Workload [flops]")
     plt.ylabel("Avg. per-worker latency")
     plt.grid()
+    plt.xscale("log")
+    plt.yscale("log")
+    plt.title("Avg. latency per worker")
 
     plt.subplot(1, 2, 2)
     for worker_flops in sort!(unique(dfg.worker_flops))
         dfi = filter(:worker_flops => (x)->isapprox(x, worker_flops, rtol=1e-2), dfg)
         xs = sort(dfi.mean)
         ys = range(0, 1, length=length(xs))
-        plt.plot(xs, ys)
+        plt.plot(xs, 1 .- ys)
         
-        d = Distributions.fit(Gamma, xs)
+        i = round(Int, 0.05*length(xs))
+        d = Distributions.fit(ShiftedExponential, xs[i:end-i])
         xs = range(quantile(d, 0.001), quantile(d, 0.999), length=100)
-        plt.plot(xs, cdf.(d, xs), "k--")
+        plt.plot(xs, 1 .- cdf.(d, xs), "k--")
     end
-    # plt.yscale("log")
+    plt.ylim(1e-2, 1)
     plt.xlabel("Avg. per-worker latency")
-    plt.ylabel("CDF")
-    # plt.xscale("log")
+    plt.ylabel("CCDF")    
+    plt.xscale("log")
+    plt.yscale("log")
     plt.grid()
+    plt.title("CCDF of avg. latency 
+    for each workload.")
     plt.tight_layout()
     return
 end
 
 """
 
-Fit a `ShiftedExponential` distribution to the avg. per-worker latency for each value of 
+Fit a probability distribution to the avg. per-worker latency for each value of 
 `worker_flops`.
 """
 function gamma_mean_df(dfg; minsamples=400)
@@ -873,19 +942,23 @@ function gamma_mean_df(dfg; minsamples=400)
             continue
         end
 
-        # Gamma model
-        d = Distributions.fit(Gamma, dfi.mean)
-        α, θ = params(d)
-        row["α"] = α
-        row["θ"] = θ
-        row["mean_mean"], row["var_mean"] = α*θ, α*θ^2
-
-        # # ShiftedExponential model
-        # d = Distributions.fit(ShiftedExponential, dfi.mean)
-        # s, θ = params(d)
-        # row["s"] = s
+        # # Gamma model
+        # xs = sort(dfi.mean)
+        # i = round(Int, 0.05*length(xs))        
+        # d = Distributions.fit(Gamma, xs[i:end-i])
+        # α, θ = params(d)
+        # row["α"] = α
         # row["θ"] = θ
-        # row["mean_mean"], row["var_mean"] = s+θ, θ^2
+        # row["mean_mean"], row["var_mean"] = α*θ, α*θ^2
+
+        # ShiftedExponential model
+        xs = sort(dfi.mean)
+        i = round(Int, 0.05*length(xs))
+        d = Distributions.fit(ShiftedExponential, xs[i:end-i])
+        s, θ = params(d)
+        row["s"] = s
+        row["θ"] = θ
+        row["mean_mean"], row["var_mean"] = s+θ, θ^2
 
         row["worker_flops"] = worker_flops
         row["nbytes"] = dfi.nbytes[1]
@@ -897,27 +970,41 @@ end
 
 """
 
-Plot the parameters of the `ShiftedExponential` distribution fit to the mean latency vs. nflops.
+Plot the parameters of the distribution fit to the mean latency vs. nflops.
 """
 function plot_gamma_mean_df(dfgm)
     plt.figure()
 
-    # shift vs. nflops
+    # Gamma model
+    # plt.subplot(1, 2, 1)
+    # xs = dfgm.worker_flops
+    # ys = dfgm.mean_mean
+    # plt.plot(xs, ys, ".")
+    # plt.xlabel("workload [flops]")
+    # plt.ylabel("meta-mean (meta-shape * meta-scale)")
+    # plt.grid()
+
+    # ts = sort(xs)
+    # p, coeffs = fit_polynomial(xs, ys, 1)
+    # plt.plot(ts, p.(ts), "k--")
+    # println("meta-mean coefficients: $coeffs")    
+
+    # ShiftedExponential model
     plt.subplot(1, 2, 1)
     xs = dfgm.worker_flops
-    ys = dfgm.mean_mean
+    ys = dfgm.s
     plt.plot(xs, ys, ".")
     plt.xlabel("workload [flops]")
-    plt.ylabel("meta-mean (meta-shape * meta-scale)")
+    plt.ylabel("meta-shift")
     plt.grid()
 
     ts = sort(xs)
     p, coeffs = fit_polynomial(xs, ys, 1)
     plt.plot(ts, p.(ts), "k--")
-    println("shift coefficients: $coeffs")
+    println("shift coefficients: $coeffs")    
 
     # plt.xscale("log")
-    # plt.yscale("log")    
+    # plt.yscale("log")
 
     # scale vs. nflops
     plt.subplot(1, 2, 2)
@@ -935,9 +1022,14 @@ function plot_gamma_mean_df(dfgm)
     # plt.yscale("log")        
 
     plt.tight_layout()
+    return
 end
 
-function plot_gamma_var_distribution(dfg; nbins=100, minsamples=100)
+"""
+
+Plot the distribution of the normalized variance.
+"""
+function plot_gamma_var_distribution(dfg)
 
     plt.figure()
     plt.subplot(1, 2, 1)
@@ -945,7 +1037,8 @@ function plot_gamma_var_distribution(dfg; nbins=100, minsamples=100)
     ys = dfg.θ # equal to dfg.var ./ dfg.mean    
     plt.plot(xs, ys, ".")
     plt.xlabel("avg. per-worker latency")
-    plt.ylabel("per-worker latency var. / avg. per-worker latency")
+    # plt.ylabel("per-worker latency var. / avg. per-worker latency")
+    plt.ylabel("scale (θ)")
     plt.xscale("log")
     plt.yscale("log")
     plt.grid()
@@ -955,76 +1048,21 @@ function plot_gamma_var_distribution(dfg; nbins=100, minsamples=100)
     i = round(Int, 0.05*length(xs))
     xs = xs[i:end-i]
     ys = range(0, 1, length=length(xs))
-    plt.semilogy(xs, 1 .- ys)
+    plt.semilogy(xs, 1 .- ys, label="Empirical")
 
     d = Distributions.fit(LogNormal, xs)
     println(d)
-    plt.plot(xs, 1 .- cdf.(d, xs), "k--")
+    ts = range(quantile(d, 0.0001), quantile(d, 0.9999), length=100)
+    plt.plot(ts, 1 .- cdf.(d, ts), "k--", label="Fitted LogNormal distribution")
     plt.ylabel("CCDF")
-    plt.xlabel("per-worker latency var. / avg. per-worker latency")
-    
-    plt.xscale("log")
+    # plt.xlabel("per-worker latency var. / avg. per-worker latency")
+    plt.xlabel("scale (θ)")
+    plt.ylim(1e-2, 1)
+    # plt.xscale("log")
     plt.yscale("log")    
+    plt.legend()
     plt.grid()
     plt.tight_layout()
-    return
-end
-
-
-function plot_gamma_mean(dfgm)
-    plt.figure()
-    xs = dfgm.worker_flops
-    ys = dfgm.mean_mean
-    plt.plot(xs, ys, ".", label="Mean")
-    p, coeffs = fit_polynomial(xs, ys, 1)
-    println(coeffs)
-    ts = sort(xs)
-    plt.plot(ts, p.(ts), "k--")
-
-    ys = sqrt.(dfgm.var_mean)
-    plt.plot(xs, ys, ".", label="Var")
-    p, coeffs = fit_polynomial(xs, ys, 1)
-    println(coeffs)    
-    plt.plot(ts, p.(ts), "k--")
-
-    plt.xscale("log")
-    plt.yscale("log")
-    plt.legend()
-    return
-end
-
-function plot_gamma_var(dfg; nbins=20, minsamples=100)
-    plt.figure()
-    plt.plot(dfg.mean, dfg.var ./ dfg.mean, ".")
-
-
-    # edges = 10.0.^range(log10(minimum(dfg.mean)), log10(maximum(dfg.mean)), length=nbins+1)
-    # xs = zeros(0)
-    # ys = zeros(0)
-    # for i in 1:nbins
-    #     dfi = filter(:mean => (x)->edges[i] <= x < edges[i+1], dfg)
-    #     if size(dfi, 1) < minsamples
-    #         continue
-    #     end
-    #     push!(xs, mean(dfi.mean))
-    #     push!(ys, mean(dfi.var ./ dfi.mean))
-    # end
-    # plt.plot(xs, ys, "k-")
-
-    plt.grid()
-    plt.xscale("log")
-    plt.yscale("log")
-    return
-end
-
-"""
-
-Plot the mean of the Gamma distrinution vs. flops.
-"""
-function plot_gamma_mean_vs_nflops(dfg)
-    plt.figure()
-    plt.plot(dfg.worker_flops, dfg.α.*dfg.θ, ".")
-    plt.grid()
     return
 end
 
@@ -1041,15 +1079,41 @@ function gamma_worker_distribution(worker_flops)
     # d = ShiftedExponential(meta_shift, meta_scale)
     # mean = rand(d) # avg. latency of this worker
 
-    # Gamma model
-    meta_mean = 0.0006680826556396607 + 8.336680922959681e-9worker_flops
-    meta_scale = -1.2720269369198488e-5 + 3.5940299549679294e-11worker_flops
-    meta_shape = meta_mean / meta_scale
-    d = Gamma(meta_shape, meta_scale)
-    mean = rand(d)
+    # # Gamma model
+    # meta_mean = 0.0006680826556396607 + 8.336680922959681e-9worker_flops
+    # meta_scale = -1.2720269369198488e-5 + 3.5940299549679294e-11worker_flops
+    # meta_shape = meta_mean / meta_scale
+    # d = Gamma(meta_shape, meta_scale)
+    # mean = rand(d)
 
-    # scale parameter is selected at random, independently of the workload
-    θ = rand(LogNormal(-9.642680987497839, 0.25878776103561885))
+    # # Gamma model w. removing 5% largest and smallest values
+    # meta_mean = 0.0006275309187944665 + 8.322795865015209e-9worker_flops
+    # meta_scale = -1.1809861023747872e-5 + 2.936533045933439e-11worker_flops
+    # meta_shape = meta_mean / meta_scale
+    # d = Gamma(meta_shape, meta_scale)
+    # mean = rand(d)
+
+    # Shifted exponential w. removing 5% largest and smallest values
+    meta_shift = 0.0007199382199680563 + 7.81714364759284e-9worker_flops
+    meta_scale = -9.240730117362186e-5 + 5.056522174223721e-10worker_flops
+    d = ShiftedExponential(meta_shift, meta_scale)
+    mean = rand(d) # avg. latency of this worker
+
+    # Gamma scale
+    # θ = rand(Gamma(16.942689050787024, 3.946363854792131e-6))
+
+    # Normal-distribution scale
+    # dθ = Normal(6.686201567300831e-5, 1.5062764605542296e-5)
+    # θ = rand(dθ)
+    # while θ <= 0
+    #     θ = rand(dθ)
+    # end
+
+    # ShiftedExponential scale
+    # θ = rand(ShiftedExponential(5.592635406074897e-7, 6.668430692272587e-6))
+
+    ## LogNormal scale
+    θ = rand(LogNormal(-12.128750442775992, 0.7232943784486586))
     
     # shape parameter is computed from the above
     α = mean / θ
@@ -1312,4 +1376,3 @@ function non_iid_shifted_exponential_plot(rvs)
 
     plt.title("Scale")        
 end
-

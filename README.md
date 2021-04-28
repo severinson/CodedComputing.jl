@@ -207,6 +207,10 @@ dfg = gamma_df(df)
 plot_gamma_mean_distribution(dfg)
 
 ## fit a shifted-exponential distribution to the avg. per-worker latency for each value of nflops
-dfm = gamma_mean_df(dfg)
+dfgm = gamma_mean_df(dfg)
+plot_gamma_mean_df(dfgm)
+
+## plot the distribution of the per-worker scale parameter
+plot_gamma_var_distribution(dfg)
 
 ```
