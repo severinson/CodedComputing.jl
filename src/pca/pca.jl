@@ -116,6 +116,9 @@ function coordinator_setup(nworkers::Integer; inputfile::String, inputdataset::S
     V, recvbuf, sendbuf
 end
 
+metadata_view(buffer) = view(buffer, 1:METADATA_BYTES)
+data_view(buffer) = reinterpret(ELEMENT_TYPE, @view buffer[METADATA_BYTES+1:end])
+
 function worker_task!(recvbuf, sendbuf, localdata; state=nothing, nsubpartitions::Integer, ncomponents::Integer, kwargs...)
     0 < ncomponents || throw(DomainError(ncomponents, "ncomponents must be positive"))        
     sizeof(recvbuf) + METADATA_BYTES == sizeof(sendbuf) || throw(DimensionMismatch("recvbuf has size $(sizeof(recvbuf)), but sendbuf has size $(sizeof(sendbuf))"))
@@ -145,16 +148,13 @@ function worker_task!(recvbuf, sendbuf, localdata; state=nothing, nsubpartitions
     mul!(V, Xw, Wv)
     
     # populate the send buffer
-    metadata = reinterpret(UInt16, view(sendbuf, 1:METADATA_BYTES))
+    metadata = reinterpret(UInt16, metadata_view(sendbuf))
     metadata[1] = CANARY_VALUE
     metadata[2] = rank
     metadata[3] = subpartition_index
-    @views sendbuf[METADATA_BYTES+1:end] .= recvbuf[:] # V is aliased to recvbuf
+    data_view(sendbuf) .= view(V, :)
     W
 end
-
-data_view(recvbuf) = reinterpret(ELEMENT_TYPE, @view recvbuf[METADATA_BYTES+1:end])
-metadata_view(recvbuf) = view(recvbuf, 1:METADATA_BYTES)
 
 function update_gradient_sgd!(∇, recvbufs, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, nreplicas, nsubpartitions, kwargs...)
     length(recvbufs) == length(repochs) || throw(DimensionMismatch("recvbufs has dimension $(length(recvbufs)), but repochs has dimension $(length(repochs))"))
