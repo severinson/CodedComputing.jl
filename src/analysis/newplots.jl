@@ -1101,7 +1101,7 @@ function gamma_worker_distribution(worker_flops)
     meta_shift = 0.0007199382199680563 + 7.81714364759284e-9worker_flops
     meta_scale = -9.240730117362186e-5 + 5.056522174223721e-10worker_flops
     d = ShiftedExponential(meta_shift, meta_scale)
-    mean = rand(d) # avg. latency of this worker
+    mean = rand(d) # avg. latency of this worker, equal to α*θ
 
     # Gamma scale
     # θ = rand(Gamma(16.942689050787024, 3.946363854792131e-6))
