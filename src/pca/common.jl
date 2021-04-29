@@ -1,4 +1,4 @@
-using CodedComputing, MPI, MPIStragglers
+using CodedComputing, MPI, MPIAsyncPools
 using HDF5, LinearAlgebra
 using MKLSparse
 using ArgParse
@@ -158,7 +158,7 @@ function worker_main()
     end
 end
 
-function shutdown(pool::AsyncPool)
+function shutdown(pool::MPIAsyncPool)
     for i in pool.ranks
         MPI.Isend(zeros(1), i, control_tag, comm)
     end
@@ -182,7 +182,7 @@ function coordinator_main()
     println("Job started with nwait: $nwait, npartitions: $npartitions, niterations: $niterations")
 
     # worker pool and communication buffers
-    pool = AsyncPool(nworkers)
+    pool = MPIAsyncPool(nworkers)
     V, recvbuf, sendbuf = coordinator_setup(nworkers; parsed_args...)
     mod(length(recvbuf), nworkers) == 0 || error("the length of recvbuf must be divisible by the number of workers")
     ∇ = similar(V)
@@ -246,7 +246,7 @@ function coordinator_main()
     state = nothing # so that we can release the memory
 
     # create a new pool to reset the epochs
-    pool = AsyncPool(nworkers)
+    pool = MPIAsyncPool(nworkers)
 
     # manually call the GC now to avoid pauses later during execution
     # (this is only necessary when benchmarking)
