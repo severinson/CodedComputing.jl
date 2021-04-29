@@ -32,12 +32,17 @@ function create_df(fid, nrows=2504, ncolumns=81271767)
         row["t_update"] = fid["benchmark/t_update"][i]
         for j in 1:nworkers # worker response epochs
             row["repoch_worker_$j"] = fid["benchmark/responded"][j, i]
-        end        
+        end
         if "latency" in keys(fid["benchmark"]) # worker latency
             for j in 1:nworkers
                 row["latency_worker_$j"] = fid["benchmark/latency"][j, i]
             end
         end            
+        if "compute_latency" in keys(fid["benchmark"]) # worker compute latency
+            for j in 1:nworkers
+                row["compute_latency_worker_$j"] = fid["benchmark/compute_latency"][j, i]
+            end
+        end
         push!(rv, row, cols=:union)
     end
     rv
@@ -178,7 +183,7 @@ end
 
 Read all output files from `dir` and write summary statistics (e.g., iteration time and convergence) to DataFrames.
 """
-function parse_pca_files(;dir::AbstractString, prefix="output", dfname="df.csv", reparse=false, Xs, mseiterations=0)
+function parse_pca_files(;dir::AbstractString, prefix="output", dfname="df.csv", reparse=false, Xs=nothing, mseiterations=0)
 
     # process output files
     filenames = glob("$(prefix)*.h5", dir)
