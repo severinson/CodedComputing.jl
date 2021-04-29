@@ -138,6 +138,7 @@ function aggregate_dataframes(;dir::AbstractString, prefix::AbstractString="outp
         df[!, :jobid] .= i # store a unique ID for each file read
     end
     df = vcat(dfs..., cols=:union)
+    df = clean_pca_df(df)
     CSV.write(joinpath(dir, dfname), df)
     df
 end
@@ -203,7 +204,6 @@ function parse_pca_files(;dir::AbstractString, prefix="output", dfname="df.csv",
     inputmatrix = nothing
     GC.gc()
     df = aggregate_dataframes(;dir, prefix, dfname)
-    clean_pca_df(df)
 end
 
 
