@@ -153,6 +153,10 @@ And introduces:
 ```julia
 using Revise, CodedComputing; includet("src\\Analysis.jl"); using CSV, DataFrames; df = DataFrame(CSV.File("C:\\Users\\albin\\Dropbox\\PhD\\Eigenvector project\\AWS traces\\traces\\pca-1000genomes-c5.xlarge-eu-north-1.csv")); strip_columns!(df); remove_initialization_latency!(df);
 
+using Revise, CodedComputing; includet("src\\Analysis.jl"); using CSV, DataFrames; df = DataFrame(CSV.File("C:\\Users\\albin\\Dropbox\\PhD\\Eigenvector project\\ex3 traces\\pca-1000genomes-ex3.rome16q.csv")); strip_columns!(df); remove_initialization_latency!(df);
+
+using Revise, CodedComputing; includet("src\\Analysis.jl"); using CSV, DataFrames; df = DataFrame(CSV.File("C:\\Users\\albin\\Dropbox\\PhD\\Eigenvector project\\ex3 traces\\pca-1000genomes-dense-equiv-ex3.rome16q.csv")); strip_columns!(df); remove_initialization_latency!(df);
+
 # initialization
 using Revise # optional, needed for changes made to the source code be reflected in the REPL
 using CodedComputing
@@ -171,7 +175,8 @@ plot_orderstats(df, worker_flops=2.27e7)
 ## plot the coefficients of a degree-3 polynomial fitted to the average latency for pairs (nworkers, worker_flops)
 dfm = mean_latency_df(df) # compute average order statistics latency for each unique pair (nworkers, worker_flops)
 df3 = fit_local_deg3_model(dfm) # fit a degree-3 polynomial to the order statistics latency for each row of dfm
-plot_deg3_model(df3)
+deg3m = fit_deg3_model(df) # fit a global degree-3 polynomial model, for which the coefficients are computed from the workload
+plot_deg3_model(df3, deg3m) # plot the coefficients of the local and global degree-3 polynomial model
 
 # plot predicted and empirical latency
 plot_predictions(1.6362946777247114e9, df=df)
@@ -212,5 +217,8 @@ plot_gamma_mean_df(dfgm)
 
 ## plot the distribution of the per-worker scale parameter
 plot_gamma_var_distribution(dfg)
+
+## fit the model
+osm = fit_non_iid_model(dfg, dfgm)
 
 ```

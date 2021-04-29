@@ -2,7 +2,7 @@
 
 Plot order statistics latency for a given computational load.
 """
-function plot_orderstats(df; nworkers=nothing, worker_flops=2.27e7)
+function plot_orderstats(df; nworkers=nothing, worker_flops=nothing, deg3m=nothing, osm=nothing)
     if !isnothing(nworkers)
         df = filter(:nworkers => (x)->x==nworkers, df)
     end
@@ -26,7 +26,6 @@ function plot_orderstats(df; nworkers=nothing, worker_flops=2.27e7)
         if size(dfi, 1) == 0
             continue
         end
-        # for worker_flops in [1.13e7, 1.51e7, 2.27e7, 4.54e7]
         for worker_flops in sort!(unique(dfi.worker_flops))
             println((nworkers, worker_flops))
             dfj = filter(:worker_flops => (x)->isapprox(x, worker_flops, rtol=1e-2), dfi)
@@ -53,25 +52,30 @@ function plot_orderstats(df; nworkers=nothing, worker_flops=2.27e7)
             # write_table(xs, ys, "./results/orderstats_deg3l_$(nworkers)_$(worker_flops).csv")
 
             # latency predicted by the degree-3 model (global)
-            ys = predict_latency.(1:nworkers, worker_flops, nworkers)
-            plt.plot(xs, ys, "k--", label="Degree-3 polynomial model")
-            write_table(xs, ys, "./results/orderstats_deg3_$(nworkers)_$(worker_flops).csv")
+            if !isnothing(deg3m)
+                ys = predict_latency.(1:nworkers, worker_flops, nworkers; deg3m)
+                plt.plot(xs, ys, "k--", label="Degree-3 polynomial model")
+                write_table(xs, ys, "./results/orderstats_deg3_$(nworkers)_$(worker_flops).csv")
+            end
 
             # # latency predicted by the shifted exponential model
             # ys = predict_latency_shiftexp.(1:nworkers, worker_flops, nworkers)
             # plt.plot(xs, ys, "m--")
             # write_table(xs, ys, "./results/orderstats_shiftexp_$(nworkers)_$(worker_flops).csv")
 
-            # latency predicted by the gamma model
-            ys = predict_latency_gamma(worker_flops, nworkers)
-            plt.plot(xs, ys, "m-", label="Non-iid order stats. model")
+            # latency predicted by the non-iid order statistics model
+            if !isnothing(osm)
+                ys = predict_latency_gamma(worker_flops, nworkers; osm)
+                plt.plot(xs, ys, "m-", label="Non-iid order stats. model")
+            end
         end
     end
-    plt.legend()
+    # plt.legend()
+    plt.yscale("log")
     plt.grid()
     plt.xlabel("Order")        
     plt.ylabel("Latency [s]")
-    plt.tight_layout()
+    # plt.tight_layout()
     return
 end
 
@@ -141,8 +145,8 @@ end
 
 Return the latency predicted by the degree-3 model.
 """
-function predict_latency(nwait, nflops, nworkers; type="c5xlarge")
-    b1, c1, d1, e1, b2, c2, d2, e2 = deg3_coeffs(type)
+function predict_latency(nwait, nflops, nworkers; deg3m)
+    b1, c1, d1, e1, b2, c2, d2, e2 = deg3m
     rv = b1 + b2*nflops
     rv += c1*nwait + c2*nflops*nwait/nworkers
     rv += d1*nwait^2 + d2*nflops*(nwait/nworkers)^2
@@ -193,20 +197,23 @@ function fit_local_deg3_model(dfm)
     rv
 end
 
-function plot_deg3_model(df3)
+function plot_deg3_model(df3, deg3m=nothing)
 
     # coefficients of global model
-    nflops1 = 10 .^ range(log10(minimum(df3.worker_flops)), log10(maximum(df3.worker_flops)), length=100)
-    nflops2 = 10 .^ range(log10(minimum(df3.worker_flops./df3.nworkers)), log10(maximum(df3.worker_flops./df3.nworkers)), length=100)
-    nflops3 = 10 .^ range(log10(minimum(df3.worker_flops./df3.nworkers.^2)), log10(maximum(df3.worker_flops./df3.nworkers.^2)), length=100)
-    nflops4 = 10 .^ range(log10(minimum(df3.worker_flops./df3.nworkers.^3)), log10(maximum(df3.worker_flops./df3.nworkers.^3)), length=100)
-    b1, c1, d1, e1, b2, c2, d2, e2 = deg3_coeffs("c5xlarge")
-    α1 = b1 .+ b2.*nflops1
-    α2 = c1 .+ c2.*nflops2
-    α3 = -(d1 .+ d2.*nflops3)
-    α4 = e1 .+ e2.*nflops4
-    coefficients = [α1, α2, α3, α4]
-    nflops_all = [nflops1, nflops2, nflops3, nflops4]
+    if !isnothing(deg3m)
+        nflops1 = 10 .^ range(log10(minimum(df3.worker_flops)), log10(maximum(df3.worker_flops)), length=100)
+        nflops2 = 10 .^ range(log10(minimum(df3.worker_flops./df3.nworkers)), log10(maximum(df3.worker_flops./df3.nworkers)), length=100)
+        nflops3 = 10 .^ range(log10(minimum(df3.worker_flops./df3.nworkers.^2)), log10(maximum(df3.worker_flops./df3.nworkers.^2)), length=100)
+        nflops4 = 10 .^ range(log10(minimum(df3.worker_flops./df3.nworkers.^3)), log10(maximum(df3.worker_flops./df3.nworkers.^3)), length=100)
+        # b1, c1, d1, e1, b2, c2, d2, e2 = deg3_coeffs("c5xlarge")
+        b1, c1, d1, e1, b2, c2, d2, e2 = deg3m
+        α1 = b1 .+ b2.*nflops1
+        α2 = c1 .+ c2.*nflops2
+        α3 = -(d1 .+ d2.*nflops3)
+        α4 = e1 .+ e2.*nflops4
+        coefficients = [α1, α2, α3, α4]
+        nflops_all = [nflops1, nflops2, nflops3, nflops4]
+    end
 
     plt.figure()
     for (i, col) in enumerate([:x1, :x2, :x3, :x4])
@@ -220,23 +227,28 @@ function plot_deg3_model(df3)
             if i == 3
                 ys .*= -1
             end
-            plt.plot(xs, ys, ".", label="$nworkers workers")
+            plt.plot(xs, ys, ".", label="Local model ($nworkers workers)")
             write_table(xs, ys, "./results/deg3_$(col)_$(nworkers).csv")
         end
 
-        xs = nflops_all[i]
-        ys = coefficients[i]
-        plt.plot(xs, ys, "k-")
-        write_table(xs, ys, "./results/deg3_global_$(col).csv")
+        # coefficients of the global model
+        if !isnothing(deg3m)
+            xs = nflops_all[i]
+            ys = coefficients[i]
+            plt.plot(xs, ys, "k-", label="Global model")
+            write_table(xs, ys, "./results/deg3_global_$(col).csv")
+        end
 
         if i == 3
             plt.ylabel("-$col")
         else
             plt.ylabel(col)
         end
+        if i == 1
+            plt.legend()
+        end
         plt.xlabel("c / nworkers^$(i-1)")
         plt.grid()
-        plt.legend()
         plt.xscale("log")
         plt.yscale("log")
         plt.tight_layout()        
@@ -343,7 +355,7 @@ end
 Plot latency as a function of `nworkers` for a fixed total number of flops across all workers per 
 iteration, denoted by `c0`.
 """
-function plot_predictions(c0=1.6362946777247114e9; df=nothing, maxworkers=200)
+function plot_predictions(c0=1.6362946777247114e9; df=nothing, maxworkers=200, deg3m)
     if !isnothing(df)
         df = filter([:nwait, :nworkers] => (x, y)->x==y, df)
     end
@@ -353,7 +365,7 @@ function plot_predictions(c0=1.6362946777247114e9; df=nothing, maxworkers=200)
     for ϕ in [0.5, 1.0]
         nwait = ϕ.*nworkers
         xs = nworkers
-        ys = predict_latency.(nwait, c, nworkers)
+        ys = predict_latency.(nwait, c, nworkers; deg3m)
         plt.plot(xs, ys, label="$(ϕ) (analytic)")
         description = "$(round(c0, sigdigits=3))_$(round(ϕ, sigdigits=3))"
         write_table(xs, ys, "./results/pred_"*description*".csv")
@@ -773,7 +785,7 @@ function plot_worker_latency_distribution(df; jobid=1080, worker_indices=[10, 36
         xs = sort(df[:, "latency_worker_$(i)"])
         ys = range(0, 1, length=length(xs))
         plt.plot(xs, ys, label="Worker $i")
-        d = Distributions.fit(Gamma, xs)
+        d = Distributions.fit(ShiftedExponential, xs)
         ts = range(quantile(d, 0.000001), quantile(d, 0.999999), length=100)
         if i == worker_indices[end]
             plt.plot(ts, cdf.(d, ts), "k--", label="Fitted Gamma dist.")
@@ -789,7 +801,7 @@ function plot_worker_latency_distribution(df; jobid=1080, worker_indices=[10, 36
     # # plot some generated distributions
     # worker_flops = df.worker_flops[1]
     # for _ in 1:3
-    #     w = gamma_worker_distribution(worker_flops)
+    #     w = shiftexp_worker_distribution(worker_flops; osm)
     #     xs = range(quantile(w, 0.001), quantile(w, 0.999), length=100)
     #     plt.plot(xs, cdf.(w, xs), "k-")
     # end
@@ -804,7 +816,7 @@ end
 
 Fit a `Gamma` distribution to the latency of each worker for each job.
 """
-function gamma_df(df; minsamples=200)
+function gamma_df(df; minsamples=0)
     df = filter([:nwait, :nworkers] => (x,y)->x==y, df)
     rv = DataFrame()
     row = Dict{String, Any}()
@@ -912,18 +924,19 @@ function plot_gamma_mean_distribution(dfg)
         dfi = filter(:worker_flops => (x)->isapprox(x, worker_flops, rtol=1e-2), dfg)
         xs = sort(dfi.mean)
         ys = range(0, 1, length=length(xs))
-        plt.plot(xs, 1 .- ys)
+        plt.plot(xs, ys)
         
-        i = round(Int, 0.05*length(xs))
-        d = Distributions.fit(ShiftedExponential, xs[i:end-i])
+        # i = round(Int, 0.05*length(xs))
+        # xs = xs[i:end-i]
+        d = Distributions.fit(ShiftedExponential, xs)
         xs = range(quantile(d, 0.001), quantile(d, 0.999), length=100)
-        plt.plot(xs, 1 .- cdf.(d, xs), "k--")
+        plt.plot(xs, cdf.(d, xs), "k--")
     end
-    plt.ylim(1e-2, 1)
+    # plt.ylim(1e-2, 1)
     plt.xlabel("Avg. per-worker latency")
     plt.ylabel("CCDF")    
-    plt.xscale("log")
-    plt.yscale("log")
+    # plt.xscale("log")
+    # plt.yscale("log")
     plt.grid()
     plt.title("CCDF of avg. latency 
     for each workload.")
@@ -936,7 +949,7 @@ end
 Fit a probability distribution to the avg. per-worker latency for each value of 
 `worker_flops`.
 """
-function gamma_mean_df(dfg; minsamples=400)
+function gamma_mean_df(dfg; minsamples=0)
     rv = DataFrame()
     row = Dict{String, Any}()    
     for worker_flops in unique(dfg.worker_flops)
@@ -957,8 +970,9 @@ function gamma_mean_df(dfg; minsamples=400)
 
         # ShiftedExponential model
         xs = sort(dfi.mean)
-        i = round(Int, 0.05*length(xs))
-        d = Distributions.fit(ShiftedExponential, xs[i:end-i])
+        # i = round(Int, 0.05*length(xs))
+        # xs = xs[i:end-i]
+        d = Distributions.fit(ShiftedExponential, xs)
         s, θ = params(d)
         row["s"] = s
         row["θ"] = θ
@@ -1007,8 +1021,8 @@ function plot_gamma_mean_df(dfgm)
     plt.plot(ts, p.(ts), "k--")
     println("shift coefficients: $coeffs")    
 
-    # plt.xscale("log")
-    # plt.yscale("log")
+    plt.xscale("log")
+    plt.yscale("log")
 
     # scale vs. nflops
     plt.subplot(1, 2, 2)
@@ -1022,8 +1036,8 @@ function plot_gamma_mean_df(dfgm)
     plt.plot(ts, p.(ts), "k--")    
     println("scale coefficients: $coeffs")
 
-    # plt.xscale("log")
-    # plt.yscale("log")        
+    plt.xscale("log")
+    plt.yscale("log")        
 
     plt.tight_layout()
     return
@@ -1050,31 +1064,74 @@ function plot_gamma_var_distribution(dfg)
     plt.subplot(1, 2, 2)
     xs = sort(ys)
     i = round(Int, 0.05*length(xs))
-    xs = xs[i:end-i]
+    xs = xs[1:end-i]
     ys = range(0, 1, length=length(xs))
-    plt.semilogy(xs, 1 .- ys, label="Empirical")
+    plt.plot(xs, ys, label="Empirical")
 
-    d = Distributions.fit(LogNormal, xs)
+    d = Distributions.fit(Exponential, xs)
     println(d)
     ts = range(quantile(d, 0.0001), quantile(d, 0.9999), length=100)
-    plt.plot(ts, 1 .- cdf.(d, ts), "k--", label="Fitted LogNormal distribution")
+    plt.plot(ts, cdf.(d, ts), "k--", label="Fitted LogNormal distribution")
     plt.ylabel("CCDF")
     # plt.xlabel("per-worker latency var. / avg. per-worker latency")
     plt.xlabel("scale (θ)")
     plt.ylim(1e-2, 1)
     # plt.xscale("log")
-    plt.yscale("log")    
+    # plt.yscale("log")    
     plt.legend()
     plt.grid()
     plt.tight_layout()
     return
 end
 
+function fit_non_iid_model(dfg, dfgm)
+
+    # fit the meta-distribution determining avg. latency
+    xs = dfgm.worker_flops
+    ys = dfgm.s
+    p_shift, _ = fit_polynomial(xs, ys, 1)
+    ys = dfgm.θ
+    p_scale, _ = fit_polynomial(xs, ys, 1)
+
+    # fit the distribution determing scale
+    ys = sort(dfg.θ)
+    i = round(Int, 0.05*length(ys))
+    ys = ys[1:end-i]    
+    d = Distributions.fit(Exponential, ys)
+
+    (p_shift, p_scale, d)
+end
+
+"""
+
+Generate a `ShiftedExponential` random variable for a worker with given per-worker workload
+"""
+function shiftexp_worker_distribution(worker_flops; osm)
+    p_shift, p_scale, dθ = osm
+    meta_shift = p_shift(worker_flops)
+    meta_scale = p_scale(worker_flops)    
+    d = ShiftedExponential(meta_shift, meta_scale)
+    mean = rand(d) # avg. latency of this worker, equal to s+sθ
+    θ = rand(dθ)
+    sθ = sqrt(θ * mean)
+    s = mean - sθ
+    ShiftedExponential(s, sθ)
+end
+
 """
 
 Generate a `Gamma` random variable for a worker with given per-worker workload
 """
-function gamma_worker_distribution(worker_flops)
+function gamma_worker_distribution(worker_flops; osm)
+    p_shift, p_scale, dθ = osm
+    meta_shift = p_shift(worker_flops)
+    meta_scale = p_scale(worker_flops)    
+    d = ShiftedExponential(meta_shift, meta_scale)
+    mean = rand(d) # avg. latency of this worker, equal to α*θ    
+    θ = rand(dθ)
+    α = mean / θ
+    return Gamma(α, θ)
+
 
     # # ShiftedExponential model
     # # generate mean latency of the worker based on the per-worker workload
@@ -1122,11 +1179,6 @@ function gamma_worker_distribution(worker_flops)
     # shape parameter is computed from the above
     α = mean / θ
     return Gamma(α, θ)
-
-    # # per-worker latency is ShiftedExponential
-    # sθ = sqrt(θ * mean)
-    # s = mean - sθ
-    # ShiftedExponential(s, sθ)
 end
 
 """
@@ -1134,12 +1186,12 @@ end
 Compute all order statistics for `nworkers` workers, when the per-worker 
 workload is `worker_flops`, via Monte Carlo sampling over `nsamples` samples.
 """
-function predict_latency_gamma(worker_flops, nworkers; nsamples=1000)
+function predict_latency_gamma(worker_flops, nworkers; nsamples=1000, osm)
     rv = zeros(nworkers)
     buffer = zeros(nworkers)
     for _ in 1:nsamples
         for i in 1:nworkers
-            d = gamma_worker_distribution(worker_flops)
+            d = gamma_worker_distribution(worker_flops; osm)
             buffer[i] = rand(d)
         end
         sort!(buffer)
