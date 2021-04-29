@@ -135,7 +135,7 @@ function aggregate_dataframes(;dir::AbstractString, prefix::AbstractString="outp
     println("Aggregating $(length(filenames)) files")
     dfs = [DataFrame(CSV.File(filename)) for filename in filenames]
     for (i, df) in enumerate(dfs)
-        df[:jobid] = i # store a unique ID for each file read
+        df[!, :jobid] .= i # store a unique ID for each file read
     end
     df = vcat(dfs..., cols=:union)
     CSV.write(joinpath(dir, dfname), df)
@@ -164,18 +164,18 @@ Read a csv file into a DataFrame
 function clean_pca_df(df::DataFrame)
     df = df[.!ismissing.(df.nworkers), :]
     df = df[.!ismissing.(df.iteration), :]
-    df[:nostale] = Missings.replace(df.nostale, false)
-    df[:kickstart] = Missings.replace(df.kickstart, false)
+    df[!, :nostale] .= Missings.replace(df.nostale, false)
+    df[!, :kickstart] .= Missings.replace(df.kickstart, false)
     df = df[df.kickstart .== false, :]
     select!(df, Not(:kickstart)) # drop the kickstart column
-    df[:worker_flops] = worker_flops_from_df(df)
+    df[!, :worker_flops] = worker_flops_from_df(df)
     df.npartitions = df.nworkers .* df.nsubpartitions
     rename!(df, :t_compute => :latency)
     rename!(df, :t_update => :update_latency)
-    df[:nbytes] = df.nrows .* df.ncomponents .* 4 # Float32 entries => 4 bytes per entry
+    df[!, :nbytes] = df.nrows .* df.ncomponents .* 4 # Float32 entries => 4 bytes per entry
     sort!(df, [:jobid, :iteration])
-    df.time = by(df, :jobid, :latency => cumsum => :time).time # cumulative time since the start of the computation
-    df.time .+= by(df, :jobid, :update_latency => cumsum => :time).time
+    df.time = combine(groupby(df, :jobid), :latency => cumsum => :time).time # cumulative time since the start of the computation
+    df.time .+= combine(groupby(df, :jobid), :update_latency => cumsum => :time).time
     df
 end
 
