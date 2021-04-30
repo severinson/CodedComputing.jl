@@ -148,7 +148,7 @@ end
 Return a vector composed of the number of flops performed by each worker and iteration. The density
 of the 1000 Genomes data matrix is `0.05360388070027386`.
 """
-function worker_flops_from_df(df; density=0.05360388070027386)
+function worker_flops_from_df(df; density=1)
     nflops = float.(df.nrows)
     nflops ./= df.nworkers
     nflops .*= df.nreplicas
@@ -159,8 +159,7 @@ end
 
 """
 
-Read a csv file into a DataFrame
-"C:/Users/albin/Dropbox/Eigenvector project/dataframes/pca/sprand/210312/"
+Cleanup
 """
 function clean_pca_df(df::DataFrame)
     df = df[.!ismissing.(df.nworkers), :]
@@ -203,7 +202,7 @@ function parse_pca_files(;dir::AbstractString, prefix="output", dfname="df.csv",
     end
     inputmatrix = nothing
     GC.gc()
-    df = aggregate_dataframes(;dir, prefix, dfname)
+    aggregate_dataframes(;dir, prefix, dfname)
 end
 
 
