@@ -1,0 +1,65 @@
+#!/bin/sh -l
+# Run 
+#SBATCH --job-name=pca.jl
+#SBATCH --output=pca.out
+#SBATCH --nodes=37
+#SBATCH --time=600:00
+#SBATCH --tasks-per-node=1
+#SBATCH --partition=htc
+
+UCX_TLS=tcp,sm
+
+export JULIA_DEPOT_PATH="/shared/home/azureuser/.julia/"
+date
+filename=/shared/home/azureuser/.julia/dev/CodedComputing/src/pca/pca.jl
+
+# 1000 genomes (entire dataset, fully shuffled)
+
+# 1000 genomes dense equivalent matrix
+input_file=/shared/home/azureuser/traces/1000genomes-dense-equiv-matrix/1000genomes-dense-equiv-matrix.h5
+output_directory=/shared/home/azureuser/traces/1000genomes-dense-equiv-matrix/htc/
+
+inputdataset=X
+iteratedataset=V0
+ncomponents=3
+npasses=1 # 5
+
+nwait_all=( 36)
+# 2 5 10 40 80 120 160 240 
+nsubpartitions_all=( 320)
+
+stepsize=0.9
+for nsubpartitions in "${nsubpartitions_all[@]}"
+do
+    niterations=$(($npasses * $nsubpartitions))
+
+    # nwait=$(($SLURM_NTASKS - 1))
+    # echo "[SAG (--nostale)] nsubpartitions: ${nsubpartitions}, nwait: ${nwait}, niterations: $niterations, stepsize: $stepsize"
+    # /opt/amazon/openmpi/bin/mpirun -n "$SLURM_NTASKS" julia --project "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --saveiterates --variancereduced --nostale
+    # echo "[SGD] nsubpartitions: ${nsubpartitions}, nwait: ${nwait}, niterations: $niterations"
+    # /opt/amazon/openmpi/bin/mpirun -n "$SLURM_NTASKS" julia --project "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --saveiterates
+
+    for nwait in "${nwait_all[@]}"
+    do
+        echo "[DSAG] nsubpartitions: ${nsubpartitions}, nwait: ${nwait}, niterations: $niterations"        
+        # --saveiterates 
+        # mpirun -n "$SLURM_NTASKS" julia --project "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --variancereduced
+        # -x UCX_NET_DEVICES=eth0
+        # -mca coll ^hcoll
+        # -mca pml ucx
+        mpirun -mca btl tcp -mca coll ^hcoll -n "$SLURM_NTASKS" julia --project "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --variancereduced
+
+        # echo "[SGD] nsubpartitions: ${nsubpartitions}, nwait: ${nwait}, niterations: $niterations"
+        # /opt/amazon/openmpi/bin/mpirun -n "$SLURM_NTASKS" julia --project "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --iteratedataset ${iteratedataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --ncomponents ${ncomponents} --saveiterates
+    done
+done
+
+# # GD
+# stepsize=1.0
+# nsubpartitions=1
+# nwait=$(($SLURM_NTASKS - 1))
+# niterations=$(($npasses * $nsubpartitions))
+# echo "[GD] nsubpartitions: ${nsubpartitions}, nwait: ${nwait}, niterations: $niterations"
+# mpirun -n "$SLURM_NTASKS" julia --project "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --saveiterates
+
+echo "Done"
