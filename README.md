@@ -151,11 +151,18 @@ And introduces:
 ## Reproducing the plots in the paper
 
 ```julia
+# AWS, 1000 genomes
 using Revise, CodedComputing; includet("src\\Analysis.jl"); using CSV, DataFrames; df = DataFrame(CSV.File("C:\\Users\\albin\\Dropbox\\PhD\\Eigenvector project\\AWS traces\\traces\\pca-1000genomes-c5.xlarge-eu-north-1.csv")); strip_columns!(df); remove_initialization_latency!(df);
 
 using Revise, CodedComputing; includet("src\\Analysis.jl"); using CSV, DataFrames; df = DataFrame(CSV.File("C:\\Users\\albin\\Dropbox\\PhD\\Eigenvector project\\ex3 traces\\pca-1000genomes-ex3.rome16q.csv")); strip_columns!(df); remove_initialization_latency!(df);
 
 using Revise, CodedComputing; includet("src\\Analysis.jl"); using CSV, DataFrames; df = DataFrame(CSV.File("C:\\Users\\albin\\Dropbox\\PhD\\Eigenvector project\\ex3 traces\\pca-1000genomes-dense-equiv-ex3.rome16q.csv")); strip_columns!(df); remove_initialization_latency!(df);
+
+# Azure, dense equiv.
+using Revise, CodedComputing; includet("src\\Analysis.jl"); using CSV, DataFrames; df = DataFrame(CSV.File("C:\\Users\\albin\\Dropbox\\PhD\\Eigenvector project\\Azure traces\\pca-1000genomes-dense-equiv-azure.hpc.F2s_v2.csv")); strip_columns!(df); remove_initialization_latency!(df);
+
+# Azure, 1000 genomes
+using Revise, CodedComputing; includet("src\\Analysis.jl"); using CSV, DataFrames; df = DataFrame(CSV.File("C:\\Users\\albin\\Dropbox\\PhD\\Eigenvector project\\Azure traces\\pca-1000genomes-azure.hpc.F2s_v2.csv")); strip_columns!(df); remove_initialization_latency!(df);
 
 # initialization
 using Revise # optional, needed for changes made to the source code be reflected in the REPL

@@ -70,7 +70,7 @@ function plot_orderstats(df; nworkers=nothing, worker_flops=nothing, deg3m=nothi
             end
         end
     end
-    # plt.legend()
+    plt.legend()
     plt.yscale("log")
     plt.grid()
     plt.xlabel("Order")        
