@@ -785,18 +785,18 @@ function plot_worker_latency_distribution(df; jobid=1080, worker_indices=[10, 36
         xs = sort(df[:, "latency_worker_$(i)"])
         ys = range(0, 1, length=length(xs))
         plt.plot(xs, ys, label="Worker $i")
-        d = Distributions.fit(ShiftedExponential, xs)
-        ts = range(quantile(d, 0.000001), quantile(d, 0.999999), length=100)
-        if i == worker_indices[end]
-            plt.plot(ts, cdf.(d, ts), "k--", label="Fitted Gamma dist.")
-        else
-            plt.plot(ts, cdf.(d, ts), "k--")
-        end
+        # d = Distributions.fit(Gamma, xs)
+        # ts = range(quantile(d, 0.000001), quantile(d, 0.999999), length=100)
+        # if i == worker_indices[end]
+        #     plt.plot(ts, cdf.(d, ts), "k--", label="Fitted Gamma dist.")
+        # else
+        #     plt.plot(ts, cdf.(d, ts), "k--")
+        # end
     end
     plt.xlabel("Per-worker iteration latency [s]")
     plt.ylabel("CDF")
     plt.legend()
-    plt.title("job $jobid ($(round(worker_flops, sigdigits=3)) flops, $nbytes bytes)")
+    plt.title("job $jobid ($(round(worker_flops, sigdigits=3)) flops, $nbytes bytes, sparse matrix)")
 
     # # plot some generated distributions
     # worker_flops = df.worker_flops[1]
@@ -924,19 +924,19 @@ function plot_gamma_mean_distribution(dfg)
         dfi = filter(:worker_flops => (x)->isapprox(x, worker_flops, rtol=1e-2), dfg)
         xs = sort(dfi.mean)
         ys = range(0, 1, length=length(xs))
-        plt.plot(xs, ys)
+        plt.plot(xs, 1 .- ys)
         
         # i = round(Int, 0.05*length(xs))
         # xs = xs[i:end-i]
         d = Distributions.fit(ShiftedExponential, xs)
         xs = range(quantile(d, 0.001), quantile(d, 0.999), length=100)
-        plt.plot(xs, cdf.(d, xs), "k--")
+        plt.plot(xs, 1 .- cdf.(d, xs), "k--")
     end
     # plt.ylim(1e-2, 1)
     plt.xlabel("Avg. per-worker latency")
     plt.ylabel("CCDF")    
-    # plt.xscale("log")
-    # plt.yscale("log")
+    plt.xscale("log")
+    plt.yscale("log")
     plt.grid()
     plt.title("CCDF of avg. latency 
     for each workload.")
