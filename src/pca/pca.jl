@@ -50,9 +50,18 @@ end
 
 function partition_samples(X::AbstractMatrix, nsubpartitions::Integer)
     nsamples = size(X, 2)
-    q = randperm(nsamples) # randomly permute the samples to break up dense blocks
+    # q = randperm(nsamples) # randomly permute the samples to break up dense blocks
     dividers = round.(Int, range(1, nsamples+1, length=nsubpartitions+1))
-    [X[:, view(q, dividers[i]:(dividers[i+1]-1))] for i in 1:nsubpartitions]
+    # [X[:, view(q, dividers[i]:(dividers[i+1]-1))] for i in 1:nsubpartitions]
+    [X[:, dividers[i]:(dividers[i+1]-1)] for i in 1:nsubpartitions]
+end
+
+function partition_samples(X::Matrix, nsubpartitions::Integer)
+    nsamples = size(X, 2)
+    # q = randperm(nsamples) # randomly permute the samples to break up dense blocks
+    dividers = round.(Int, range(1, nsamples+1, length=nsubpartitions+1))
+    # [X[:, view(q, dividers[i]:(dividers[i+1]-1))] for i in 1:nsubpartitions]
+    [view(X, :, dividers[i]:(dividers[i+1]-1)) for i in 1:nsubpartitions]    
 end
 
 function read_localdata(i::Integer, nworkers::Integer; inputfile::String, inputdataset::String, nreplicas::Integer, nsubpartitions::Integer, kwargs...)
