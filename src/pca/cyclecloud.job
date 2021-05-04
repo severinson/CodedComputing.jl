@@ -2,31 +2,28 @@
 # Run 
 #SBATCH --job-name=pca.jl
 #SBATCH --output=pca.out
-#SBATCH --nodes=37
+#SBATCH --nodes=73
 #SBATCH --time=600:00
 #SBATCH --tasks-per-node=1
-#SBATCH --partition=htc
-
-UCX_TLS=tcp,sm
+#SBATCH --partition=hpc
 
 export JULIA_DEPOT_PATH="/shared/home/azureuser/.julia/"
 date
-filename=/shared/home/azureuser/.julia/dev/CodedComputing/src/pca/pca.jl
+filename=/shared/home/azureuser/CodedComputing/src/pca/pca.jl
 
 # 1000 genomes (entire dataset, fully shuffled)
 
 # 1000 genomes dense equivalent matrix
 input_file=/shared/home/azureuser/traces/1000genomes-dense-equiv-matrix/1000genomes-dense-equiv-matrix.h5
-output_directory=/shared/home/azureuser/traces/1000genomes-dense-equiv-matrix/htc/
+output_directory=/shared/home/azureuser/traces/1000genomes-dense-equiv-matrix/hpc/
 
 inputdataset=X
 iteratedataset=V0
 ncomponents=3
-npasses=1 # 5
+npasses=5
 
-nwait_all=( 36)
-# 2 5 10 40 80 120 160 240 
-nsubpartitions_all=( 320)
+nwait_all=( $(($SLURM_NTASKS - 1)))
+nsubpartitions_all=( 1 2 5 10 40 80 120 160 240 320)
 
 stepsize=0.9
 for nsubpartitions in "${nsubpartitions_all[@]}"
@@ -43,11 +40,7 @@ do
     do
         echo "[DSAG] nsubpartitions: ${nsubpartitions}, nwait: ${nwait}, niterations: $niterations"        
         # --saveiterates 
-        # mpirun -n "$SLURM_NTASKS" julia --project "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --variancereduced
-        # -x UCX_NET_DEVICES=eth0
-        # -mca coll ^hcoll
-        # -mca pml ucx
-        mpirun -mca btl tcp -mca coll ^hcoll -n "$SLURM_NTASKS" julia --project "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --variancereduced
+        mpirun -mca coll ^hcoll julia --project "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --variancereduced
 
         # echo "[SGD] nsubpartitions: ${nsubpartitions}, nwait: ${nwait}, niterations: $niterations"
         # /opt/amazon/openmpi/bin/mpirun -n "$SLURM_NTASKS" julia --project "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --iteratedataset ${iteratedataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --ncomponents ${ncomponents} --saveiterates
