@@ -162,7 +162,7 @@ using Revise, CodedComputing; includet("src\\Analysis.jl"); using CSV, DataFrame
 using Revise, CodedComputing; includet("src\\Analysis.jl"); using CSV, DataFrames; df = DataFrame(CSV.File("C:\\Users\\albin\\Dropbox\\PhD\\Eigenvector project\\Azure traces\\pca-1000genomes-dense-equiv-azure.hpc.F2s_v2.csv")); strip_columns!(df); remove_initialization_latency!(df);
 
 # Azure, 1000 genomes
-using Revise, CodedComputing; includet("src\\Analysis.jl"); using CSV, DataFrames; df = DataFrame(CSV.File("C:\\Users\\albin\\Dropbox\\PhD\\Eigenvector project\\Azure traces\\pca-1000genomes-azure.hpc.F2s_v2.csv")); strip_columns!(df); remove_initialization_latency!(df);
+using Revise, CodedComputing; includet("src\\Analysis.jl"); using CSV, DataFrames; df = DataFrame(CSV.File("C:\\Users\\albin\\Dropbox\\PhD\\Eigenvector project\\Azure traces\\pca-1000genomes-azure.hpc.F2s_v2.csv")); df = filter(:niterations => (x)->x==100, df); strip_columns!(df); remove_initialization_latency!(df);
 
 # initialization
 using Revise # optional, needed for changes made to the source code be reflected in the REPL
