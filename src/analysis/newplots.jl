@@ -785,7 +785,7 @@ function plot_convergence(df, nworkers, opt=maximum(skipmissing(df.mse)); latenc
     return
 end
 
-### non-iid Gamma model
+### non-iid model
 
 """
 
@@ -885,11 +885,30 @@ function plot_worker_latency_distribution(df; jobid=rand(unique(df.jobid)), work
     return
 end
 
+function plot_worker_latency_cov(df; jobid=rand(unique(df.jobid)), worker_indices=1:5)
+    df = filter(:jobid => (x)->x==jobid, df)
+    worker_flops = df.worker_flops[1]
+    nbytes = df.nbytes[1]
+    nworkers = length(worker_indices)
+    latency_columns = ["compute_latency_worker_$i" for i in worker_indices]
+    
+    plt.figure()
+    plt.title("job $jobid ($(round(worker_flops, sigdigits=3)) flops, $nbytes bytes, sparse matrix)")    
+    for i in 1:nworkers
+        for j in 1:nworkers
+            plt.subplot(nworkers, nworkers, (i-1)*nworkers+j)
+            plt.plot(df[:, latency_columns[i]], df[:, latency_columns[j]], ".")            
+            plt.axis("equal")
+        end
+    end
+    plt.tight_layout()
+    return
+end
 """
 
-Fit a `Gamma` distribution to the latency of each worker for each job.
+Compute the mean and variance of the per-iteration latency for each job and worker.
 """
-function gamma_df(df; minsamples=100)
+function worker_distribution_df(df; minsamples=100, prune_comm=0.05)
     df = filter([:nwait, :nworkers] => (x,y)->x==y, df)
     rv = DataFrame()
     row = Dict{String, Any}()
@@ -919,8 +938,18 @@ function gamma_df(df; minsamples=100)
 
                 # communication latency
                 ys = float.(dfi[:, latency_columns[i]] .- dfi[:, compute_latency_columns[i]])
+                if prune_comm != zero(prune_comm)
+                    j = round(Int, prune_comm*length(ys))
+                    sort!(ys)
+                    ys = ys[1:end-j]
+                end                
                 row["comm_mean"] = mean(ys)
                 row["comm_var"] = var(ys)
+            else
+                row["comp_mean"] = missing
+                row["comp_var"] = missing
+                row["comm_mean"] = missing
+                row["comm_var"] = missing
             end
 
             # overall latency
@@ -943,53 +972,15 @@ function gamma_df(df; minsamples=100)
     rv
 end
 
-
 """
 
-Plot the parameters of the `Gamma` distribution fitted to the per-worker latency.
+Plot the distribution of the mean and variance of the per-worker latency.
 """
-function plot_mean_var_scatter(dfg)
-    plt.figure()
-
-    # communication latency
-    plt.subplot(2, 2, 1)
-    plt.plot(dfg.nbytes, dfg.comm_mean, ".")
-    plt.xlabel("Communication [bytes]")
-    plt.ylabel("Avg. comm. latency")
-    plt.xscale("log")
-    plt.yscale("log")
-
-    plt.subplot(2, 2, 2)
-    plt.plot(dfg.comm_mean, dfg.comm_var, ".")
-    plt.xlabel("Avg. comm. latency.")
-    plt.ylabel("Comm. latency variance")
-    plt.xscale("log")
-    plt.yscale("log")
-
-    # compute latency
-    plt.subplot(2, 2, 3)
-    plt.plot(dfg.worker_flops, dfg.comp_mean, ".")
-    plt.xlabel("Workload [flops]")    
-    plt.ylabel("Avg. comp. latency")
-    plt.xscale("log")
-    plt.yscale("log")
-
-    plt.subplot(2, 2, 4)
-    plt.plot(dfg.comp_mean, dfg.comp_var, ".")    
-    plt.xlabel("Avg. comp. latency.")
-    plt.ylabel("Comp. latency variance")
-    plt.xscale("log")
-    plt.yscale("log")
-
-    plt.tight_layout()
-    return
-end
-
 function plot_mean_var_distribution(dfg)
     plt.figure()
 
     # communication latency
-    nbytes_all = sort!(unique(df.nbytes))
+    nbytes_all = sort!(unique(dfg.nbytes))
 
     ## mean cdf
     plt.subplot(2, 3, 1)
@@ -998,6 +989,13 @@ function plot_mean_var_distribution(dfg)
         xs = sort(dfi.comm_mean)
         ys = range(0, 1, length=length(xs))
         plt.plot(xs, ys, label="nbytes: $nbytes")
+
+        # fitted distribution
+        if size(dfi, 1) >= 100
+            d = Distributions.fit(LogNormal, xs)            
+            xs = 10.0.^range(log10(quantile(d, 0.0001)), log10(quantile(d, 0.9999)), length=100)
+            plt.plot(xs, cdf.(d, xs), "k--")
+        end
     end
     plt.ylabel("CDF")
     plt.xlabel("Avg. comm. latency")
@@ -1009,6 +1007,13 @@ function plot_mean_var_distribution(dfg)
         xs = sort(dfi.comm_var)
         ys = range(0, 1, length=length(xs))
         plt.plot(xs, ys, label="nbytes: $nbytes")
+
+        # fitted distribution
+        if size(dfi, 1) >= 100
+            d = Distributions.fit(LogNormal, xs)
+            xs = 10.0.^range(log10(quantile(d, 0.0001)), log10(quantile(d, 0.9999)), length=100)            
+            plt.plot(xs, cdf.(d, xs), "k--")
+        end
     end    
     plt.ylabel("CDF")
     plt.xlabel("Comm. latency var")
@@ -1027,7 +1032,7 @@ function plot_mean_var_distribution(dfg)
     plt.yscale("log")    
 
     # compute latency
-    nflops_all = sort!(unique(df.worker_flops))
+    nflops_all = sort!(unique(dfg.worker_flops))
 
     ## mean cdf
     plt.subplot(2, 3, 4)
@@ -1035,7 +1040,14 @@ function plot_mean_var_distribution(dfg)
         dfi = filter(:worker_flops => (x)->x==nflops, dfg)
         xs = sort(dfi.comp_mean)
         ys = range(0, 1, length=length(xs))
-        plt.plot(xs, ys, label="nflops: $nflops")
+        plt.plot(xs, ys, label="nflops: $(round(nflops, sigdigits=3))")
+
+        # fitted distribution
+        if size(dfi, 1) >= 100
+            d = Distributions.fit(LogNormal, xs)
+            xs = 10.0.^range(log10(quantile(d, 0.0001)), log10(quantile(d, 0.9999)), length=100)            
+            plt.plot(xs, cdf.(d, xs), "k--")        
+        end
     end
     plt.ylabel("CDF")
     plt.xlabel("Avg. comp. latency")
@@ -1049,6 +1061,13 @@ function plot_mean_var_distribution(dfg)
         xs = sort(dfi.comp_var)
         ys = range(0, 1, length=length(xs))
         plt.plot(xs, ys, label="nflops: $nflops")
+
+        # fitted distribution
+        if size(dfi, 1) >= 100
+            d = Distributions.fit(LogNormal, xs)
+            xs = 10.0.^range(log10(quantile(d, 0.0001)), log10(quantile(d, 0.9999)), length=100)            
+            plt.plot(xs, cdf.(d, xs), "k--")
+        end
     end    
     plt.ylabel("CDF")
     plt.xlabel("Comp. latency var")
@@ -1068,6 +1087,154 @@ function plot_mean_var_distribution(dfg)
     plt.yscale("log")        
 
 end
+
+"""
+
+Compute the parameters of the mean and variance meta-distributions, 
+and the correlation between mean and variance.
+"""
+function copula_df(dfg)
+
+    # communication
+    comm_df = DataFrame()
+    row = Dict{String,Any}()
+    nbytes_all = sort!(unique(dfg.nbytes))
+    for nbytes in nbytes_all    
+        dfi = filter(:nbytes => (x)->x==nbytes, dfg)
+        row["nbytes"] = nbytes        
+        row["mean_mean"] = mean(dfi.comm_mean)
+        row["mean_var"] = var(dfi.comm_mean)
+        row["mean_μ"], row["mean_σ"] = params(Distributions.fit(LogNormal, dfi.comm_mean))
+        row["var_mean"] = mean(dfi.comm_var)
+        row["var_var"] = var(dfi.comm_var)
+        row["var_μ"], row["var_σ"] = params(Distributions.fit(LogNormal, dfi.comm_var))        
+        row["cor"] = cor(dfi.comm_mean, dfi.comm_var)
+        push!(comm_df, row, cols=:union)
+    end
+
+    # compute
+    comp_df = DataFrame()
+    row = Dict{String,Any}()
+    nflops_all = sort!(unique(dfg.worker_flops))
+    for nflops in nflops_all
+        dfi = filter(:worker_flops => (x)->x==nflops, dfg)
+        row["nflops"] = nflops
+        row["mean_mean"] = mean(dfi.comp_mean)
+        row["mean_var"] = var(dfi.comp_mean)
+        row["mean_μ"], row["mean_σ"] = params(Distributions.fit(LogNormal, dfi.comp_mean))
+        row["var_mean"] = mean(dfi.comp_var)
+        row["var_var"] = var(dfi.comp_var)
+        row["var_μ"], row["var_σ"] = params(Distributions.fit(LogNormal, dfi.comp_var))        
+        row["cor"] = cor(dfi.comp_mean, dfi.comp_var)
+        push!(comp_df, row, cols=:union)
+    end
+    comm_df, comp_df
+end
+
+"""
+
+Interpolate between rows of the DataFrame `df`.
+"""
+function interpolate_df(dfc, x; key=:nflops)
+    sort!(dfc, key)    
+    if x in dfc[:, key]
+        i = searchsortedfirst(dfc[:, key], x)
+        return Dict(pairs(dfc[i, :]))
+    end
+    size(dfc, 1) > 1 || error("Need at least 2 samples for interpolation")
+
+    # select the two closest points for which there is data
+    j = searchsortedfirst(dfc[:, key], x)
+    if j > size(dfc, 1)
+        j = size(dfc, 1)  
+        i = j - 1
+    elseif j == 1
+        j = 2
+        i = 1
+    else
+        i = j - 1
+    end
+
+    # interpolate between, or extrapolate from, those points to x
+    rv = Dict{Symbol,Any}()
+    for name in names(dfc)
+        slope = (dfc[j, name] - dfc[i, name]) / (dfc[j, key] - dfc[i, key])
+        intercept = dfc[j, name] - dfc[j, key]*slope
+        rv[Symbol(name)] = intercept + slope*x
+    end
+    rv
+end
+
+# function foo(dfg, dfc; nflops=9.090525987359507e7)
+#     plt.figure()
+
+#     dfg = filter(:worker_flops => (x)->isapprox(x, nflops, rtol=1e-2), dfg)
+#     # plt.subplot(1, 2, 1)
+#     plt.xscale("log")
+#     plt.yscale("log")
+    
+#     # plt.subplot(1, 2, 2)
+#     ds = [sample_worker_comp_distribution(dfc, nflops) for _ in 1:size(dfg, 1)]
+#     ms = mean.(ds)
+#     vs = var.(ds)
+#     println("cor: $(cor(ms, vs))")
+#     plt.plot(ms, vs, ".")
+#     plt.plot(dfg.comp_mean, dfg.comp_var, ".")
+#     plt.xscale("log")
+#     plt.yscale("log")    
+# end
+
+function sample_worker_distribution(dfc, x; key)
+    row = interpolate_df(dfc, x; key)
+    
+    # mean-distribution
+    μ = row[:mean_μ]
+    σ = row[:mean_σ]
+    d_mean = LogNormal(μ, σ)
+
+    # var-distribution
+    μ = row[:var_μ]
+    σ = row[:var_σ]
+    d_var = LogNormal(μ, σ)
+
+    # copula
+    c = row[:cor]
+    Σ = [1 c; c 1]
+    d = MvNormal(zeros(2), Σ)
+
+    # sample from the copula
+    p = rand(d)
+    m = quantile(d_mean, cdf(Normal(), p[1]))
+    v = quantile(d_var, cdf(Normal(), p[2]))
+    θ = v / m
+    α = m / θ
+    Gamma(α, θ)
+end
+
+sample_worker_comm_distribution(dfc_comm, nbytes) = sample_worker_distribution(dfc_comm, nbytes; key=:nbytes)
+sample_worker_comp_distribution(dfc_comp, nflops) = sample_worker_distribution(dfc_comp, nflops; key=:nflops)
+
+"""
+
+Compute all order statistics for `nworkers` workers, when the per-worker 
+workload is `worker_flops`, via Monte Carlo sampling over `nsamples` samples.
+"""
+function predict_latency_niid(nbytes, nflops, nworkers; nsamples=1000, niidm)
+    dfc_comm, dfc_comp = niidm
+    rv = zeros(nworkers)
+    buffer = zeros(nworkers)
+    for _ in 1:nsamples
+        for i in 1:nworkers
+            buffer[i] = rand(sample_worker_comm_distribution(dfc_comm, nbytes))
+            buffer[i] += rand(sample_worker_comp_distribution(dfc_comp, nflops))
+        end
+        sort!(buffer)
+        rv += buffer
+    end
+    rv ./= nsamples
+end
+
+### old code associated with the non-iid model
 
 """
 
@@ -1439,74 +1606,4 @@ function predict_latency_gamma(nwait, worker_flops, nworkers; nsamples=1000)
         rv += rand(s)
     end
     rv / nsamples
-end
-
-### non-iid model (w. copulas)
-
-function copula_model(dfg)
-
-    # Problem: my sampels are taken at discrete values of the workload
-    # Solution: let's fuzz the points by moving them a little bit along the general trend line
-
-    # Construct a MvNormal with the computed correlation
-    # Condition this MvNormal on a given value of worker_flops and sample from the resulting marginal
-    # Convert this sample to uniform by passing it through the standard Normal CDF
-    # Convert the (now uniform) sample to the distribution of the latency by passing it through the ICDF of, e.g., a ShiftedExponential
-
-    plt.figure()
-    plt.subplot(1, 2, 1)
-    plt.plot(dfg.worker_flops, dfg.mean, ".")
-    plt.xlabel("workload")
-    plt.ylabel("per-worker mean")
-
-    plt.subplot(1, 2, 2)
-    xs = sort(log.(1 .+ dfg.mean))
-    ys = range(0, 1, length=length(xs))
-    plt.plot(xs, ys)
-    plt.xlabel("per-worker mean")    
-
-    d = Distributions.fit(Gamma, xs)
-    ts = range(xs[1], xs[end], length=200)
-    plt.plot(ts, cdf.(d, ts), "k--")
-    # plt.xscale("log")
-
-    plt.tight_layout()
-
-    return
-    
-    # generate sample data
-    μ = [0.0, 0.0]
-    Σ = [1.0 0.5; 0.5 1.0]
-    d = MvNormal(μ, Σ)
-    samples = rand(d, 100)
-
-    # plot marginal distributions
-    plt.figure()
-    plt.subplot(2, 1, 1)
-    xs = sort(samples[1, :])
-    ys = range(0, 1, length=length(xs))
-    plt.plot(xs, ys, "b-", label="v1")
-
-    dh1 = Distributions.fit(Normal, xs)
-    plt.plot(xs, cdf.(dh1, xs), "b--")
-
-    xs = sort(samples[2, :])
-    ys = range(0, 1, length=length(xs))
-    plt.plot(xs, ys, "r-", label="v2")
-
-    dh2 = Distributions.fit(Normal, xs)
-    plt.plot(xs, cdf.(dh2, xs), "r--")
-    
-    plt.legend()
-    plt.xlabel("Variable")
-    plt.ylabel("CDF")
-
-    # plot correlation
-    plt.subplot(2, 1, 2)
-    plt.plot(samples[1, :], samples[2, :], ".")
-    plt.tight_layout()
-
-    # fit copula model
-
-
 end
