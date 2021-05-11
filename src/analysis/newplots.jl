@@ -1,3 +1,43 @@
+### latency timeseries
+
+"""
+
+Plot the iteration latency of workers with indices in `workers` of job `jobid`.
+"""
+function plot_timeseries(df; jobid=rand(unique(df.jobid)), workers=[1, 2], separate=false)
+    println("jobid: $jobid")
+    df = filter(:jobid => (x)->x==jobid, df)
+    plt.figure()
+    for worker in workers
+        xs = df.iteration        
+        if separate
+            # compute
+            ys = df[:, "compute_latency_worker_$worker"]
+            plt.plot(xs, ys, label="Worker $worker (comp.)")
+            write_table(xs[1:600], ys[1001:1600], "timeseries_compute_$(jobid)_$(worker).csv", nsamples=600)
+
+            # communication
+            ys = df[:, "latency_worker_$worker"] .- df[:, "compute_latency_worker_$worker"]
+            plt.plot(xs, ys, label="Worker $worker (comm.)")
+            write_table(xs[1:600], ys[1001:1600], "timeseries_communication_$(jobid)_$(worker).csv", nsamples=600)
+
+        end
+        ys = df[:, "latency_worker_$worker"]
+        plt.plot(xs, ys, label="Worker $worker")
+        write_table(xs[1:600], ys[1001:1600], "timeseries_$(jobid)_$(worker).csv", nsamples=600)
+        
+    end    
+    plt.grid()
+    plt.legend()
+    plt.title("Job $jobid")
+    plt.xlabel("Iteration")
+    plt.ylabel("Per-worker iteration latency [s]")
+    plt.tight_layout()
+    return
+end
+
+### order statistics
+
 """
 
 Plot order statistics latency for a given computational load.
@@ -78,6 +118,145 @@ function plot_orderstats(df; nworkers=nothing, worker_flops=nothing, deg3m=nothi
     # plt.tight_layout()
     return
 end
+
+### worker-worker latency correlation
+
+# I'm seeing that communication latency is correlated between workers, which makes sense
+# If the link to the coordinator is busy, then all workers will have higher latency
+# I could use copulas to sample from this distribution by sampling the covariance matrix and then sampling from a copula
+# No problem
+# I could also assume independence and simplify my sampling a bit
+# Perhaps that's the right way
+# Compute order stats using both approaches and see how much accuracy you lose due to assuming independence
+# It may be the case that they're all correlated to some hidden variable, or to worker 1
+# Let's chill a bit on this for now and think it over
+
+
+"""
+
+Plot the CDF of the correlation between pairs of workers.
+"""
+function plot_worker_latency_cov_cdf(df; nflops, nbytes=30048, maxworkers=108, latency="total", minsamples=10)
+    df = filter(:worker_flops => (x)->isapprox(x, nflops, rtol=1e-2), df)
+    df = filter(:nbytes => (x)->x==nbytes, df)
+    latency_columns = ["latency_worker_$i" for i in 1:maxworkers]
+    compute_latency_columns = ["compute_latency_worker_$i" for i in 1:maxworkers]
+    xs = zeros(0)
+    xsr = zeros(0)
+    for jobid in unique(df.jobid)
+        dfi = filter(:jobid => (x)->x==jobid, df)
+        if size(dfi, 1) < minsamples
+            continue
+        end
+        nworkers = min(maxworkers, dfi.nworkers[1])
+        for i in 1:nworkers
+            if latency == "total"
+                xsi = float.(dfi[:, latency_columns[i]])
+            elseif latency == "communication"
+                xsi = dfi[:, latency_columns[i]] .- dfi[:, compute_latency_columns[i]]            
+            elseif latency == "compute"
+                xsi = dfi[:, compute_latency_columns[i]]
+            else
+                error("latency must be in [total, communication, compute]")
+            end
+            if minimum(xsi) <= 0
+                continue
+            end
+            try
+                rvi = Distributions.fit(Gamma, xsi)
+            catch e
+                return xsi
+            end
+            rvi = Distributions.fit(Gamma, xsi)
+            rsamplesi = rand(rvi, size(dfi, 1))
+            for j in 1:nworkers
+                if j == i
+                    continue
+                end
+                if latency == "total"
+                    xsj = float.(dfi[:, latency_columns[j]])
+                elseif latency == "communication"
+                    xsj = dfi[:, latency_columns[j]] .- dfi[:, compute_latency_columns[j]]            
+                elseif latency == "compute"
+                    xsj = dfi[:, compute_latency_columns[j]]
+                else
+                    error("latency must be in [total, communication, compute]")
+                end
+                if minimum(xsj) <= 0
+                    continue
+                end
+                push!(xs, cor(xsi, xsj))
+                
+                rvj = Distributions.fit(Gamma, xsj)
+                rsamplesj = rand(rvj, size(dfi, 1))
+                push!(xsr, cor(rsamplesi, rsamplesj))
+            end
+        end
+    end
+
+    # empirical cdf
+    plt.figure()    
+    sort!(xs)
+    ys = range(0, 1, length=length(xs))
+    plt.plot(xs, ys)
+    write_table(xs, ys, "cov_cdf_$(latency)_$(round(nflops, sigdigits=3))_$(nbytes).csv")
+
+    # independent cdf
+    sort!(xsr)
+    plt.plot(xsr, ys, "m--")
+    write_table(xsr, ys, "cov_cdf_ind_$(latency)_$(round(nflops, sigdigits=3))_$(nbytes).csv")
+    return
+end
+
+function plot_worker_latency_cov_old(df; jobid=rand(unique(df.jobid)), worker_indices=1:5)
+    df = filter(:jobid => (x)->x==jobid, df)
+    worker_flops = df.worker_flops[1]
+    nbytes = df.nbytes[1]
+    nworkers = length(worker_indices)
+    latency_columns = ["compute_latency_worker_$i" for i in worker_indices]
+    
+    plt.figure()
+    plt.title("job $jobid ($(round(worker_flops, sigdigits=3)) flops, $nbytes bytes, sparse matrix)")    
+    for i in 1:nworkers
+        for j in 1:nworkers
+            plt.subplot(nworkers, nworkers, (i-1)*nworkers+j)
+            plt.plot(df[:, latency_columns[i]], df[:, latency_columns[j]], ".")            
+            plt.axis("equal")
+        end
+    end
+    plt.tight_layout()
+    return
+end
+
+### auto-correlation
+
+function plot_autocorrelation(df; nflops, nbytes=30048)
+    df = filter(:worker_flops => (x)->isapprox(x, nflops, rtol=1e-2), df)
+    df = filter(:nbytes => (x)->x==nbytes, df)
+    sort!(df, [:jobid, :iteration])    
+    maxiter = maximum(df.iteration)
+    ys = zeros(maxiter)
+    nsamples = zeros(Int, maxiter)
+    for jobid in unique(df.jobid)
+        dfi = filter(:jobid => (x)->x==jobid, df)
+        nworkers = dfi.nworkers[1]
+        for i in 1:nworkers
+            ys[1:size(dfi, 1)] .+= autocor(float.(dfi[:, "latency_worker_$(i)"]), 0:(size(dfi, 1)-1))
+            nsamples[1:size(dfi, 1)] .+= 1
+        end
+    end
+    ys ./= nsamples
+    plt.figure()
+    xs = 0:(maxiter-1)
+    plt.plot(xs, ys)
+    write_table(xs[1:600], ys[1:600], "ac_$(round(nflops, sigdigits=3))_$(nbytes).csv", nsamples=600)
+    plt.xlabel("Lag (iterations)")
+    plt.ylabel("Auto-correlation")
+    return
+end
+
+# I want to measure to what extent the latency of subsequent iterations are independent
+# And I want to average this over many runs
 
 ### degree-3 polynomial latency model (fitted globally to all samples)
 
@@ -529,44 +708,6 @@ function plot_latency_balance(df; nsubpartitions=1)
     return
 end
 
-### latency timeseries plots
-
-"""
-
-Plot the iteration latency of workers with indices in `workers` of job `jobid`.
-"""
-function plot_timeseries(df; jobid=rand(unique(df.jobid)), workers=[3, 4], separate=false)
-    println("jobid: $jobid")
-    df = filter(:jobid => (x)->x==jobid, df)
-    plt.figure()
-    for worker in workers
-        xs = df.iteration        
-        if separate
-            # compute
-            ys = df[:, "compute_latency_worker_$worker"]
-            plt.plot(xs, ys, label="Worker $worker (comp.)")
-            write_table(xs[1:600], ys[1001:1600], "./results/timeseries_compute_$(jobid)_$(worker).csv")
-
-            # communication
-            ys = df[:, "latency_worker_$worker"] .- df[:, "compute_latency_worker_$worker"]
-            plt.plot(xs, ys, label="Worker $worker (comm.)")
-            write_table(xs[1:600], ys[1001:1600], "./results/timeseries_communication_$(jobid)_$(worker).csv")
-
-        end
-        ys = df[:, "latency_worker_$worker"]
-        plt.plot(xs, ys, label="Worker $worker")
-        write_table(xs[1:600], ys[1001:1600], "./results/timeseries_$(jobid)_$(worker).csv")
-        
-    end    
-    plt.grid()
-    plt.legend()
-    plt.title("Job $jobid")
-    plt.xlabel("Iteration")
-    plt.ylabel("Per-worker iteration latency [s]")
-    plt.tight_layout()
-    return
-end
-
 ### convergence plots
 
 """
@@ -885,25 +1026,6 @@ function plot_worker_latency_distribution(df; jobid=rand(unique(df.jobid)), work
     return
 end
 
-function plot_worker_latency_cov(df; jobid=rand(unique(df.jobid)), worker_indices=1:5)
-    df = filter(:jobid => (x)->x==jobid, df)
-    worker_flops = df.worker_flops[1]
-    nbytes = df.nbytes[1]
-    nworkers = length(worker_indices)
-    latency_columns = ["compute_latency_worker_$i" for i in worker_indices]
-    
-    plt.figure()
-    plt.title("job $jobid ($(round(worker_flops, sigdigits=3)) flops, $nbytes bytes, sparse matrix)")    
-    for i in 1:nworkers
-        for j in 1:nworkers
-            plt.subplot(nworkers, nworkers, (i-1)*nworkers+j)
-            plt.plot(df[:, latency_columns[i]], df[:, latency_columns[j]], ".")            
-            plt.axis("equal")
-        end
-    end
-    plt.tight_layout()
-    return
-end
 """
 
 Compute the mean and variance of the per-iteration latency for each job and worker.

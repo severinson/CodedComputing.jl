@@ -179,9 +179,12 @@ using CSV, DataFrames
 df = DataFrame(CSV.File("<path-to-traces-directory>/pca-1000genomes-c5.xlarge-eu-north-1.csv"))
 strip_columns!(df) # optional, to reduce DataFrame size
 remove_initialization_latency!(df) # remove latency in the first iteration that is due to, e.g., compilation
-reindex_workers_by_order!(df) # needed to compute order statistics
+
+# plot latency timeseries
+plot_timeseries(df, separate=true)
 
 # plot latency order statistics
+reindex_workers_by_order!(df) # needed to compute order statistics
 plot_orderstats(df, worker_flops=2.27e7)
 
 ## plot the coefficients of a degree-3 polynomial fitted to the average latency for pairs (nworkers, worker_flops)
@@ -201,9 +204,6 @@ remove_initialization_latency!(df)
 
 ## verify that the workload is balanced between workers
 plot_latency_balance(df, nsubpartitions=1)
-
-## plot latency time-series
-plot_timeseries(df, jobid=873, workers=[1,2])
 
 ## plot the straggler => straggler state transition probability
 plot_transition_probability(df, worker_flops=1.14e7)
