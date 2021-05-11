@@ -35,9 +35,9 @@ linear_model(x::AbstractVector, y::AbstractVector) = linear_model(reshape(x, len
 
 Write xs and ys as a table with columns separated by a space
 """
-function write_table(xs::AbstractVector, ys::AbstractVector, filename::AbstractString; nsamples=min(100, length(xs)))
+function write_table(xs::AbstractVector, ys::AbstractVector, filename::AbstractString; prefix="./results", nsamples=min(100, length(xs)))
     length(xs) == length(ys) || throw(DimensionMismatch("xs has dimension $(length(xs)), but ys has dimension $(length(ys))"))
-    open(filename, "w") do io
+    open(joinpath(prefix, filename), "w") do io
         for i in round.(Int, range(1, length(xs), length=nsamples))
             write(io, "$(xs[i]) $(ys[i])\n")
         end
@@ -162,7 +162,9 @@ Remove columns not necessary for analysis (to save space).
 """
 function strip_columns!(df)
     for column in ["iteratedataset", "saveiterates", "outputdataset", "inputdataset", "inputfile", "algorithm", "outputfile"]
-        select!(df, Not(column))
+        if column in names(df)
+            select!(df, Not(column))
+        end
     end
     df
 end

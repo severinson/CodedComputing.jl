@@ -977,6 +977,7 @@ end
 Plot the distribution of the mean and variance of the per-worker latency.
 """
 function plot_mean_var_distribution(dfg)
+
     plt.figure()
 
     # communication latency
@@ -989,12 +990,15 @@ function plot_mean_var_distribution(dfg)
         xs = sort(dfi.comm_mean)
         ys = range(0, 1, length=length(xs))
         plt.plot(xs, ys, label="nbytes: $nbytes")
+        write_table(xs, ys, "cdf_comm_mean_$(nbytes).csv")
 
         # fitted distribution
         if size(dfi, 1) >= 100
             d = Distributions.fit(LogNormal, xs)            
             xs = 10.0.^range(log10(quantile(d, 0.0001)), log10(quantile(d, 0.9999)), length=100)
-            plt.plot(xs, cdf.(d, xs), "k--")
+            ys = cdf.(d, xs)
+            plt.plot(xs, ys, "k--")
+            write_table(xs, ys, "cdf_comm_mean_fit_$(nbytes).csv")
         end
     end
     plt.ylabel("CDF")
@@ -1007,12 +1011,15 @@ function plot_mean_var_distribution(dfg)
         xs = sort(dfi.comm_var)
         ys = range(0, 1, length=length(xs))
         plt.plot(xs, ys, label="nbytes: $nbytes")
+        write_table(xs, ys, "cdf_comm_var_$(nbytes).csv")
 
         # fitted distribution
         if size(dfi, 1) >= 100
             d = Distributions.fit(LogNormal, xs)
             xs = 10.0.^range(log10(quantile(d, 0.0001)), log10(quantile(d, 0.9999)), length=100)            
-            plt.plot(xs, cdf.(d, xs), "k--")
+            ys = cdf.(d, xs)
+            plt.plot(xs, ys, "k--")            
+            write_table(xs, ys, "cdf_comm_var_fit_$(nbytes).csv")
         end
     end    
     plt.ylabel("CDF")
@@ -1026,12 +1033,14 @@ function plot_mean_var_distribution(dfg)
         xs = dfi.comm_mean
         ys = dfi.comm_var
         plt.plot(xs, ys, ".", label="nbytes: $nbytes")
+        write_table(xs, ys, "scatter_comm_$(nbytes).csv")
     end    
     plt.xlabel("Avg. comm. latency")
     plt.ylabel("Comm. latency var")
     plt.yscale("log")    
 
     # compute latency
+    dfg = filter(:worker_flops => (x)->isapprox(x, 2.840789371049846e6, rtol=1e-2), dfg)
     nflops_all = sort!(unique(dfg.worker_flops))
 
     ## mean cdf
@@ -1041,12 +1050,15 @@ function plot_mean_var_distribution(dfg)
         xs = sort(dfi.comp_mean)
         ys = range(0, 1, length=length(xs))
         plt.plot(xs, ys, label="nflops: $(round(nflops, sigdigits=3))")
+        write_table(xs, ys, "cdf_comp_mean_$(round(nflops, sigdigits=3)).csv")
 
         # fitted distribution
         if size(dfi, 1) >= 100
             d = Distributions.fit(LogNormal, xs)
-            xs = 10.0.^range(log10(quantile(d, 0.0001)), log10(quantile(d, 0.9999)), length=100)            
-            plt.plot(xs, cdf.(d, xs), "k--")        
+            xs = 10.0.^range(log10(quantile(d, 0.0001)), log10(quantile(d, 0.99999)), length=100)            
+            ys = cdf.(d, xs)
+            plt.plot(xs, ys, "k--")                        
+            write_table(xs, ys, "cdf_comp_mean_fit_$(round(nflops, sigdigits=3)).csv")
         end
     end
     plt.ylabel("CDF")
@@ -1061,12 +1073,17 @@ function plot_mean_var_distribution(dfg)
         xs = sort(dfi.comp_var)
         ys = range(0, 1, length=length(xs))
         plt.plot(xs, ys, label="nflops: $nflops")
+        write_table(xs, ys, "cdf_comp_var_$(round(nflops, sigdigits=3)).csv")
 
         # fitted distribution
         if size(dfi, 1) >= 100
+            i = round(Int, 0.01*length(xs))
+            xs = xs[1:end-i]
             d = Distributions.fit(LogNormal, xs)
-            xs = 10.0.^range(log10(quantile(d, 0.0001)), log10(quantile(d, 0.9999)), length=100)            
-            plt.plot(xs, cdf.(d, xs), "k--")
+            xs = 10.0.^range(log10(quantile(d, 0.0001)), log10(quantile(d, 0.99999)), length=100)            
+            ys = cdf.(d, xs)
+            plt.plot(xs, ys, "k--")
+            write_table(xs, ys, "cdf_comp_var_fit_$(round(nflops, sigdigits=3)).csv")
         end
     end    
     plt.ylabel("CDF")
@@ -1080,6 +1097,7 @@ function plot_mean_var_distribution(dfg)
         xs = dfi.comp_mean
         ys = dfi.comp_var
         plt.plot(xs, ys, ".", label="nflops: $nflops")
+        write_table(xs, ys, "scatter_comp_$(round(nflops, sigdigits=3)).csv")
     end    
     plt.xlabel("Avg. comp. latency")
     plt.ylabel("Comp. latency var")
