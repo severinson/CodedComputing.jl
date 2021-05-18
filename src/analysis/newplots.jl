@@ -140,7 +140,8 @@ function plot_orderstats(df, jobid)
     buffer = zeros(nworkers)
     latency_columns = ["latency_worker_$(i)" for i in 1:nworkers]    
     compute_latency_columns = ["compute_latency_worker_$(i)" for i in 1:nworkers]    
-    plt.figure()
+
+    plt.figure()    
 
     # empirical orderstats
     for i in 1:niterations
@@ -153,6 +154,14 @@ function plot_orderstats(df, jobid)
     orderstats ./= niterations
     plt.plot(1:nworkers, orderstats, label="Empirical")
     write_table(1:nworkers, orderstats, "orderstats_$(jobid).csv")
+
+    # # upper bound based on considering only the w fastest workers
+    # ds = [Distributions.fit(ShiftedExponential, df[:, latency_columns[j]]) for j in 1:nworkers]
+    # sort!(ds, by=mean) # sort by mean total latency
+    # f = (x, w) -> reduce(*, [cdf(ds[i], x) for i in 1:w])
+    # ts = range(quantile(ds[1], 0.1), quantile(ds[end], 0.99999), length=100)
+    # orderstats = [ts[searchsortedfirst(f.(ts, w), 0.5)] for w in 1:nworkers]
+    # plt.plot(1:nworkers, orderstats, ".", label="Bound")
 
     # global mean and variance
     m_comm, v_comm = 0.0, 0.0
@@ -247,7 +256,7 @@ function plot_orderstats(df, jobid)
     end
     orderstats ./= niterations
     plt.plot(1:nworkers, orderstats, "b--", label="ShiftExp-ShiftExp (ind., sep.)")    
-    write_table(1:nworkers, orderstats, "orderstats_shiftexp_shiftexp_$(jobid).csv")
+    write_table(1:nworkers, orderstats, "orderstats_shiftexp_shiftexp_$(jobid).csv")        
 
     # independent orderstats w. separate communication and compute
     ds_comm = [Distributions.fit(ShiftedExponential, df[:, latency_columns[j]] .- df[:, compute_latency_columns[j]]) for j in 1:nworkers]
