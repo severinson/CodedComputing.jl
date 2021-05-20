@@ -152,22 +152,22 @@ And introduces:
 
 ```julia
 # AWS, 1000 genomes
-using Revise, CodedComputing; includet("src\\Analysis.jl"); using CSV, DataFrames; df = DataFrame(CSV.File("C:\\Users\\albin\\Dropbox\\PhD\\Eigenvector project\\AWS traces\\traces\\pca-1000genomes-c5.xlarge-eu-north-1.csv")); strip_columns!(df); remove_initialization_latency!(df);
+using Revise, CodedComputing; includet("src\\Analysis.jl"); using CSV, DataFrames; df = DataFrame(CSV.File("C:\\Users\\albin\\Dropbox\\PhD\\Eigenvector project\\AWS traces\\traces\\pca-1000genomes-c5.xlarge-eu-north-1.csv")); strip_columns!(df); remove_initialization_latency!(df); notes="AWS, 1000genomes";
 
 # AWS, latency
-using Revise, CodedComputing; includet("src\\Analysis.jl"); using CSV, DataFrames; df = DataFrame(CSV.File("C:\\Users\\albin\\Dropbox\\PhD\\Eigenvector project\\AWS traces\\traces\\latency-c5.xlarge-eu-north-1.csv")); strip_columns!(df); remove_initialization_latency!(df); notes = "AWS, latency";
+using Revise, CodedComputing; includet("src\\Analysis.jl"); using CSV, DataFrames; df = DataFrame(CSV.File("C:\\Users\\albin\\Dropbox\\PhD\\Eigenvector project\\AWS traces\\traces\\latency-c5.xlarge-eu-north-1.csv")); strip_columns!(df); remove_initialization_latency!(df); notes = "AWS, latency"; notes="AWS, latency";
 
 # ex3, 1000 genomes
-using Revise, CodedComputing; includet("src\\Analysis.jl"); using CSV, DataFrames; df = DataFrame(CSV.File("C:\\Users\\albin\\Dropbox\\PhD\\Eigenvector project\\ex3 traces\\pca-1000genomes-ex3.rome16q.csv")); strip_columns!(df); remove_initialization_latency!(df);
+using Revise, CodedComputing; includet("src\\Analysis.jl"); using CSV, DataFrames; df = DataFrame(CSV.File("C:\\Users\\albin\\Dropbox\\PhD\\Eigenvector project\\ex3 traces\\pca-1000genomes-ex3.rome16q.csv")); strip_columns!(df); remove_initialization_latency!(df); notes="eX3, 1000genomes";
 
 # ex3, dense equivalent
-using Revise, CodedComputing; includet("src\\Analysis.jl"); using CSV, DataFrames; df = DataFrame(CSV.File("C:\\Users\\albin\\Dropbox\\PhD\\Eigenvector project\\ex3 traces\\pca-1000genomes-dense-equiv-ex3.rome16q.csv")); strip_columns!(df); remove_initialization_latency!(df);
+using Revise, CodedComputing; includet("src\\Analysis.jl"); using CSV, DataFrames; df = DataFrame(CSV.File("C:\\Users\\albin\\Dropbox\\PhD\\Eigenvector project\\ex3 traces\\pca-1000genomes-dense-equiv-ex3.rome16q.csv")); strip_columns!(df); remove_initialization_latency!(df); notes="eX3, dense equiv.";
 
 # Azure, dense equiv.
-using Revise, CodedComputing; includet("src\\Analysis.jl"); using CSV, DataFrames; df = DataFrame(CSV.File("C:\\Users\\albin\\Dropbox\\PhD\\Eigenvector project\\Azure traces\\pca-1000genomes-dense-equiv-azure.hpc.F2s_v2.csv")); strip_columns!(df); remove_initialization_latency!(df);
+using Revise, CodedComputing; includet("src\\Analysis.jl"); using CSV, DataFrames; df = DataFrame(CSV.File("C:\\Users\\albin\\Dropbox\\PhD\\Eigenvector project\\Azure traces\\pca-1000genomes-dense-equiv-azure.hpc.F2s_v2.csv")); strip_columns!(df); remove_initialization_latency!(df); notes="Azure, dense equiv.";
 
 # Azure, 1000 genomes
-using Revise, CodedComputing; includet("src\\Analysis.jl"); using CSV, DataFrames; df = DataFrame(CSV.File("C:\\Users\\albin\\Dropbox\\PhD\\Eigenvector project\\Azure traces\\pca-1000genomes-azure.hpc.F2s_v2.csv")); strip_columns!(df); remove_initialization_latency!(df); df = filter(:niterations => (x)->x==100, df); 
+using Revise, CodedComputing; includet("src\\Analysis.jl"); using CSV, DataFrames; df = DataFrame(CSV.File("C:\\Users\\albin\\Dropbox\\PhD\\Eigenvector project\\Azure traces\\pca-1000genomes-azure.hpc.F2s_v2.csv")); strip_columns!(df); remove_initialization_latency!(df); df = filter(:niterations => (x)->x==100, df); notes="Azure, 1000genomes";
 
 # initialization
 using Revise # optional, needed for changes made to the source code be reflected in the REPL
@@ -213,12 +213,12 @@ plot_staleness(df, nworkers=36, nwait=1, nsubpartitions=160)
 
 # plot rate of convergence
 
-# Gamma model
+# Non-iid latency model
 ## Plot the latency distribution of a few individual workers
 plot_worker_latency_distribution(df, jobid=1080, worker_indices=[10, 36])
 
-## fit a Gamma distribution to the latency recorded for each worker and job
-dfg = gamma_df(df)
+## compute the mean and variance of the latency associated with each worker fit a Gamma distribution to the latency recorded for each worker and job
+dfg = worker_distribution_df(df)
 
 ## show how the avg. per-worker latency scales with nflops, and the distribution of the avg. per-worker latency.
 plot_gamma_mean_distribution(dfg)

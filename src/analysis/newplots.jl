@@ -1061,7 +1061,7 @@ Plot the rate of convergence over time for DSAG, SAG, SGD, and coded computing. 
 `latency=empirical` to plot against empirical latency, or let `latency=c5xlarge` to plot against 
 latency computed by the model, fitted to traces recorded on `c5xlarge` instances.
 """
-function plot_convergence(df, nworkers, opt=maximum(skipmissing(df.mse)); latency="empirical")
+function plot_convergence(df, nworkers, opt=maximum(skipmissing(df.mse)); latency="empirical", niidm=nothing)
     df = filter(:nworkers => (x)->x==nworkers, df)
     df = filter(:nreplicas => (x)->x==1, df)
     df = filter(:mse => (x)->!ismissing(x), df)
@@ -1138,7 +1138,6 @@ function plot_convergence(df, nworkers, opt=maximum(skipmissing(df.mse)); latenc
         if nwait < nworkers # for nwait = nworkers, DSAG and SAG are the same
             dfj = dfj[dfj.nostale .== false, :]
         end
-        # return dfj
         println("DSAG: $(length(unique(dfj.jobid))) jobs")
         if size(dfj, 1) > 0
             dfj = combine(groupby(dfj, :iteration), :mse => mean => :mse, :time => mean => :time)
@@ -1151,7 +1150,7 @@ function plot_convergence(df, nworkers, opt=maximum(skipmissing(df.mse)); latenc
             xs = dfj.time
             ys = opt.-dfj.mse
             plt.semilogy(xs, ys, ".-", label="DSAG w=$nwait, p=$nsubpartitions")
-            filename = "./results/dsag_$(nworkers)_$(nwait)_$(nsubpartitions)_$(stepsize).csv"            
+            filename = "dsag_$(nworkers)_$(nwait)_$(nsubpartitions)_$(stepsize).csv"            
             write_table(xs, ys, filename)
         end
         println()
@@ -1181,7 +1180,7 @@ function plot_convergence(df, nworkers, opt=maximum(skipmissing(df.mse)); latenc
         xs = dfj.time
         ys = opt.-dfj.mse
         plt.semilogy(xs, ys, "o-", label="SAG p=$nsubpartitions")
-        filename = "./results/sag_$(nworkers)_$(nsubpartitions)_$(stepsize).csv"
+        filename = "sag_$(nworkers)_$(nsubpartitions)_$(stepsize).csv"
         write_table(xs, ys, filename)        
     end
     # end
@@ -1207,7 +1206,7 @@ function plot_convergence(df, nworkers, opt=maximum(skipmissing(df.mse)); latenc
         xs = dfj.time
         ys = opt.-dfj.mse
         plt.semilogy(xs, ys, "c^-", label="SGD p=$nsubpartitions")
-        filename = "./results/sgd_$(nworkers)_$(nsubpartitions)_$(stepsize).csv"
+        filename = "sgd_$(nworkers)_$(nsubpartitions)_$(stepsize).csv"
         write_table(xs, ys, filename)        
     end
 
@@ -1230,37 +1229,42 @@ function plot_convergence(df, nworkers, opt=maximum(skipmissing(df.mse)); latenc
         xs = dfj.time
         ys = opt.-dfj.mse
         plt.semilogy(xs, ys, "ms-", label="GD")
-        filename = "./results/gd_$(nworkers)_$(stepsize).csv"
+        filename = "gd_$(nworkers)_$(stepsize).csv"
         write_table(xs, ys, filename)
     end
 
-    # plot coded computing
-    r = 2 # replication factor
-    Nw = 1 # number of workers to wait for
-    samp = 1 # workload up-scaling
+    # plot coded computing bound
+    if !isnothing(niidm)
+        r = 2 # replication factor
+        Nw = 1 # number of workers to wait for
+        samp = 1 # workload up-scaling
 
-    # get the average error per iteration of GD
-    dfi = df
-    dfi = dfi[dfi.nsubpartitions .== 1, :]
-    dfi = dfi[dfi.nwait .== nworkers, :]
-    dfi = dfi[dfi.stepsize .== 1, :]
-    dfi = dfi[dfi.variancereduced .== false, :]
-    dfi = dfi[dfi.nostale .== false, :]
-    dfj = combine(groupby(dfi, :iteration), :mse => mean => :mse)
-    sort!(dfj, :iteration)
-    ys = opt .- dfj.mse
+        # get the average error per iteration of GD
+        dfi = df
+        dfi = dfi[dfi.nsubpartitions .== 1, :]
+        dfi = dfi[dfi.nwait .== nworkers, :]
+        dfi = dfi[dfi.stepsize .== 1, :]
+        dfi = dfi[dfi.variancereduced .== false, :]
+        dfi = dfi[dfi.nostale .== false, :]
+        dfj = combine(groupby(dfi, :iteration), :mse => mean => :mse)
+        sort!(dfj, :iteration)
+        ys = opt .- dfj.mse
 
-    # compute the iteration time for a scheme with a factor r replication
-    @assert length(unique(dfi.worker_flops)) == 1
-    worker_flops = r*mean(dfi.worker_flops)
-    t_iter = predict_latency(Nw, worker_flops, nworkers)
-    xs = t_iter .* dfj.iteration
+        # compute the iteration time for a scheme with a factor r replication
+        @assert length(unique(dfi.worker_flops)) == 1
+        worker_flops = r*mean(dfi.worker_flops)
+        nbytes, = unique(dfi.nbytes)
 
-    # make the plot
-    plt.semilogy(xs, ys, "--k", label="Bound r: $r, Nw: $Nw")
-    # write_table(xs, ys, "./data/bound_$(nworkers)_$(Nw)_$(r).csv")
-    filename = "./results/bound_$(nworkers)_$(stepsize).csv"
-    write_table(xs, ys, filename)    
+        # latency predicted by the new non-iid model
+        t_iter = predict_latency_niid(nbytes, worker_flops, nworkers; niidm)[Nw]
+        # t_iter = predict_latency(Nw, worker_flops, nworkers)
+        xs = t_iter .* dfj.iteration
+
+        # make the plot
+        plt.semilogy(xs, ys, "--k", label="Bound r: $r, Nw: $Nw")
+        filename = "bound_$(nworkers)_$(stepsize).csv"
+        write_table(xs, ys, filename)    
+    end
 
     plt.xlim(1e-2, 1e2)
     plt.xscale("log")
@@ -1575,8 +1579,8 @@ end
 
 """
 
-Compute the parameters of the mean and variance meta-distributions, 
-and the correlation between mean and variance.
+Compute the parameters of the mean and variance meta-distributions associated with the per-worker 
+communication and compute latency separately and the correlation between mean and variance.
 """
 function copula_df(dfg)
 
@@ -1614,6 +1618,32 @@ function copula_df(dfg)
         push!(comp_df, row, cols=:union)
     end
     comm_df, comp_df
+end
+
+"""
+
+Compute the parameters of the mean and variance meta-distributions associated with the total 
+per-worker latency and the correlation between mean and variance.
+"""
+function copula_df_total(dfg)
+    length(unique(dfg.nbytes)) == 1 || length(unique(dfg.worker_flops)) || error("either nbytes or worker_flops has to be fixed")
+    df = DataFrame()
+    row = Dict{String,Any}()
+    for dfi in groupby(dfg, [:nbytes, :worker_flops])
+        nbytes = dfi.nbytes[1]
+        worker_flops = dfi.worker_flops[1]
+        row["nbytes"] = nbytes
+        row["nflops"] = worker_flops
+        row["mean_mean"] = mean(dfi.mean)
+        row["mean_var"] = var(dfi.mean)
+        row["mean_μ"], row["mean_σ"] = params(Distributions.fit(LogNormal, dfi.mean))
+        row["var_mean"] = mean(dfi.var)
+        row["var_var"] = var(dfi.var)
+        row["var_μ"], row["var_σ"] = params(Distributions.fit(LogNormal, dfi.var))        
+        row["cor"] = cor(dfi.mean, dfi.var)
+        push!(df, row, cols=:union)
+    end
+    df
 end
 
 """
@@ -1698,8 +1728,13 @@ function predict_latency_niid(nbytes, nflops, nworkers; nsamples=1000, niidm)
     buffer = zeros(nworkers)
     for _ in 1:nsamples
         for i in 1:nworkers
-            buffer[i] = rand(sample_worker_comm_distribution(dfc_comm, nbytes))
-            buffer[i] += rand(sample_worker_comp_distribution(dfc_comp, nflops))
+            buffer[i] = 0
+            if !isnothing(dfc_comm)
+                buffer[i] += rand(sample_worker_comm_distribution(dfc_comm, nbytes))
+            end
+            if !isnothing(dfc_comp)
+                buffer[i] += rand(sample_worker_comp_distribution(dfc_comp, nflops))
+            end
         end
         sort!(buffer)
         rv += buffer
