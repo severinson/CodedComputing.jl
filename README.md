@@ -217,8 +217,15 @@ plot_staleness(df, nworkers=36, nwait=1, nsubpartitions=160)
 ## Plot the latency distribution of a few individual workers
 plot_worker_latency_distribution(df, jobid=1080, worker_indices=[10, 36])
 
-## compute the mean and variance of the latency associated with each worker fit a Gamma distribution to the latency recorded for each worker and job
+## compute the mean and variance of the latency associated with each worker
 dfg = worker_distribution_df(df)
+
+## Plot the distribution of the mean and variance of the per-worker latency
+plot_mean_var_distribution(dfg)
+
+## fit meta-distributions to the per-worker mean and variance
+niidm = copula_df(dfg)
+comm_df, comp_df = niidm
 
 ## show how the avg. per-worker latency scales with nflops, and the distribution of the avg. per-worker latency.
 plot_gamma_mean_distribution(dfg)

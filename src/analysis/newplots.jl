@@ -36,6 +36,25 @@ function plot_timeseries(df; jobid=rand(unique(df.jobid)), workers=[1, 2], separ
     return
 end
 
+"""
+
+Plot the cumulative time for a particular job.
+"""
+function plot_cumulative_time(df; jobid=rand(unique(df.jobid)))
+    println("jobid: $jobid")
+    df = filter(:jobid => (x)->x==jobid, df)
+    sort!(df, :iteration)
+    plt.figure()
+    plt.plot(df.iteration, df.time, ".")
+    plt.grid()
+    plt.legend()
+    plt.title("Job $jobid")
+    plt.xlabel("Iteration")
+    plt.ylabel("Cumulative time [s]")
+    plt.tight_layout()
+    return    
+end
+
 ### order statistics
 
 """
@@ -420,36 +439,53 @@ end
 
 Plot the average orderstats of the `iter`-th iteration computed over worker realizations.
 """
-function plot_prior_orderstats(df; nworkers, nbytes=30048, nflops, iter=10, niidm=nothing)
+function plot_prior_orderstats(df; nworkers, nwait=nworkers, nbytes=30048, nflops, iters=10:10:100, niidm=nothing)
     df = filter(:nworkers => (x)->x==nworkers, df)
-    df = filter([:nwait, :nworkers] => (x, y)->x==y, df)
+    df = filter(:nwait => (x)->x==nwait, df)
     df = filter(:nbytes => (x)->x==nbytes, df)    
     df = filter(:worker_flops => (x)->isapprox(x, nflops, rtol=1e-2), df)
+    # dfw = copy(df)
+    # df = filter([:nwait, :nworkers] => (x, y)->x==y, df)
     if size(df, 1) == 0
         error("no rows match nbytes: $nbytes and nflops: $nflops")
     end
     latency_columns = ["latency_worker_$(i)" for i in 1:maximum(df.nworkers)]
+    repoch_columns = ["repoch_worker_$(i)" for i in 1:maximum(df.nworkers)]
+
+    # plot empirical prior orderstats when all workers are available
     buffer = zeros(nworkers)
-    orderstats = zeros(nworkers)
+    orderstats = zeros(nwait)
     jobids = unique(df.jobid)
+    nsamples = 0
     println("Computing orderstats over $(length(jobids)) jobs")
     for jobid in jobids
         dfi = filter(:jobid=>(x)->x==jobid, df)
         sort!(dfi, :iteration)
-        for j in 1:nworkers
-            buffer[j] = dfi[iter, latency_columns[j]]
+        for i in iters
+            if i > size(dfi, 1)
+                continue
+            end
+            for j in 1:nworkers
+                if dfi[i, repoch_columns[j]] == dfi[i, :iteration]
+                    buffer[j] = dfi[i, latency_columns[j]]
+                else
+                    buffer[j] = Inf
+                end
+            end
+            sort!(buffer)
+            orderstats += view(buffer, 1:nwait)
+            nsamples += 1
         end
-        sort!(buffer)
-        orderstats += buffer
     end    
-    orderstats ./= length(jobids)
-    xs = 1:nworkers
+    orderstats ./= nsamples
+    xs = 1:nwait
     plt.figure()
     plt.plot(xs, orderstats, "-o")
-    write_table(xs, orderstats, "prior_orderstats_$(iter)_$(nworkers)_$(nbytes)_$(round(nflops, sigdigits=3)).csv")
+    write_table(xs, orderstats, "prior_orderstats_$(nworkers)_$(nbytes)_$(round(nflops, sigdigits=3)).csv")
 
     # latency predicted by the new non-iid model
     if !isnothing(niidm)
+        xs = 1:nworkers
         ys = predict_latency_niid(nbytes, nflops, nworkers; niidm)
         plt.plot(xs, ys, "c--")
         write_table(xs, ys, "prior_orderstats_niidm_$(nworkers)_$(nbytes)_$(round(nflops, sigdigits=3)).csv")
@@ -1379,8 +1415,9 @@ end
 
 Compute the mean and variance of the per-iteration latency for each job and worker.
 """
-function worker_distribution_df(df; minsamples=100, prune_comm=0.05)
-    df = filter([:nwait, :nworkers] => (x,y)->x==y, df)
+function worker_distribution_df(df; minsamples=100, prune_comm=0.02)
+    # df = filter([:nwait, :nworkers] => (x,y)->x==y, df)
+    df = copy(df)
     rv = DataFrame()
     row = Dict{String, Any}()
     maxworkers = maximum(df.nworkers)
@@ -1429,18 +1466,47 @@ function worker_distribution_df(df; minsamples=100, prune_comm=0.05)
             row["var"] = var(ys)
 
             # Gamma
-            d = Distributions.fit(Gamma, ys)     
-            row["α"], row["θ"] = params(d)            
+            # d = Distributions.fit(Gamma, ys)     
+            # row["α"], row["θ"] = params(d)            
             
             # ShiftedExponential
-            d = Distributions.fit(ShiftedExponential, float.(dfi[:, latency_columns[i]]))
-            row["s"], row["sθ"] = params(d)
+            # d = Distributions.fit(ShiftedExponential, float.(dfi[:, latency_columns[i]]))
+            # row["s"], row["sθ"] = params(d)
 
             row["worker_index"] = i
             push!(rv, row, cols=:union)
         end
     end
     rv
+end
+
+"""
+
+Return distributions fit to the communication, compute, and total latency of each worker.
+"""
+function fit_worker_distributions(dfg, jobid)
+    dfg = filter(:jobid => (x)->x==jobid, dfg)
+    size(dfg, 1) > 0 || error("job $jobid doesn't exist")
+    sort!(dfg, :worker_index)
+    nworkers = dfg.nworkers[1]
+    if ismissing(dfg.comp_mean[1])
+        ds_comm = [nothing for _ in 1:nworkers]   
+        ds_comp = [nothing for _ in 1:nworkers]
+        θs = sqrt.(dfg.var)
+        ss = dfg.mean .- θs
+        ds_total = ShiftedExponential.(ss, θs)             
+    else
+        θs = sqrt.(dfg.comm_var)
+        ss = dfg.comm_mean .- θs
+        ds_comm = ShiftedExponential.(ss, θs)
+        θs = sqrt.(dfg.comp_var)
+        ss = dfg.comp_mean .- θs
+        ds_comp = ShiftedExponential.(ss, θs)        
+        θs = sqrt.(dfg.var)
+        ss = dfg.mean .- θs
+        ds_total = ShiftedExponential.(ss, θs)                
+    end
+    return ds_comm, ds_comp, ds_total    
 end
 
 """
@@ -1742,376 +1808,112 @@ function predict_latency_niid(nbytes, nflops, nworkers; nsamples=1000, niidm)
     rv ./= nsamples
 end
 
-### old code associated with the non-iid model
+### code for simulating the per-iteration latency
+
+# Takes as input a set of probability distributions corresponding to workers
+# Also take the update latency, which we'll assume to be constant
+# Start with all workers available
+# Sample the latency of all workers
+# Put all workers in a PQ with the time that they become available as the value
+# Record the sepoch for all workers put into the queue
+# Draw workers from the PQ
+# Record the repoch for each worker
+# Stop after picking w fresh workers
+# Record the latency of the w-th worker as the iteration latency
+# Increment the time by the update latency
+# Draw all workers that finished during the update
+
+# Let's have the simulator return a DataFrame with the same format as the experiment thingy
+# latency, update_latency
+
+# I have the simulator
+# Next, let's see how well the latency
+# Let's change the prior_orderstats thing again to just consider the latency column
 
 """
 
-Show how the avg. per-worker latency scales with nflops, and the distribution of the avg. 
-per-worker latency.
+Sample the total latency of a worker.
 """
-function plot_gamma_mean_distribution(dfg)
-    plt.figure()
-    plt.subplot(1, 2, 1)
-    plt.plot(dfg.worker_flops, dfg.mean, ".")
-    plt.xlabel("Workload [flops]")
-    plt.ylabel("Avg. per-worker latency")
-    plt.grid()
-    plt.xscale("log")
-    plt.yscale("log")
-    plt.title("Avg. latency per worker")
-
-    plt.subplot(1, 2, 2)
-    for worker_flops in sort!(unique(dfg.worker_flops))
-        dfi = filter(:worker_flops => (x)->isapprox(x, worker_flops, rtol=1e-2), dfg)
-        xs = sort(dfi.mean)
-        ys = range(0, 1, length=length(xs))
-        plt.plot(xs, 1 .- ys)
-        
-        i = round(Int, 0.01*length(xs))
-        # println("samples: $(size(dfi, 1)), i: $i")
-        xs = xs[i:end-i]
-        d = Distributions.fit(Gamma, xs)
-        xs = range(quantile(d, 0.001), quantile(d, 0.999), length=100)
-        plt.plot(xs, 1 .- cdf.(d, xs), "k--")
+function sample_worker_latency(d_comm, d_comp)
+    !isnothing(d_comm) || !isnothing(d_comp) || error("either d_comm or d_comp must be provided")
+    rv = 0.0
+    if !isnothing(d_comm)
+        rv += rand(d_comm)
     end
-    # plt.ylim(1e-2, 1)
-    plt.xlabel("Avg. per-worker latency")
-    plt.ylabel("CCDF")    
-    plt.xscale("log")
-    plt.yscale("log")
-    plt.grid()
-    plt.title("CCDF of avg. latency 
-    for each workload.")
-    plt.tight_layout()
-    return
-end
-
-"""
-
-Fit a probability distribution to the avg. per-worker latency for each value of 
-`worker_flops`.
-"""
-function gamma_mean_df(dfg; minsamples=100)
-    rv = DataFrame()
-    row = Dict{String, Any}()    
-    for worker_flops in unique(dfg.worker_flops)
-        dfi = filter(:worker_flops => (x)->isapprox(x, worker_flops, rtol=1e-2), dfg)
-        nsamples = size(dfi, 1)
-        if nsamples < minsamples
-            continue
-        end
-
-        # avg. per-worker latency is Gamma
-        xs = sort(dfi.mean)
-        i = round(Int, 0.01*length(xs))
-        xs = xs[i:end-i]
-        d = Distributions.fit(Gamma, xs)
-        α, θ = params(d)
-        row["α"] = α
-        row["θ"] = θ
-        row["meta_mean"], row["meta_var"] = α*θ, α*θ^2
-
-        # avg. per-worker latency is ShiftedExponential
-        xs = sort(dfi.mean)
-        # i = round(Int, 0.05*length(xs))
-        # xs = xs[i:end-i]
-        d = Distributions.fit(ShiftedExponential, xs)
-        s, θ = params(d)
-        row["s"] = s
-        row["sθ"] = θ
-
-        row["worker_flops"] = worker_flops
-        row["nbytes"] = dfi.nbytes[1]
-        row["nsamples"] = nsamples
-        push!(rv, row, cols=:union)
+    if !isnothing(d_comp)
+        rv += rand(d_comp)
     end
     rv
 end
 
 """
 
-Plot the parameters of the distribution fit to the mean latency vs. nflops.
+Simulate `niterations` iterations of the computation.
 """
-function plot_gamma_mean_df(dfgm)
-    plt.figure()
+function simulate_iterations(;nwait, niterations=100, ds_comm, ds_comp, update_latency=0.0)
+    length(ds_comm) == length(ds_comp) || throw(DimensionMismatch("ds_comm has dimension $(length(ds_comm)), but ds_comp has dimension $(length(ds_comp))"))
+    nworkers = length(ds_comm)
+    0 < nwait <= nworkers || throw(DomainError(nwait, "nwait must be in [1, nworkers]"))
+    sepochs = zeros(Int, nworkers) # epoch at which an iterate was last sent to each worker
+    repochs = zeros(Int, nworkers) # epoch that each received gradient corresponds to
+    pq = PriorityQueue{Int,Float64}() # queue for event-driven simulation
+    time = 0.0 # simulation time
+    times = zeros(niterations) # time at which each iteration finished
+    nfreshs = zeros(Int, niterations)
+    nstales = zeros(Int, niterations)
+    latencies = zeros(niterations)
+    for k in 1:niterations
+        nfresh, nstale = 0, 0
+        idle_time = 0.0
 
-    # Gamma model
-    plt.subplot(1, 3, 1)
-    xs = dfgm.worker_flops
-    ys = dfgm.meta_mean
-    plt.plot(xs, ys, "b.", label="Meta-mean")
-
-    ts = sort(xs)
-    p, coeffs = fit_polynomial(xs, ys, 1)
-    plt.plot(ts, p.(ts), "b--")
-    println("meta-mean coefficients: $coeffs")    
-
-    # ShiftedExponential model
-    xs = dfgm.worker_flops
-    ys = dfgm.s
-    plt.plot(xs, ys, "r.", label="Meta-shift")
-
-    ts = sort(xs)
-    p, coeffs = fit_polynomial(xs, ys, 1)
-    plt.plot(ts, p.(ts), "r--")
-    println("meta-shift coefficients: $coeffs")
-
-    plt.ylabel("meta-mean and meta-shift")    
-    plt.xlabel("workload [flops]")
-    plt.legend()    
-    plt.xscale("log")
-    plt.yscale("log")
-
-    # variance vs. workload
-    plt.subplot(1, 3, 2)
-    xs = dfgm.worker_flops
-    # ys = sqrt.(dfgm.var_mean)
-    ys = sqrt.(dfgm.meta_var)
-    plt.plot(xs, ys, ".")
-
-    ts = sort(xs)
-    p, coeffs = fit_polynomial(xs, ys, 1)
-    plt.plot(ts, p.(ts), "k--")
-    println("meta-var coefficients: $coeffs")    
-
-    plt.xscale("log")
-    plt.yscale("log")
-    plt.xlabel("workload")
-    plt.ylabel("meta-variance")
-    
-
-    # scale vs. nflops
-    ## Gamma model
-    plt.subplot(1, 3, 3)
-    ys = dfgm.θ
-    plt.plot(xs, ys, "b.", label="Meta-scale (Gamma)")
-    
-    p, coeffs = fit_polynomial(xs, ys, 1)
-    plt.plot(ts, p.(ts), "k--")    
-    println("Gamma scale coefficients: $coeffs")
-
-    ## ShiftedExponential model
-    ys = dfgm.sθ
-    plt.plot(xs, ys, "r.", label="Meta-scale (ShiftedExponential)")
-    
-    p, coeffs = fit_polynomial(xs, ys, 1)
-    plt.plot(ts, p.(ts), "r--")    
-    println("ShiftedExponential scale coefficients: $coeffs")    
-
-    plt.xlabel("workload [flops]")
-    plt.ylabel("meta-scale")
-    plt.legend()
-    plt.xscale("log")
-    plt.yscale("log")        
-    plt.tight_layout()
-    return
-end
-
-"""
-
-Plot the distribution of the normalized variance.
-"""
-function plot_gamma_var_distribution(dfg)
-
-    plt.figure()
-    plt.subplot(1, 2, 1)
-    xs = dfg.mean
-    ys = dfg.θ # equal to dfg.var ./ dfg.mean
-    plt.plot(xs, ys, ".")
-    plt.xlabel("avg. per-worker latency")
-    # plt.ylabel("per-worker latency var. / avg. per-worker latency")
-    plt.ylabel("scale (θ)")
-    plt.xscale("log")
-    plt.yscale("log")
-    plt.grid()
-
-    plt.subplot(1, 2, 2)
-    xs = sort(ys)
-    i = round(Int, 0.05*length(xs))
-    xs = xs[1:end-i]
-    ys = range(0, 1, length=length(xs))
-    plt.plot(xs, ys, label="Empirical")
-
-    d = Distributions.fit(Exponential, xs)
-    println(d)
-    ts = range(quantile(d, 0.0001), quantile(d, 0.9999), length=100)
-    plt.plot(ts, cdf.(d, ts), "k--", label="Fitted Exponential distribution")
-    plt.ylabel("CCDF")
-    # plt.xlabel("per-worker latency var. / avg. per-worker latency")
-    plt.xlabel("scale (θ)")
-    plt.ylim(1e-2, 1)
-    # plt.xscale("log")
-    # plt.yscale("log")    
-    plt.legend()
-    plt.grid()
-    plt.tight_layout()
-    return
-end
-
-function fit_non_iid_model(dfg, dfgm)
-
-    # interpolate the mean and variance of the meta distribution
-    xs = dfgm.worker_flops
-    ys = dfgm.meta_mean
-    # p_mean, coeffs = fit_polynomial(xs, ys, 1)
-    # println("meta-mean coefficients: $coeffs")
-    mean_slope = mean(ys ./ xs)
-    p_mean = (x) -> x*mean_slope
-    println("meta-mean slope: $mean_slope")
-    
-    ys = dfgm.meta_var
-    # p_var, coeffs = fit_polynomial(xs, ys, 1)
-    # println("meta-var coefficients: $coeffs")
-    var_slope = mean(ys ./ xs)
-    p_var = (x) -> x*var_slope
-    println("meta-var slope: $var_slope")
-
-    # # fit the meta-distribution determining avg. latency
-    # xs = dfgm.worker_flops
-    # ys = dfgm.s
-    # p_shift, coeffs = fit_polynomial(xs, ys, 1)
-    # println("meta-shift coefficients: $coeffs")
-    # ys = dfgm.sθ
-    # p_scale, coeffs = fit_polynomial(xs, ys, 1)
-    # println("meta-scale coefficients: $coeffs")
-
-    # fit the scale distribution (i.e., the distribution of meta_mean / meta_var)
-    ys = sort(dfg.θ)
-    i = round(Int, 0.05*length(ys))
-    ys = ys[1:end-i]
-    d = Distributions.fit(Exponential, ys)
-
-    (p_mean, p_var, d)
-end
-
-"""
-
-Generate a `ShiftedExponential` random variable for a worker with given per-worker workload
-"""
-function shiftexp_worker_distribution(worker_flops; osm)
-    p_shift, p_scale, dθ = osm
-    meta_shift = p_shift(worker_flops)
-    meta_scale = p_scale(worker_flops)    
-    d = ShiftedExponential(meta_shift, meta_scale)
-    mean = rand(d) # avg. latency of this worker, equal to s+sθ
-    θ = rand(dθ)
-    
-    # worker latency distribution is a ShiftedExponential
-    # sθ = sqrt(θ * mean)
-    # s = mean - sθ    
-    # ShiftedExponential(s, sθ)
-
-    # worker latency distribution is a Gamma
-    α = mean / θ
-    Gamma(α, θ)
-end
-
-"""
-
-Generate a `Gamma` random variable for a worker with given per-worker workload
-"""
-function gamma_worker_distribution(worker_flops; osm)
-
-    p_mean, p_var, scale_distribution = osm
-    meta_mean = p_mean(worker_flops)
-    meta_var = p_var(worker_flops)
-    meta_scale = sqrt(meta_var)
-    meta_shift = meta_mean - meta_scale
-    d = ShiftedExponential(meta_shift, meta_scale)
-    mean = rand(d)
-    θ = rand(scale_distribution)
-    α = mean / θ
-    # println("workload: $worker_flops, meta_mean: $meta_mean, meta_var: $meta_var, α: $α, θ: $θ")
-    return Gamma(α, θ)
-
-    # p_shift, p_scale, dθ = osm
-    # meta_shift = p_shift(worker_flops)
-    # meta_scale = p_scale(worker_flops)
-    # d = ShiftedExponential(meta_shift, meta_scale)
-    # mean = rand(d) # avg. latency of this worker, equal to α*θ    
-    # θ = rand(dθ)
-    # α = mean / θ
-    # return Gamma(α, θ)
-
-
-    # # ShiftedExponential model
-    # # generate mean latency of the worker based on the per-worker workload
-    # meta_shift = 0.0007499872578485828 + 7.778654414066668e-9worker_flops
-    # meta_scale = -8.190460220896224e-5 + 5.58026508893015e-10worker_flops
-    # d = ShiftedExponential(meta_shift, meta_scale)
-    # mean = rand(d) # avg. latency of this worker
-
-    # # Gamma model
-    # meta_mean = 0.0006680826556396607 + 8.336680922959681e-9worker_flops
-    # meta_scale = -1.2720269369198488e-5 + 3.5940299549679294e-11worker_flops
-    # meta_shape = meta_mean / meta_scale
-    # d = Gamma(meta_shape, meta_scale)
-    # mean = rand(d)
-
-    # # Gamma model w. removing 5% largest and smallest values
-    # meta_mean = 0.0006275309187944665 + 8.322795865015209e-9worker_flops
-    # meta_scale = -1.1809861023747872e-5 + 2.936533045933439e-11worker_flops
-    # meta_shape = meta_mean / meta_scale
-    # d = Gamma(meta_shape, meta_scale)
-    # mean = rand(d)
-
-    # Shifted exponential w. removing 5% largest and smallest values
-    meta_shift = 0.0007199382199680563 + 7.81714364759284e-9worker_flops
-    meta_scale = -9.240730117362186e-5 + 5.056522174223721e-10worker_flops
-    d = ShiftedExponential(meta_shift, meta_scale)
-    mean = rand(d) # avg. latency of this worker, equal to α*θ
-
-    # Gamma scale
-    # θ = rand(Gamma(16.942689050787024, 3.946363854792131e-6))
-
-    # Normal-distribution scale
-    # dθ = Normal(6.686201567300831e-5, 1.5062764605542296e-5)
-    # θ = rand(dθ)
-    # while θ <= 0
-    #     θ = rand(dθ)
-    # end
-
-    # ShiftedExponential scale
-    # θ = rand(ShiftedExponential(5.592635406074897e-7, 6.668430692272587e-6))
-
-    ## LogNormal scale
-    θ = rand(LogNormal(-12.128750442775992, 0.7232943784486586))
-    
-    # shape parameter is computed from the above
-    α = mean / θ
-    return Gamma(α, θ)
-end
-
-"""
-
-Compute all order statistics for `nworkers` workers, when the per-worker 
-workload is `worker_flops`, via Monte Carlo sampling over `nsamples` samples.
-"""
-function predict_latency_gamma(worker_flops, nworkers; nsamples=1000, osm)
-    rv = zeros(nworkers)
-    buffer = zeros(nworkers)
-    for _ in 1:nsamples
+        # enqueue all idle workers
+        # (workers we received a fresh result from in the previous iteration are idle)
+        t0 = time + update_latency # start time of this iteration
         for i in 1:nworkers
-            d = gamma_worker_distribution(worker_flops; osm)
-            buffer[i] = rand(d)
+            if repochs[i] == k-1
+                enqueue!(pq, i, t0 + sample_worker_latency(ds_comm[i], ds_comp[i]))
+                sepochs[i] = k
+            end
         end
-        sort!(buffer)
-        rv += buffer
-    end
-    rv ./= nsamples
-end
 
-"""
+        # wait for nwait fresh workers
+        while nfresh < nwait
+            i, time = dequeue_pair!(pq)
+            if k > 1
+                time = max(time, t0)
+            end
+            repochs[i] = sepochs[i]
+            if repochs[i] == k
+                nfresh += 1
+            else
+                # put stale workers back in the queue
+                nstale += 1
+                enqueue!(pq, i, time + sample_worker_latency(ds_comm[i], ds_comp[i]))
+                sepochs[i] = k
+            end
+        end
 
-Compute the average latency of the `nwait`-th fastest out of `nworkers` 
-workers, when the per-worker workload is `worker_flops`, via Monte Carlo
-sampling over `nsamples` samples.
-"""
-function predict_latency_gamma(nwait, worker_flops, nworkers; nsamples=1000)
-    rv = 0.0
-    for _ in 1:nsamples
-        s = NonIDOrderStatistic([gamma_worker_distribution(worker_flops) for _ in 1:nworkers], nwait)
-        rv += rand(s)
+        # There's idle time whenever a worker is among the w fastest
+        # And when workers wait for the coordinator to update the iterate
+        # There's fresh time whenever a worker gives a timely result (repoch = iteration)
+        # There's stale time whenever a worker is not among the w fastest
+        # I can compute the total fresh time in each iteration by looking at the per-worker latency compared to the total latency
+        # That also gives me the idle time
+        # To get the stale time I need to look at latency in iterations with repoch < iteration
+
+        # record
+        nfreshs[k] = nfresh
+        nstales[k] = nstale
+        times[k] = time + update_latency
+        latencies[k] = time - t0
     end
-    rv / nsamples
+    
+    rv = DataFrame()
+    rv.time = times
+    rv.update_latency = update_latency   
+    rv.latency = latencies
+    rv.iteration = 1:niterations
+    rv.nworkers = nworkers
+    rv.nwait = nwait
+    rv
 end

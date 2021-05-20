@@ -1,4 +1,4 @@
-using CSV, DataFrames, PyPlot, Statistics, Polynomials, LinearAlgebra, Distributions, RollingFunctions
+using CSV, DataFrames, PyPlot, Statistics, Polynomials, LinearAlgebra, Distributions, RollingFunctions, DataStructures
 using StatsBase
 
 """
@@ -68,6 +68,13 @@ function extend_dfo(dfo)
     end
     rv
 end
+
+"""
+
+Return a `DataFrame` mapping each combination of `:worker_flops` and `:bytes` to the number of jobs
+run with that combination.
+"""
+njobs_df(df) = sort!(combine(groupby(df, [:nworkers, :nwait, :worker_flops, :nbytes]), :jobid => ((x)->length(unique(x))) => :njobs), [:nworkers, :nwait, :worker_flops, :nbytes])
 
 """
 
