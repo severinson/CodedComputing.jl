@@ -74,7 +74,7 @@ end
 Return a `DataFrame` mapping each combination of `:worker_flops` and `:bytes` to the number of jobs
 run with that combination.
 """
-njobs_df(df) = sort!(combine(groupby(df, [:nworkers, :nwait, :worker_flops, :nbytes]), :jobid => ((x)->length(unique(x))) => :njobs), [:nworkers, :nwait, :worker_flops, :nbytes])
+njobs_df(df; cols=[:nworkers, :nwait, :worker_flops, :nbytes, :nsubpartitions]) = sort!(combine(groupby(df, cols), :jobid => ((x)->length(unique(x))) => :njobs), cols)
 
 """
 
@@ -189,6 +189,35 @@ function remove_initialization_latency!(df)
         Δ = dfi.update_latency[1] + dfi.latency[1]
         Δ -= mean(dfj.update_latency) + mean(dfj.latency)
         df[df.jobid .== jobid, :time] .-= Δ
+    end
+    df
+end
+
+"""
+
+The total recorded latency is sometimes 
+
+Set the overall iteration latency equal to the latency of the `nwait`-th worker, and move the 
+difference between the overall recorded latency to `update_latency`.
+"""
+function fix_update_latency!(df)
+    maxworkers = maximum(df.nworkers)
+    latencies = zeros(maxworkers)
+    latency_columns = ["latency_worker_$i" for i in 1:maxworkers]
+    repoch_columns = ["repoch_worker_$i" for i in 1:maxworkers]    
+    for i in 1:size(df, 1)
+        latencies .= Inf
+        nworkers = df.nworkers[i]
+        nwait = df.nwait[i]
+        for j in 1:nworkers
+            repoch = df[i, repoch_columns[j]]
+            isstraggler = ismissing(repoch) || repoch < df.iteration[i]
+            latencies[j] = isstraggler ? Inf : df[i, latency_columns[j]]
+        end
+        partialsort!(latencies, nwait)
+        nwait_latency = latencies[nwait]
+        df[i, :update_latency] += df[i, :latency] - nwait_latency
+        df[i, :latency] = nwait_latency
     end
     df
 end

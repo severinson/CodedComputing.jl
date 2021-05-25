@@ -40,12 +40,64 @@ end
 
 Plot the cumulative time for a particular job.
 """
-function plot_cumulative_time(df; jobid=rand(unique(df.jobid)))
-    println("jobid: $jobid")
+function plot_cumulative_time(df; jobid=rand(unique(df.jobid)), dfg=nothing, maxiterations=Inf)
+    
+    # empiric latency
     df = filter(:jobid => (x)->x==jobid, df)
     sort!(df, :iteration)
+    if !isinf(maxiterations)
+        df = filter(:iteration => (x)->x<=(maxiterations+1), df)
+    end
+
+    nwait = df.nwait[1]
+    nworkers = df.nworkers[1]
+    nflops = df.worker_flops[1]
+    println("jobid: $jobid, nworkers: $nworkers, nwait: $nwait, nflops: $(round(nflops, sigdigits=3))")
+
     plt.figure()
-    plt.plot(df.iteration, df.time, ".")
+    xs = df.iteration[1:end-1]
+    ys = cumsum(df.latency[2:end] .+ df.update_latency[2:end])
+    plt.plot(xs, ys, ".", label="Empiric")
+    write_table(xs, ys, "cumulative_time_$(jobid).csv")
+
+    # predicted latency
+    if !isnothing(dfg)
+        update_latency = mean(df.update_latency)
+        ds_comm, ds_comp, ds_total = fit_worker_distributions(dfg; jobid)
+        if any(isnothing.(ds_comm) .& isnothing.(ds_comp))
+            println("Simulating iteration latency based on distributions fitted to the total latency")
+
+            # not accounting for interaction between iterations
+            spl = NonIDOrderStatistic(ds_total, nwait)
+            xs = 1:size(df, 1)
+            ys = cumsum(rand(spl, length(xs)) .+ update_latency)
+            plt.plot(xs, ys, "k--", label="Int. not accounted for")
+            write_table(xs, ys, "cumulative_time_sim_$(jobid).csv")
+
+            # accounting for the interaction
+            dfs = simulate_iterations(;nwait, ds_comm, ds_comp=ds_total, update_latency, niterations=100)
+            xs = dfs.iteration
+            ys = dfs.time
+            plt.plot(xs, ys, "m--", label="Int. accounted for")
+            write_table(xs, ys, "cumulative_time_simint_$(jobid).csv")
+        else
+            println("Simulating iteration latency based on separate distributions fitted to the communication and compute latency")
+
+            # not accounting for interaction between iterations
+            spl_comm = NonIDOrderStatistic(ds_comm, nwait)
+            spl_comp = NonIDOrderStatistic(ds_comp, nwait)
+            xs = 1:size(df, 1)
+            ys = cumsum(rand(spl_comm, length(xs)) .+ rand(spl_comp, length(xs)) .+ update_latency)
+            plt.plot(xs, ys, "k--", label="Int. not accounted for")
+
+            # accounting for the interaction
+            dfs = simulate_iterations(;nwait, ds_comm, ds_comp, update_latency)
+            xs = dfs.iteration
+            ys = dfs.time
+            plt.plot(xs, ys, "m--", label="Int. accounted for")
+        end
+    end
+
     plt.grid()
     plt.legend()
     plt.title("Job $jobid")
@@ -1415,7 +1467,7 @@ end
 
 Compute the mean and variance of the per-iteration latency for each job and worker.
 """
-function worker_distribution_df(df; minsamples=100, prune_comm=0.02)
+function worker_distribution_df(df; minsamples=10, prune_comm=0.02)
     # df = filter([:nwait, :nworkers] => (x,y)->x==y, df)
     df = copy(df)
     rv = DataFrame()
@@ -1484,7 +1536,7 @@ end
 
 Return distributions fit to the communication, compute, and total latency of each worker.
 """
-function fit_worker_distributions(dfg, jobid)
+function fit_worker_distributions(dfg; jobid)
     dfg = filter(:jobid => (x)->x==jobid, dfg)
     size(dfg, 1) > 0 || error("job $jobid doesn't exist")
     sort!(dfg, :worker_index)
@@ -1810,26 +1862,6 @@ end
 
 ### code for simulating the per-iteration latency
 
-# Takes as input a set of probability distributions corresponding to workers
-# Also take the update latency, which we'll assume to be constant
-# Start with all workers available
-# Sample the latency of all workers
-# Put all workers in a PQ with the time that they become available as the value
-# Record the sepoch for all workers put into the queue
-# Draw workers from the PQ
-# Record the repoch for each worker
-# Stop after picking w fresh workers
-# Record the latency of the w-th worker as the iteration latency
-# Increment the time by the update latency
-# Draw all workers that finished during the update
-
-# Let's have the simulator return a DataFrame with the same format as the experiment thingy
-# latency, update_latency
-
-# I have the simulator
-# Next, let's see how well the latency
-# Let's change the prior_orderstats thing again to just consider the latency column
-
 """
 
 Sample the total latency of a worker.
@@ -1850,21 +1882,28 @@ end
 
 Simulate `niterations` iterations of the computation.
 """
-function simulate_iterations(;nwait, niterations=100, ds_comm, ds_comp, update_latency=0.0)
+function simulate_iterations(;nwait, niterations=100, ds_comm, ds_comp, update_latency=0.5e-3)
     length(ds_comm) == length(ds_comp) || throw(DimensionMismatch("ds_comm has dimension $(length(ds_comm)), but ds_comp has dimension $(length(ds_comp))"))
     nworkers = length(ds_comm)
     0 < nwait <= nworkers || throw(DomainError(nwait, "nwait must be in [1, nworkers]"))
     sepochs = zeros(Int, nworkers) # epoch at which an iterate was last sent to each worker
     repochs = zeros(Int, nworkers) # epoch that each received gradient corresponds to
+    stimes = zeros(nworkers) # time at which each worker was most recently assigned a task
+    rtimes = zeros(nworkers) # time at which each worker most recently completed a task
     pq = PriorityQueue{Int,Float64}() # queue for event-driven simulation
     time = 0.0 # simulation time
     times = zeros(niterations) # time at which each iteration finished
     nfreshs = zeros(Int, niterations)
     nstales = zeros(Int, niterations)
     latencies = zeros(niterations)
+    idle_times = zeros(niterations)
+    fresh_times = zeros(niterations)
+    stale_times = zeros(niterations)
     for k in 1:niterations
         nfresh, nstale = 0, 0
-        idle_time = 0.0
+        idle_time = 0.0 # total time workers spend being idle
+        fresh_time = 0.0 # total time workers spend working on fresh gradients
+        stale_time = 0.0 # total time workers spend working on stale gradients
 
         # enqueue all idle workers
         # (workers we received a fresh result from in the previous iteration are idle)
@@ -1873,39 +1912,48 @@ function simulate_iterations(;nwait, niterations=100, ds_comm, ds_comp, update_l
             if repochs[i] == k-1
                 enqueue!(pq, i, t0 + sample_worker_latency(ds_comm[i], ds_comp[i]))
                 sepochs[i] = k
+                stimes[i] = t0
             end
         end
 
         # wait for nwait fresh workers
         while nfresh < nwait
             i, time = dequeue_pair!(pq)
-            if k > 1
-                time = max(time, t0)
-            end
             repochs[i] = sepochs[i]
+            rtimes[i] = time
+            if k > 1 && time < t0
+                idle_time += t0 - time
+                time = t0
+            end
             if repochs[i] == k
                 nfresh += 1
+                fresh_time += rtimes[i] - stimes[i]
             else
                 # put stale workers back in the queue
                 nstale += 1
+                stale_time += rtimes[i] - stimes[i]
                 enqueue!(pq, i, time + sample_worker_latency(ds_comm[i], ds_comp[i]))
                 sepochs[i] = k
+                stimes[i] = time
             end
         end
 
-        # There's idle time whenever a worker is among the w fastest
-        # And when workers wait for the coordinator to update the iterate
-        # There's fresh time whenever a worker gives a timely result (repoch = iteration)
-        # There's stale time whenever a worker is not among the w fastest
-        # I can compute the total fresh time in each iteration by looking at the per-worker latency compared to the total latency
-        # That also gives me the idle time
-        # To get the stale time I need to look at latency in iterations with repoch < iteration
+        # tally up for how long each worker has been idle
+        # (only workers we received a fresh result from are idle)
+        for i in 1:nworkers
+            if repochs[i] == k
+                idle_time += time - rtimes[i] + update_latency
+            end
+        end
 
         # record
         nfreshs[k] = nfresh
         nstales[k] = nstale
         times[k] = time + update_latency
         latencies[k] = time - t0
+        idle_times[k] = idle_time
+        fresh_times[k] = fresh_time
+        stale_times[k] = stale_time
     end
     
     rv = DataFrame()
@@ -1913,7 +1961,129 @@ function simulate_iterations(;nwait, niterations=100, ds_comm, ds_comp, update_l
     rv.update_latency = update_latency   
     rv.latency = latencies
     rv.iteration = 1:niterations
+    rv.idle_time = idle_times
+    rv.fresh_time = fresh_times
+    rv.stale_time = stale_times
     rv.nworkers = nworkers
     rv.nwait = nwait
     rv
+end
+
+"""
+
+Simulate `niterations` iterations of the computation for `nruns` realizations of the set of workers.
+"""
+function simulate_iterations(nbytes::Real, nflops::Real; nruns=30, niterations=100, nworkers, nwait, dfc_comm, dfc_comp, update_latency)
+    dfs = Vector{DataFrame}()
+    for i in 1:nruns
+        if !isnothing(dfc_comm)
+            ds_comm = [sample_worker_comm_distribution(dfc_comm, nbytes) for _ in 1:nworkers]
+        else
+            ds_comm = [nothing for _ in 1:nworkers]
+        end
+        if !isnothing(dfc_comp)
+            ds_comp = [sample_worker_comp_distribution(dfc_comp, nflops) for _ in 1:nworkers]
+        else
+            ds_comp = [nothing for _ in 1:nworkers]
+        end
+        df = simulate_iterations(;nwait, niterations, ds_comm, ds_comp, update_latency)
+        df.jobid = i
+        push!(dfs, df)
+    end
+    df = vcat(dfs...)
+    df = combine(
+        groupby(df, :iteration),
+        :time => mean => :time,
+        :update_latency => mean => :update_latency,
+        :latency => mean => :latency,
+        :idle_time => mean => :idle_time,
+        :fresh_time => mean => :fresh_time,
+        :stale_time => mean => :stale_time,
+    )
+    df.nworkers = nworkers    
+    df.nwait = nwait
+    df.nbytes = nbytes
+    df.worker_flops = nflops
+    df
+end
+
+"""
+
+"""
+function plot_time_vs_npartitions(;nbytes::Real=30048, nflops0::Real=6.545178710898845e10, nworkers, nwait, dfc_comm, dfc_comp, update_latency=0.5e-3)
+    # ps = [1, 5, 10, 50, 100, 320]
+    ps = 10 .^ range(log10(1), log10(320), length=10) .* nworkers
+    idle_times = zeros(length(ps))
+    fresh_times = zeros(length(ps))
+    stale_times = zeros(length(ps))
+    for (i, p) in enumerate(ps)
+        df = simulate_iterations(nbytes, nflops0/p; nworkers, nwait, dfc_comm, dfc_comp, update_latency)
+        idle_times[i] = mean(df.idle_time)
+        fresh_times[i] = mean(df.fresh_time)
+        stale_times[i] = mean(df.stale_time)
+        total = idle_times[i] + fresh_times[i] + stale_times[i]
+        idle_times[i] /= total
+        fresh_times[i] /= total
+        stale_times[i] /= total
+    end
+    
+    plt.figure()
+    plt.plot(ps, idle_times, ".-", label="Idle")
+    plt.plot(ps, fresh_times, ".-", label="Fresh")
+    plt.plot(ps, stale_times, ".-", label="Stale")
+    plt.legend()
+    plt.xscale("log")
+    plt.yscale("log")
+    plt.xlabel("Number of data partitions")
+    plt.ylabel("Time [s]")
+    return
+end
+
+"""
+
+Plot the average iteration latency (across realizations of the set of workers) vs. the number of workers.
+"""
+function plot_latency_vs_nworkers(;nbytes::Real=30048, nflops0::Real=6.545178710898845e10/320, ϕ=0.5, dfc_comm, dfc_comp, update_latency=0.5e-3, df=nothing)
+
+    plt.figure()
+    # empirical iteration latency
+    if !isnothing(df)
+        df = filter([:worker_flops, :nworkers] => (x, y)->isapprox(x*y, nflops0, rtol=1e-2), df)
+        df = filter(:nbytes => (x)->x==nbytes, df)
+        df = filter([:nwait, :nworkers] => (x, y)->x==round(Int, ϕ*y), df) 
+        xs = zeros(Int, 0)
+        ys = zeros(0)
+        for nworkers in unique(df.nworkers)
+            dfi = filter(:nworkers => (x)->x==nworkers, df)
+            dfi = combine(groupby(dfi, :jobid), :latency => mean => :latency)
+            push!(xs, nworkers)
+            push!(ys, mean(dfi.latency))
+        end
+        plt.plot(xs, ys, "s", label="Empiric")
+        write_table(xs, ys, "latency_vs_nworkers_$(round(nflops0, sigdigits=3))_$(round(ϕ, sigdigits=3)).csv")
+    end    
+
+    # return
+
+    # simulated iteration latency
+    nworkerss = round.(Int, 10 .^ range(log10(10), log10(1000), length=20))
+    latencies = zeros(length(nworkerss))
+    # for (i, nworkers) in enumerate(nworkerss)
+    Threads.@threads for i in 1:length(nworkerss)
+        nworkers = nworkerss[i]
+        nflops = nflops0 / nworkers
+        nwait = max(1, round(Int, ϕ*nworkers))
+        println("nworkers: $nworkers, nwait: $nwait, nflops: $(round(nflops, sigdigits=3))")
+        df = simulate_iterations(nbytes, nflops; nworkers, nwait, dfc_comm, dfc_comp, update_latency)
+        latencies[i] = mean(df.latency)
+    end    
+    plt.plot(nworkerss, latencies, "-", label="Predicted")
+    write_table(nworkerss, latencies, "latency_vs_nworkers_sim_$(round(nflops0, sigdigits=3))_$(round(ϕ, sigdigits=3)).csv")
+
+    plt.legend()
+    plt.xscale("log")
+    plt.yscale("log")
+    plt.xlabel("Number of workers")
+    plt.ylabel("Time [s]")
+    return
 end

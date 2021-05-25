@@ -152,22 +152,22 @@ And introduces:
 
 ```julia
 # AWS, 1000 genomes
-using Revise, CodedComputing; includet("src\\Analysis.jl"); using CSV, DataFrames; df = DataFrame(CSV.File("C:\\Users\\albin\\Dropbox\\PhD\\Eigenvector project\\AWS traces\\traces\\pca-1000genomes-c5.xlarge-eu-north-1.csv")); strip_columns!(df); remove_initialization_latency!(df); notes="AWS, 1000genomes";
+using Revise, CodedComputing; includet("src\\Analysis.jl"); using CSV, DataFrames; df = DataFrame(CSV.File("C:\\Users\\albin\\Dropbox\\PhD\\Eigenvector project\\AWS traces\\traces\\pca-1000genomes-c5.xlarge-eu-north-1.csv")); strip_columns!(df); fix_update_latency!(df); remove_initialization_latency!(df); notes="AWS, 1000genomes";
 
 # AWS, latency
-using Revise, CodedComputing; includet("src\\Analysis.jl"); using CSV, DataFrames; df = DataFrame(CSV.File("C:\\Users\\albin\\Dropbox\\PhD\\Eigenvector project\\AWS traces\\traces\\latency-c5.xlarge-eu-north-1.csv")); strip_columns!(df); remove_initialization_latency!(df); notes = "AWS, latency"; notes="AWS, latency";
+using Revise, CodedComputing; includet("src\\Analysis.jl"); using CSV, DataFrames; df = DataFrame(CSV.File("C:\\Users\\albin\\Dropbox\\PhD\\Eigenvector project\\AWS traces\\traces\\latency-c5.xlarge-eu-north-1.csv")); strip_columns!(df); fix_update_latency!(df); remove_initialization_latency!(df); notes = "AWS, latency"; notes="AWS, latency";
 
 # ex3, 1000 genomes
-using Revise, CodedComputing; includet("src\\Analysis.jl"); using CSV, DataFrames; df = DataFrame(CSV.File("C:\\Users\\albin\\Dropbox\\PhD\\Eigenvector project\\ex3 traces\\pca-1000genomes-ex3.rome16q.csv")); strip_columns!(df); remove_initialization_latency!(df); notes="eX3, 1000genomes";
+using Revise, CodedComputing; includet("src\\Analysis.jl"); using CSV, DataFrames; df = DataFrame(CSV.File("C:\\Users\\albin\\Dropbox\\PhD\\Eigenvector project\\ex3 traces\\pca-1000genomes-ex3.rome16q.csv")); strip_columns!(df); fix_update_latency!(df); remove_initialization_latency!(df); notes="eX3, 1000genomes";
 
 # ex3, dense equivalent
-using Revise, CodedComputing; includet("src\\Analysis.jl"); using CSV, DataFrames; df = DataFrame(CSV.File("C:\\Users\\albin\\Dropbox\\PhD\\Eigenvector project\\ex3 traces\\pca-1000genomes-dense-equiv-ex3.rome16q.csv")); strip_columns!(df); remove_initialization_latency!(df); notes="eX3, dense equiv.";
+using Revise, CodedComputing; includet("src\\Analysis.jl"); using CSV, DataFrames; df = DataFrame(CSV.File("C:\\Users\\albin\\Dropbox\\PhD\\Eigenvector project\\ex3 traces\\pca-1000genomes-dense-equiv-ex3.rome16q.csv")); strip_columns!(df); fix_update_latency!(df);remove_initialization_latency!(df); notes="eX3, dense equiv.";
 
 # Azure, dense equiv.
-using Revise, CodedComputing; includet("src\\Analysis.jl"); using CSV, DataFrames; df = DataFrame(CSV.File("C:\\Users\\albin\\Dropbox\\PhD\\Eigenvector project\\Azure traces\\pca-1000genomes-dense-equiv-azure.hpc.F2s_v2.csv")); strip_columns!(df); remove_initialization_latency!(df); notes="Azure, dense equiv.";
+using Revise, CodedComputing; includet("src\\Analysis.jl"); using CSV, DataFrames; df = DataFrame(CSV.File("C:\\Users\\albin\\Dropbox\\PhD\\Eigenvector project\\Azure traces\\pca-1000genomes-dense-equiv-azure.hpc.F2s_v2.csv")); strip_columns!(df); fix_update_latency!(df); remove_initialization_latency!(df); notes="Azure, dense equiv.";
 
 # Azure, 1000 genomes
-using Revise, CodedComputing; includet("src\\Analysis.jl"); using CSV, DataFrames; df = DataFrame(CSV.File("C:\\Users\\albin\\Dropbox\\PhD\\Eigenvector project\\Azure traces\\pca-1000genomes-azure.hpc.F2s_v2.csv")); strip_columns!(df); remove_initialization_latency!(df); df = filter(:niterations => (x)->x==100, df); notes="Azure, 1000genomes";
+using Revise, CodedComputing; includet("src\\Analysis.jl"); using CSV, DataFrames; df = DataFrame(CSV.File("C:\\Users\\albin\\Dropbox\\PhD\\Eigenvector project\\Azure traces\\pca-1000genomes-azure.hpc.F2s_v2.csv")); strip_columns!(df); remove_initialization_latency!(df); fix_update_latency!(df); df = filter(:niterations => (x)->x==100, df); notes="Azure, 1000genomes";
 
 # initialization
 using Revise # optional, needed for changes made to the source code be reflected in the REPL
