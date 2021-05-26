@@ -4,7 +4,7 @@
 
 Plot the iteration latency of workers with indices in `workers` of job `jobid`.
 """
-function plot_timeseries(df; jobid=rand(unique(df.jobid)), workers=[1, 2], separate=false)
+function plot_timeseries(df; jobid=rand(unique(df.jobid)), workers=[1, 11], separate=true)
     println("jobid: $jobid")
     df = filter(:jobid => (x)->x==jobid, df)
     plt.figure()
@@ -14,17 +14,16 @@ function plot_timeseries(df; jobid=rand(unique(df.jobid)), workers=[1, 2], separ
             # compute
             ys = df[:, "compute_latency_worker_$worker"]
             plt.plot(xs, ys, label="Worker $worker (comp.)")
-            write_table(xs[1:600], ys[1001:1600], "timeseries_compute_$(jobid)_$(worker).csv", nsamples=600)
+            write_table(xs[1:100], ys[1001:1100], "timeseries_compute_$(jobid)_$(worker).csv")
 
             # communication
             ys = df[:, "latency_worker_$worker"] .- df[:, "compute_latency_worker_$worker"]
             plt.plot(xs, ys, label="Worker $worker (comm.)")
-            write_table(xs[1:600], ys[1001:1600], "timeseries_communication_$(jobid)_$(worker).csv", nsamples=600)
-
+            write_table(xs[1:100], ys[1001:1100], "timeseries_communication_$(jobid)_$(worker).csv")
         end
         ys = df[:, "latency_worker_$worker"]
         plt.plot(xs, ys, label="Worker $worker")
-        write_table(xs[1:600], ys[1001:1600], "timeseries_$(jobid)_$(worker).csv", nsamples=600)
+        write_table(xs[1:100], ys[1001:1100], "timeseries_$(jobid)_$(worker).csv", nsamples=600)
         
     end    
     plt.grid()
@@ -490,14 +489,14 @@ end
 """
 
 Plot the average orderstats of the `iter`-th iteration computed over worker realizations.
+
+iters=10:10:100
 """
-function plot_prior_orderstats(df; nworkers, nwait=nworkers, nbytes=30048, nflops, iters=10:10:100, niidm=nothing)
+function plot_prior_orderstats(df; nworkers, nwait=nworkers, nbytes=30048, nflops, iters=100, niidm=nothing)
     df = filter(:nworkers => (x)->x==nworkers, df)
     df = filter(:nwait => (x)->x==nwait, df)
     df = filter(:nbytes => (x)->x==nbytes, df)    
     df = filter(:worker_flops => (x)->isapprox(x, nflops, rtol=1e-2), df)
-    # dfw = copy(df)
-    # df = filter([:nwait, :nworkers] => (x, y)->x==y, df)
     if size(df, 1) == 0
         error("no rows match nbytes: $nbytes and nflops: $nflops")
     end
@@ -1369,7 +1368,7 @@ end
 
 Plot the latency distribution of individual workers.
 """
-function plot_worker_latency_distribution(df; jobid=rand(unique(df.jobid)), worker_indices=[1, 10])
+function plot_worker_latency_distribution(df; jobid=rand(unique(df.jobid)), worker_indices=[1, 11])
     df = filter(:jobid => (x)->x==jobid, df)
     worker_flops = df.worker_flops[1]
     nbytes = df.nbytes[1]
@@ -1382,12 +1381,12 @@ function plot_worker_latency_distribution(df; jobid=rand(unique(df.jobid)), work
         xs = sort(df[:, "latency_worker_$(i)"])
         ys = range(0, 1, length=length(xs))
         plt.plot(xs, ys, label="Worker $i")
-        write_table(xs, ys, "./results/cdf_$(jobid)_$(i).csv")
+        write_table(xs, ys, "cdf_$(jobid)_$(i).csv")
         j = 100
         d = Distributions.fit(Gamma, xs[1:end-j])
         xs = range(quantile(d, 0.000001), quantile(d, 0.999999), length=100)
         ys = cdf.(d, xs)
-        write_table(xs, ys, "./results/cdf_fit_$(jobid)_$(i).csv")
+        write_table(xs, ys, "cdf_fit_$(jobid)_$(i).csv")
         if i == worker_indices[end]
             plt.plot(xs, ys, "k--", label="Fitted Gamma dist.")
         else
@@ -1409,14 +1408,14 @@ function plot_worker_latency_distribution(df; jobid=rand(unique(df.jobid)), work
         sort!(xs)
         ys = range(0, 1, length=length(xs))
         plt.plot(xs, ys, label="Worker $i")
-        write_table(xs, ys, "./results/cdf_communication_$(jobid)_$(i).csv")
+        write_table(xs, ys, "cdf_communication_$(jobid)_$(i).csv")
         # plt.hist(xs, 200, density=true)
         # j = round(Int, 0*length(xs))
         j = 100
         d = Distributions.fit(Gamma, xs[1:end-j])
         xs = range(quantile(d, 0.000001), quantile(d, 0.999999), length=100)
         ys = cdf.(d, xs)
-        write_table(xs, ys, "./results/cdf_fit_compute_$(jobid)_$(i).csv")
+        write_table(xs, ys, "cdf_fit_compute_$(jobid)_$(i).csv")
         if i == worker_indices[end]
             plt.plot(xs, ys, "k--", label="Fitted Gamma dist.")
         else
@@ -1437,13 +1436,13 @@ function plot_worker_latency_distribution(df; jobid=rand(unique(df.jobid)), work
         xs = sort(df[:, "compute_latency_worker_$(i)"])
         ys = range(0, 1, length=length(xs))
         plt.plot(xs, ys, label="Worker $i")
-        write_table(xs, ys, "./results/cdf_compute_$(jobid)_$(i).csv")
+        write_table(xs, ys, "cdf_compute_$(jobid)_$(i).csv")
         # j = round(Int, 0.01*length(xs))
         j = 0
         d = Distributions.fit(Gamma, xs[1:end-j])
         xs = range(quantile(d, 0.000001), quantile(d, 0.999999), length=100)
         ys = cdf.(d, xs)
-        write_table(xs, ys, "./results/cdf_fit_communication_$(jobid)_$(i).csv")
+        write_table(xs, ys, "cdf_fit_communication_$(jobid)_$(i).csv")
         if i == worker_indices[end]
             plt.plot(xs, ys, "k--", label="Fitted Gamma dist.")
         else
@@ -1629,7 +1628,8 @@ function plot_mean_var_distribution(dfg)
     plt.yscale("log")    
 
     # compute latency
-    dfg = filter(:worker_flops => (x)->isapprox(x, 2.840789371049846e6, rtol=1e-2), dfg)
+    # 2.840789371049846e6
+    dfg = filter(:worker_flops => (x)->isapprox(x, 2.84e6, rtol=1e-2), dfg)
     nflops_all = sort!(unique(dfg.worker_flops))
 
     ## mean cdf
@@ -2043,7 +2043,7 @@ end
 
 Plot the average iteration latency (across realizations of the set of workers) vs. the number of workers.
 """
-function plot_latency_vs_nworkers(;nbytes::Real=30048, nflops0::Real=6.545178710898845e10/320, ϕ=0.5, dfc_comm, dfc_comp, update_latency=0.5e-3, df=nothing)
+function plot_latency_vs_nworkers(;nbytes::Real=30048, nflops0::Real=6.545178710898845e10/80, ϕ=6/72, dfc_comm, dfc_comp, update_latency=0.5e-3, df=nothing)
 
     plt.figure()
     # empirical iteration latency
@@ -2066,7 +2066,7 @@ function plot_latency_vs_nworkers(;nbytes::Real=30048, nflops0::Real=6.545178710
     # return
 
     # simulated iteration latency
-    nworkerss = round.(Int, 10 .^ range(log10(10), log10(1000), length=20))
+    nworkerss = round.(Int, 10 .^ range(log10(10), log10(1000), length=10))
     latencies = zeros(length(nworkerss))
     # for (i, nworkers) in enumerate(nworkerss)
     Threads.@threads for i in 1:length(nworkerss)
