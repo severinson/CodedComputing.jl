@@ -492,7 +492,7 @@ Plot the average orderstats of the `iter`-th iteration computed over worker real
 
 iters=10:10:100
 """
-function plot_prior_orderstats(df; nworkers, nwait=nworkers, nbytes=30048, nflops, iters=100, niidm=nothing)
+function plot_prior_orderstats(df; nworkers, nwait=nworkers, nbytes=30048, nflops, iters=10, niidm=nothing)
     df = filter(:nworkers => (x)->x==nworkers, df)
     df = filter(:nwait => (x)->x==nwait, df)
     df = filter(:nbytes => (x)->x==nbytes, df)    
@@ -1758,6 +1758,11 @@ function plot_mean_var_distribution(dfg; nflops, nbytes=30048, prune=0.03)
     plt.xlabel("Avg. comm. latency")
     plt.ylabel("Comm. latency var")
     plt.yscale("log")    
+
+    # compute latency
+    # 2.840789371049846e6
+    dfg = filter(:worker_flops => (x)->isapprox(x, 4.54e8, rtol=1e-2), dfg)
+    nflops_all = sort!(unique(dfg.worker_flops))
 
     ## mean cdf
     plt.subplot(3, 3, 7)
