@@ -53,7 +53,7 @@ end
 Compute the explained variance (here referred to as mse). `Xnorm=104444.37027911078` is correct 
 for the 1000 Genomes dataset.
 """
-function compute_mse!(mses, iterates, Xs; mseiterations=0, Xnorm=104444.37027911078)
+function compute_mse!(mses, iterates, Xs; mseiterations=20, Xnorm=104444.37027911078)
     if iszero(mseiterations)
         return mses
     end
@@ -148,7 +148,7 @@ end
 Return a vector composed of the number of flops performed by each worker and iteration. The density
 of the 1000 Genomes data matrix is `0.05360388070027386`.
 """
-function worker_flops_from_df(df; density=1)
+function worker_flops_from_df(df; density=0.05360388070027386)
     nflops = float.(df.nrows)
     nflops ./= df.nworkers
     nflops .*= df.nreplicas
@@ -183,7 +183,7 @@ end
 
 Read all output files from `dir` and write summary statistics (e.g., iteration time and convergence) to DataFrames.
 """
-function parse_pca_files(;dir::AbstractString, prefix="output", dfname="df.csv", reparse=false, Xs=nothing, mseiterations=0)
+function parse_pca_files(;dir::AbstractString, prefix="output", dfname="df.csv", reparse=false, Xs=nothing, mseiterations=20)
 
     # process output files
     filenames = glob("$(prefix)*.h5", dir)
@@ -213,7 +213,7 @@ Run `parse_pca_files` in a loop.
 function parse_loop(args...; kwargs...)
     while true
         GC.gc()
-        parse_benchmark_files(args...; kwargs...)        
+        parse_pca_files(args...; kwargs...)
         sleep(60)        
     end
 end
