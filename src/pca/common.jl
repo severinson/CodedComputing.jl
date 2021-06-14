@@ -57,18 +57,6 @@ function parse_commandline(isroot::Bool)
             default = 10
             arg_type = Int            
             range_tester = (x) -> x >= 1            
-        "--nreplicas"
-            help = "Number of replicas of each data partition"
-            default = 1
-            arg_type = Int
-            range_tester = (x) -> x >= 1            
-        "--nwait"
-            help = "Number of replicas to wait for in each iteration (defaults to all replicas)"
-            arg_type = Int
-            range_tester = (x) -> x >= 1
-        "--kickstart"
-            help = "Wait for all partitions in the first iteration"
-            action = :store_true
         "--inputdataset"
             help = "Input dataset name"
             default = "X"
@@ -92,6 +80,10 @@ function parse_commandline(isroot::Bool)
 
     # common parsing
     parsed_args = parse_args(s, as_symbols=true)
+
+    # store the number of workers
+    nworkers = MPI.Comm_size(comm) - 1
+    parsed_args[:nworkers] = nworkers    
 
     # optional implementation-specific parsing
     if @isdefined update_parsed_args!
@@ -169,18 +161,9 @@ function coordinator_main()
 
     # setup
     parsed_args = parse_commandline(isroot)
-    nworkers = MPI.Comm_size(comm) - 1
-    parsed_args[:nworkers] = nworkers
     niterations::Int = parsed_args[:niterations]
-    niterations > 0 || throw(DomainError(niterations, "niterations is $niterations, but must be non-negative"))
     saveiterates::Bool = parsed_args[:saveiterates]
-    nreplicas::Int = parsed_args[:nreplicas]
-    mod(nworkers, nreplicas) == 0 || throw(ArgumentError("nworkers is $nworkers, but must be divisible by nreplicas"))
-    npartitions = div(nworkers, nreplicas)
-    nwait::Int = isnothing(parsed_args[:nwait]) ? npartitions : parsed_args[:nwait]
-    parsed_args[:nwait] = nwait
-    0 < nwait <= npartitions || throw(DomainError(nwait, "nwait is $nwait, but must be in [1, npartitions]"))
-    println("Job started with nwait: $nwait, npartitions: $npartitions, niterations: $niterations")
+    nworkers::Int = parsed_args[:nworkers]
 
     # worker pool and communication buffers
     pool = MPIAsyncPool(nworkers)
@@ -217,23 +200,8 @@ function coordinator_main()
     # latency of the iterate update computed by the coordinator
     ts_update = zeros(niterations)
 
-    # function called inside kmap! whenever a result is received from a worker
-    # to determine if a sufficient number of workers have returned
-    # kmap! returns once fwait returns true
-    function fwait(epoch, repochs)
-        length(repochs) == nworkers || throw(DomainError(nworkers, "repochs must have length nworkers"))
-        rreplicas = 0 # number of received replicas
-        for partition in 1:npartitions
-            for replica in 1:nreplicas
-                i = (partition-1)*nreplicas + replica # worker index
-                if repochs[i] == epoch
-                    rreplicas += 1
-                    break
-                end
-            end
-        end
-        rreplicas >= nwait
-    end
+    # 2-argument fwait needed for asyncmap!
+    f = (epoch, repochs) -> fwait(epoch, repochs; parsed_args...)
 
     # run 1 dummy iteration, where we wait for all workers, to trigger compilation
     # (this is only necessary when benchmarking)
@@ -257,14 +225,10 @@ function coordinator_main()
     # (this is only necessary when benchmarking)
     MPI.Barrier(comm)
 
-    # if kickstart is enabled, wait for all partitions in the first iteration
-    nwait_prev = nwait
-    nwait = parsed_args[:kickstart] ? npartitions : nwait
-
     # first (real) iteration (initializes state)
     epoch = 1
     ts_compute[epoch] = @elapsed begin
-        repochs = asyncmap!(pool, sendbuf, recvbuf, isendbuf, irecvbuf, comm, nwait=fwait, epoch=epoch, tag=data_tag)
+        repochs = asyncmap!(pool, sendbuf, recvbuf, isendbuf, irecvbuf, comm, nwait=f, epoch=epoch, tag=data_tag)
     end
     responded[:, epoch] .= repochs
     latency[:, epoch] .= pool.latency
@@ -279,13 +243,10 @@ function coordinator_main()
         iterates[:, :, epoch] .= V
     end
 
-    # reset nwait (we changed it above if kickstart was enabled)
-    nwait = nwait_prev
-
     # remaining iterations
     for epoch in 2:niterations
         ts_compute[epoch] = @elapsed begin
-            repochs = asyncmap!(pool, sendbuf, recvbuf, isendbuf, irecvbuf, comm, nwait=fwait, epoch=epoch, tag=data_tag)
+            repochs = asyncmap!(pool, sendbuf, recvbuf, isendbuf, irecvbuf, comm, nwait=f, epoch=epoch, tag=data_tag)
         end
         responded[:, epoch] .= repochs
         latency[:, epoch] .= pool.latency

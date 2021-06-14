@@ -27,12 +27,48 @@ function update_argsettings!(s::ArgParseSettings)
         "--nostale"
             help = "If set, do not store stale gradients (to conform with SAG)"
             action = :store_true
+        "--nreplicas"
+            help = "Number of replicas of each data partition"
+            default = 1
+            arg_type = Int
+            range_tester = (x) -> x >= 1            
+        "--nwait"
+            help = "Number of replicas to wait for in each iteration (defaults to all replicas)"
+            arg_type = Int
+            range_tester = (x) -> x >= 1
+        "--kickstart"
+            help = "Wait for all partitions in the first iteration"
+            action = :store_true            
     end
 end
 
 function update_parsed_args!(s::ArgParseSettings, parsed_args)
     parsed_args[:algorithm] = "pca.jl"
+    nworkers::Int = parsed_args[:nworkers]
+    nreplicas::Int = parsed_args[:nreplicas]
+    mod(nworkers, nreplicas) == 0 || throw(ArgumentError("nworkers is $nworkers, but must be divisible by nreplicas"))
+    npartitions = div(nworkers, nreplicas)
+    parsed_args[:nwait] = isnothing(parsed_args[:nwait]) ? npartitions : parsed_args[:nwait]
     parsed_args
+end
+
+"""
+
+Called inside `asyncmap!` to determine if enough workers have responded. Returns `true` if at 
+least `nwait` workers have responded and `false` otherwise.
+"""
+function fwait(epoch, repochs; nworkers, nwait, kickstart, kwargs...)
+    length(repochs) == nworkers || throw(DomainError(nworkers, "repochs must have length nworkers"))
+    0 < nwait <= nworkers || throw(ArgumentError("nwait is $nwait, but must be in [1, npartitions]"))
+    nrec = 0    
+    for repoch in repochs
+        nrec += repoch == epoch
+    end
+    if epoch == 1 && kickstart
+        return nrec == nwait
+    else
+        return nrec >= nwait
+    end
 end
 
 function problem_size(filename::String, dataset::String)
