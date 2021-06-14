@@ -103,26 +103,14 @@ function worker_loop(localdata, recvbuf, sendbuf; kwargs...)
     crreq = MPI.Irecv!(zeros(1), root, control_tag, comm)
 
     # first iteration (initializes state)
-    # the first iteration is a dummy iteration to trigger compilation
-    # (only necessary when benchmarking)
     rreq = MPI.Irecv!(recvbuf, root, data_tag, comm)
     index, _ = MPI.Waitany!([crreq, rreq])
     if index == 1 # exit message on control channel
         return
     end
-    # trigger compilation for both version of worker_task!
     t = @elapsed state = worker_task!(recvbuf, sendbuf, localdata; kwargs...)
-    t = @elapsed state = worker_task!(recvbuf, sendbuf, localdata; state, kwargs...)    
     reinterpret(Float64, view(sendbuf, 1:COMMON_BYTES))[1] = t # send the recorded compute latency to the coordinator    
     MPI.Isend(sendbuf, root, data_tag, comm)
-
-    # manually call the GC now to avoid pauses later during execution
-    # (this is only necessary when benchmarking)
-    GC.gc()    
-
-    # ensure all workers have finished compiling before starting the computation
-    # (this is only necessary when benchmarking)
-    MPI.Barrier(comm)
 
     # remaining iterations
     while true
@@ -144,6 +132,7 @@ function worker_main()
     try
         localdata, recvbuf, sendbuf = worker_setup(rank, nworkers; parsed_args...)
         GC.gc()
+        MPI.Barrier(comm)        
         worker_loop(localdata, recvbuf, sendbuf; parsed_args...)
     catch e
         print(Base.stderr, "rank $rank exiting due to $e")
@@ -164,6 +153,7 @@ function coordinator_main()
     niterations::Int = parsed_args[:niterations]
     saveiterates::Bool = parsed_args[:saveiterates]
     nworkers::Int = parsed_args[:nworkers]
+    println("Coordinator has started")
 
     # worker pool and communication buffers
     pool = MPIAsyncPool(nworkers)
@@ -203,20 +193,6 @@ function coordinator_main()
     # 2-argument fwait needed for asyncmap!
     f = (epoch, repochs) -> fwait(epoch, repochs; parsed_args...)
 
-    # run 1 dummy iteration, where we wait for all workers, to trigger compilation
-    # (this is only necessary when benchmarking)
-    epoch = 1
-    repochs = asyncmap!(pool, sendbuf, recvbuf, isendbuf, irecvbuf, comm, nwait=nworkers, epoch=epoch, tag=data_tag)
-    state = coordinator_task!(deepcopy(V), deepcopy(∇), recvbufs, deepcopy(sendbuf), epoch, repochs; parsed_args...)
-    GC.gc() # reduce the probability that we run out of memory due to making too many copies
-    epoch = 2
-    repochs .= epoch
-    state = coordinator_task!(deepcopy(V), deepcopy(∇), recvbufs, deepcopy(sendbuf), epoch, repochs; state, parsed_args...) 
-    state = nothing # so that we can release the memory
-
-    # create a new pool to reset the epochs
-    pool = MPIAsyncPool(nworkers)
-
     # manually call the GC now to avoid pauses later during execution
     # (this is only necessary when benchmarking)
     GC.gc()
@@ -225,7 +201,7 @@ function coordinator_main()
     # (this is only necessary when benchmarking)
     MPI.Barrier(comm)
 
-    # first (real) iteration (initializes state)
+    # first iteration (initializes state)
     epoch = 1
     ts_compute[epoch] = @elapsed begin
         repochs = asyncmap!(pool, sendbuf, recvbuf, isendbuf, irecvbuf, comm, nwait=f, epoch=epoch, tag=data_tag)
