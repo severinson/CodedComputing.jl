@@ -68,6 +68,9 @@ function parse_commandline(isroot::Bool)
         "--saveiterates"
             help = "Save all intermediate iterates to the output file"
             action = :store_true
+        "--enablegc"
+            help = "Enable garbage collection while running the computation (defaults to disabled)"
+            action = :store_true
     end
 
     # optionally add implementation-specific arguments
@@ -129,6 +132,7 @@ function worker_main()
     try
         localdata, recvbuf, sendbuf = worker_setup(rank, nworkers; parsed_args...)
         GC.gc()
+        GC.enable(parsed_args[:enablegc])
         MPI.Barrier(comm)        
         worker_loop(localdata, recvbuf, sendbuf; parsed_args...)
     catch e
@@ -150,7 +154,7 @@ function coordinator_main()
     niterations::Int = parsed_args[:niterations]
     saveiterates::Bool = parsed_args[:saveiterates]
     nworkers::Int = parsed_args[:nworkers]
-    println("Coordinator has started")    
+    println("Coordinator has started")
 
     # create the output directory if it doesn't exist, and make sure we can write to the output file
     mkpath(dirname(parsed_args[:outputfile]))
@@ -197,6 +201,7 @@ function coordinator_main()
     # manually call the GC now to avoid pauses later during execution
     # (this is only necessary when benchmarking)
     GC.gc()
+    GC.enable(parsed_args[:enablegc])
 
     # ensure all workers have finished compiling before starting the computation
     # (this is only necessary when benchmarking)
