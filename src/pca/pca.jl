@@ -1,4 +1,4 @@
-using ArgParse, Random, SparseArrays, H5Sparse
+using ArgParse, Random, SparseArrays, H5Sparse, SAG
 
 const METADATA_BYTES = 6
 const ELEMENT_TYPE = Float32
@@ -190,6 +190,7 @@ function worker_task!(recvbuf, sendbuf, localdata; state=nothing, nsubpartitions
     Wv = view(W, 1:size(Xw, 2), :)
     mul!(Wv, Xw', V)
     mul!(V, Xw, Wv)
+    V .*= -1
     
     # populate the send buffer
     metadata = reinterpret(UInt16, metadata_view(sendbuf))
@@ -278,12 +279,11 @@ function update_gradient_vr!(∇, recvbufs, epoch::Integer, repochs::Vector{<:In
     # store the previously computed partial gradients
     if isnothing(state)
         uepochs = zeros(Int, npartitions)
-        partition_worker_map = zeros(Int, npartitions)
-        G = copy(∇)
-        ∇s = [zeros(eltype(∇), size(∇)...) for _ in 1:npartitions]
+        worker_from_partition = zeros(Int, npartitions)
+        sg = StochasticGradient(eltype(∇), npartitions, size(∇))
     else
-        uepochs, partition_worker_map, G, ∇s = state
-        partition_worker_map .= 0
+        uepochs, worker_from_partition, sg = state
+        worker_from_partition .= 0
     end    
 
     # iterate over the received partial gradients to record which of them are newer than what we currently have
@@ -326,52 +326,25 @@ function update_gradient_vr!(∇, recvbufs, epoch::Integer, repochs::Vector{<:In
         end
 
         # record which worker has updates for which partition and how new it is
-        partition_worker_map[partition_index] = worker_index
+        worker_from_partition[partition_index] = worker_index
         uepochs[partition_index] = repochs[worker_index]        
     end
 
-    # number of new subgradients received in this iteration
-    nupdated = sum(!iszero, partition_worker_map)
+    # update the gradient with the received sub-gradients
+    partition_indices = [i for i in 1:npartitions if !iszero(worker_from_partition[i])]
+    worker_indices = [worker_from_partition[i] for i in partition_indices]
+    ∇s = [reshape(data_view(recvbufs[worker_index]), size(∇)...) for worker_index in worker_indices]
+    update!(sg, zip(partition_indices, ∇s))
 
-    # iterate over the partitions to update the locally stored partial gradients
-    for partition_index in 1:npartitions
-        worker_index = partition_worker_map[partition_index]
-        if iszero(worker_index) # zero indicates no update for this partition
-            continue
-        end        
-        ∇w = reshape(data_view(recvbufs[worker_index]), size(∇)...)
-
-        # there are two options for computing the new gradient sum
-        # 1. set G to 0 and compute the sum anew over all ∇s
-        # 2. for each new subgradient, subtract the previously stored subgradient and add the new one
-        # option 1 requires npartitions+1 operations and option 2 requires two operations per updated subgradient
-        # this implementation picks the option requiring fewer operations
-        if 2*nupdated < npartitions + 1
-            # notice the flipped signs (has to do with how the worker task is implemented)
-            G .+= ∇s[partition_index] # remove the previous subgradient
-            G .-= ∇w # add the new subgradient
-        end
-        ∇s[partition_index] .= ∇w # store the new subgradient    
+    # scale the gradient by the number of initialized sub-gradients
+    f = initialized_fraction(sg)
+    if isone(f)
+        ∇ .= sg
+    else
+        ∇ .= sg ./ f
     end
 
-    # option 1 gradient update (if we didn't do option 2 above)
-    if !(2*nupdated < npartitions + 1)
-        G .= 0
-        for ∇i in ∇s
-            G .-= ∇i
-        end
-    end
-
-    # scale the gradient by the number of non-zero partial gradients,
-    # important for the first few iterations when some entries of ∇s may be zero
-    ∇ .= G
-    s = npartitions / (npartitions - sum(iszero, uepochs))
-    if !isone(s) && !isinf(s)
-        ∇ .*= s
-    end
-
-    # uepochs, ∇s
-    uepochs, partition_worker_map, G, ∇s    
+    uepochs, worker_from_partition, sg
 end
 
 update_gradient!(args...; variancereduced::Bool, kwargs...) = variancereduced ? update_gradient_vr!(args...; kwargs...) : update_gradient_sgd!(args...; kwargs...)

@@ -16,6 +16,7 @@ MKLSparse = "0c723cd3-b8cd-5d40-b370-ba682dde9aae"
 MPI = "da04e1cc-30fd-572f-bb4f-1f8673147195"
 MPIAsyncPools = "71dbed6d-20b0-48c6-bb22-c3e423edce76"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+SAG = "b8eb5f15-4717-47ec-b8a0-405cbe12bc8c"
 SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 
 [compat]
