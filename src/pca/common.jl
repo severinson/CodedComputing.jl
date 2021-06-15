@@ -126,6 +126,10 @@ function worker_loop(localdata, recvbuf, sendbuf; kwargs...)
     return
 end
 
+"""
+
+Main function run by each worker.
+"""
 function worker_main()
     nworkers = MPI.Comm_size(comm) - 1
     parsed_args = parse_commandline(isroot)
@@ -141,12 +145,20 @@ function worker_main()
     end
 end
 
+"""
+
+Send a stop signal to each worker.
+"""
 function shutdown(pool::MPIAsyncPool)
     for i in pool.ranks
         MPI.Isend(zeros(1), i, control_tag, comm)
     end
 end
 
+"""
+
+Main loop run by the coordinator.
+"""
 function coordinator_main()
 
     # setup
@@ -158,7 +170,7 @@ function coordinator_main()
 
     # create the output directory if it doesn't exist, and make sure we can write to the output file
     mkpath(dirname(parsed_args[:outputfile]))
-    close(h5open(parsed_args[:outputfile], "w"))    
+    close(h5open(parsed_args[:outputfile], "w"))
 
     # worker pool and communication buffers
     pool = MPIAsyncPool(nworkers)
@@ -180,26 +192,17 @@ function coordinator_main()
         iterates = zeros(size(V)..., 0)
     end
 
-    # store which workers responded in each iteration
-    responded = zeros(Int, nworkers, niterations)
-
-    # total per-worker latency (recorded by the coordinator)
-    latency = zeros(nworkers, niterations)
-
-    # per-worker compute latency (recorded by the workers and send to the coordinator)
-    compute_latency = zeros(nworkers, niterations)
-
-    # total latency until results have been received from enough workers
-    ts_compute = zeros(niterations)
-
-    # latency of the iterate update computed by the coordinator
-    ts_update = zeros(niterations)
+    # benchmark/analysis data
+    responded = zeros(Int, nworkers, niterations)       # which workers respond in each iteration
+    latency = zeros(nworkers, niterations)              # per-iteration latency of each worker
+    compute_latency = zeros(nworkers, niterations)      # per-iteration computation latency of each worker
+    ts_compute = zeros(niterations)                     # overall per-iteration latency
+    ts_update = zeros(niterations)                      # per-iteration latency of the coordinator update
 
     # 2-argument fwait needed for asyncmap!
     f = (epoch, repochs) -> fwait(epoch, repochs; parsed_args...)
 
-    # manually call the GC now to avoid pauses later during execution
-    # (this is only necessary when benchmarking)
+    # manually call the GC now, and optionally turn off GC, to avoid pauses later during execution
     GC.gc()
     GC.enable(parsed_args[:enablegc])
 
@@ -244,10 +247,13 @@ function coordinator_main()
         end
     end
 
+    # signal all workers to stop
     shutdown(pool)
+
+    # write output
     h5open(parsed_args[:outputfile], "w") do fid
 
-        # write parameters to the output file
+        # write program parameters
         for (key, val) in parsed_args
             if isnothing(val)
                 continue
@@ -255,7 +261,7 @@ function coordinator_main()
             fid["parameters/$key"] = val
         end
 
-        # write the computed principal components
+        # write the computation output
         fid[parsed_args[:outputdataset]] = V
 
         # optionally save all iterates
