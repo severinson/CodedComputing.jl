@@ -1,4 +1,4 @@
-using ArgParse, Random, SparseArrays
+using ArgParse, Random, SparseArrays, H5Sparse
 
 const METADATA_BYTES = 6
 const ELEMENT_TYPE = Float32
@@ -23,7 +23,7 @@ function update_argsettings!(s::ArgParseSettings)
             help = "Gradient descent step size"
             arg_type = Float64
             default = 1.0
-            range_tester = (x) -> x > 0 
+            range_tester = (x) -> x > 0
         "--variancereduced"
             help = "Compute a variance-reduced gradient in each iteration"
             action = :store_true
@@ -87,10 +87,10 @@ function problem_size(filename::String, dataset::String)
     end
 end
 
-function partition_samples(X::AbstractMatrix, nsubpartitions::Integer)
+function partition_samples(X::H5SparseMatrixCSC, nsubpartitions::Integer)
     nsamples = size(X, 2)
     dividers = round.(Int, range(1, nsamples+1, length=nsubpartitions+1))
-    [X[:, dividers[i]:(dividers[i+1]-1)] for i in 1:nsubpartitions]
+    [sparse(X[:, dividers[i]:(dividers[i+1]-1)]) for i in 1:nsubpartitions]
 end
 
 function partition_samples(X::Matrix, nsubpartitions::Integer)
@@ -115,7 +115,7 @@ function read_localdata(i::Integer, nworkers::Integer; inputfile::String, inputd
         if flag # sparse data
             il = floor(Int, (partition_index - 1)/npartitions*nsamples + 1)
             iu = floor(Int, partition_index/npartitions*nsamples)
-            X_sparse = h5readcsc(fid, inputdataset, il, iu)
+            X_sparse = H5SparseMatrixCSC(fid, inputdataset)
             return partition_samples(X_sparse, nsubpartitions), dimension, nsamples
         else # dense data
             il = floor(Int, (partition_index - 1)/npartitions*nsamples + 1)
