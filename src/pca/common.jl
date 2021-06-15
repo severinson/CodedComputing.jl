@@ -150,7 +150,11 @@ function coordinator_main()
     niterations::Int = parsed_args[:niterations]
     saveiterates::Bool = parsed_args[:saveiterates]
     nworkers::Int = parsed_args[:nworkers]
-    println("Coordinator has started")
+    println("Coordinator has started")    
+
+    # create the output directory if it doesn't exist, and make sure we can write to the output file
+    mkpath(dirname(parsed_args[:outputfile]))
+    close(h5open(parsed_args[:outputfile], "w"))    
 
     # worker pool and communication buffers
     pool = MPIAsyncPool(nworkers)
