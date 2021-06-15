@@ -6,6 +6,9 @@ const CANARY_VALUE = UInt16(2^16 - 1)
 
 function update_argsettings!(s::ArgParseSettings)
     @add_arg_table s begin
+        "--iteratedataset"
+            help = "Initial iterate dataset name (an initial iterate is selected at random if not provided)"
+            arg_type = String
         "--ncomponents"
             help = "Number of principal components to compute"
             required = true

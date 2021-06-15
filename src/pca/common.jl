@@ -56,17 +56,14 @@ function parse_commandline(isroot::Bool)
             help = "Number of iterations to run the algorithm for"
             default = 10
             arg_type = Int            
-            range_tester = (x) -> x >= 1            
+            range_tester = (x) -> x >= 1
         "--inputdataset"
             help = "Input dataset name"
             default = "X"
-            arg_type = String            
+            arg_type = String
         "--outputdataset"
             help = "Output dataset name"
             default = "V"
-            arg_type = String
-        "--iteratedataset"
-            help = "Initial iterate dataset name (an initial iterate is selected at random if not provided)"
             arg_type = String
         "--saveiterates"
             help = "Save all intermediate iterates to the output file"
