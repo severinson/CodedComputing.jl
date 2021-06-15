@@ -1,4 +1,3 @@
-using SparseArrays
 export h5writecsc, h5appendcsc, h5readcsc, isvalidh5csc, h5permutecsc, h5mulcsc, h5size
 
 """
