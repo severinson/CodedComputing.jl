@@ -265,6 +265,15 @@ function coordinator_main()
 end
 
 if isroot
+
+    # check that all necessary functions are defined
+    (@isdefined coordinator_setup) || error("function coordinator_setup must be defined")
+    (@isdefined coordinator_task!) || error("function coordinator_task! must be defined")    
+    (@isdefined worker_setup) || error("function worker_setup must be defined")    
+    (@isdefined worker_task!) || error("function worker_task! must be defined")
+    (@isdefined fwait) || error("function fwait must be defined")
+
+    # start the coordinator loop
     coordinator_main()
 else
     # try/catch to eliminate stacktrace
@@ -275,6 +284,5 @@ else
         printstyled(stderr,sprint(showerror,e), color=:light_red)
         println(stderr)
     end
-    # worker_main()
 end
 MPI.Barrier(comm)
