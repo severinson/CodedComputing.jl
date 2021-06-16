@@ -262,7 +262,7 @@ function update_gradient_sgd!(∇, recvbufs, epoch::Integer, repochs::Vector{<:I
         # add the sub-gradient computed by this worker
         uepochs[partition_index] = epoch
         Vw = reshape(data_view(recvbufs[worker_index]), size(∇)...)
-        ∇ .-= Vw
+        ∇ .+= Vw
         nresults += 1
     end
 
@@ -354,10 +354,10 @@ end
 update_gradient!(args...; variancereduced::Bool, kwargs...) = variancereduced ? update_gradient_vr!(args...; kwargs...) : update_gradient_sgd!(args...; kwargs...)
 
 function update_iterate!(V, ∇; state=nothing, stepsize, kwargs...)
-    size(V) == size(∇) || throw(DimensionMismatch("V has dimensions $(size(B)), but ∇ has dimensions $(size(∇))"))
+    size(V) == size(∇) || throw(DimensionMismatch("V has dimensions $(size(V)), but ∇ has dimensions $(size(∇))"))
     V .-= stepsize .* (∇ .+ V)
     orthogonal!(V)
-    state
+    return
 end
 
 function coordinator_task!(V, ∇, recvbufs, sendbuf, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, kwargs...)
