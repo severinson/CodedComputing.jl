@@ -225,7 +225,8 @@ function coordinator_main()
         state = coordinator_task!(V, ∇, recvbufs, sendbuf, epoch, repochs; parsed_args...)    
     end
     if saveiterates
-        iterates[:, :, epoch] .= V
+        ndims = length(size(V))
+        selectdim(iterates, ndims+1, epoch) .= V
     end
 
     # remaining iterations
@@ -243,7 +244,8 @@ function coordinator_main()
             state = coordinator_task!(V, ∇, recvbufs, sendbuf, epoch, repochs; state, parsed_args...)    
         end
         if saveiterates
-            iterates[:, :, epoch] .= V
+            ndims = length(size(V))
+            selectdim(iterates, ndims+1, epoch) .= V
         end
     end
 
