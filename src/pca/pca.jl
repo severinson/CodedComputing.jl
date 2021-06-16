@@ -74,14 +74,20 @@ function fwait(epoch, repochs; nworkers, nwait, kickstart, kwargs...)
     end
 end
 
+"""
+
+Return the size of the data matrix.
+"""
 function problem_size(filename::String, dataset::String)
     HDF5.ishdf5(filename) || throw(ArgumentError("$filename isn't an HDF5 file"))
     h5open(filename, "r") do fid
         dataset in keys(fid) || throw(ArgumentError("$dataset is not in $fid"))
-        flag, _ = isvalidh5csc(fid, dataset)
-        if flag
-            g = fid[dataset]
-            return g["m"][], g["n"][]
+        try
+            return size(H5SparseMatrixCSC(fid, dataset))
+        catch e
+            if !(isa(e, ArgumentError) || isa(e, KeyError))
+                rethrow()
+            end
         end
         return size(fid[dataset])
     end
