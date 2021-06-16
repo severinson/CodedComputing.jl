@@ -14,7 +14,20 @@ function load_pca_iterates(outputfile::AbstractString, outputdataset::AbstractSt
             @test fid[outputdataset][:, :] ≈ fid["iterates"][:, :, end]
             return [fid["iterates"][:, :, i] for i in 1:size(fid["iterates"], 3)]
         else # return only the final iterate if intermediate iterates aren't stored
-            return [fid[outpudataset][:, :]]
+            return [fid[outputdataset][:, :]]
+        end
+    end
+end
+
+function load_logreg_iterates(outputfile::AbstractString, outputdataset::AbstractString)
+    @test HDF5.ishdf5(outputfile)
+    h5open(outputfile, "r") do fid
+        @test outputdataset in keys(fid)
+        if "iterates" in keys(fid) && length(size(fid["iterates"])) == 2 && size(fid["iterates"], 2) > 0
+            @test fid[outputdataset][:] ≈ fid["iterates"][:, end]
+            return [fid["iterates"][:, i] for i in 1:size(fid["iterates"], 2)]
+        else # return only the final iterate if intermediate iterates aren't stored
+            return [fid[outputdataset][:]]
         end
     end
 end
@@ -27,7 +40,7 @@ function test_pca_iterates(;X::AbstractMatrix, niterations::Integer, ncomponents
     @test length(Vs) == niterations
     @test all((V)->size(V)==(dimension, ncomponents), Vs)
     @test Vs[end]'*Vs[end] ≈ I
-    @test isapprox(fs[end], ev, atol=atol)
+    @test fs[end] < ev || isapprox(fs[end], ev, atol=atol)
     return Vs, fs
 end
 
@@ -146,6 +159,77 @@ end
     ```))
     df = df_from_latency_file(outputfile)
     @test all(diff(df.timestamp) .>= timeout)
+end
+
+function logreg_loss(v, X, b)
+    rv = 0.0
+    for i in 1:length(b)
+        rv += log(1 + exp(-b[i]*(v[1]+dot(X[:, i], view(v, 2:length(v))))))
+    end
+    rv
+end
+
+@testset "logreg.jl" begin
+    kernel = "../src/pca/logreg.jl"    
+
+    # input data set with known optimal solution
+    X = [1.444786643000158 0.49236792885913283 -0.53258473265429 0.05476455630673194 -1.3473893605265843; 0.48932299731783646 2.0708445447107926 1.2414596020757043 0.9131934117095984 -0.15692043560721075; 0.7774625331093794 0.7234405608945721 -0.037446104354257874 -1.1104987697394342 1.354975413199728]
+    b = [-1, 1, -1, -1, 1]
+    v_opt = [-1.09844796637643, -0.8475330987445191, 0.5529125288210748, 1.3452124585890295]
+    opt = logreg_loss(v_opt, X, b)
+    m, n = size(X)
+    λ = 1 / n
+
+    # write test problem to disk
+    inputfile = tempname()    
+    inputdataset = "X"
+    outputdataset = "V"
+    labeldataset = "b"
+    h5open(inputfile, "w") do file
+        file[inputdataset] = X
+        file[labeldataset] = b
+    end
+
+    # GD
+    nworkers = 2
+    niterations = 100
+    stepsize = 0.1
+    outputfile = tempname()
+    mpiexec(cmd -> run(```
+        $cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile        
+        --inputdataset $inputdataset
+        --outputdataset $outputdataset
+        --niterations $niterations
+        --saveiterates
+        --lambda $λ
+        ```))
+    vs = load_logreg_iterates(outputfile, outputdataset)
+    v = vs[end]
+    f = logreg_loss(v, X, b)
+    @test f < opt || isapprox(f, opt, rtol=1e-2)
+
+    # DSAG
+    nworkers = 2
+    nwait = 1
+    niterations = 100
+    stepsize = 0.1
+    nsubpartitions = 2
+    outputfile = tempname()
+    mpiexec(cmd -> run(```
+        $cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile        
+        --inputdataset $inputdataset
+        --nwait $nwait
+        --variancereduced
+        --nsubpartitions $nsubpartitions
+        --outputdataset $outputdataset
+        --niterations $niterations
+        --saveiterates
+        --lambda $λ
+        ```))
+    vs = load_logreg_iterates(outputfile, outputdataset)
+    v = vs[end]
+    f = logreg_loss(v, X, b)
+    @test f < opt || isapprox(f, opt, rtol=1e-2)
 end
 
 @testset "pca.jl" begin
