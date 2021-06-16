@@ -102,7 +102,7 @@ end
 function partition_samples(X::Matrix, nsubpartitions::Integer)
     nsamples = size(X, 2)
     dividers = round.(Int, range(1, nsamples+1, length=nsubpartitions+1))
-    [view(X, :, dividers[i]:(dividers[i+1]-1)) for i in 1:nsubpartitions]    
+    [view(X, :, dividers[i]:(dividers[i+1]-1)) for i in 1:nsubpartitions]
 end
 
 function read_localdata(i::Integer, nworkers::Integer; inputfile::String, inputdataset::String, nreplicas::Integer, nsubpartitions::Integer, kwargs...)
@@ -118,14 +118,12 @@ function read_localdata(i::Integer, nworkers::Integer; inputfile::String, inputd
         inputdataset in keys(fid) || throw(ArgumentError("$inputdataset is not in $fid"))
         flag, _ = isvalidh5csc(fid, inputdataset)
         # read nreplicas/nworkers samples        
+        il = floor(Int, (partition_index - 1)/npartitions*nsamples + 1)
+        iu = floor(Int, partition_index/npartitions*nsamples)
         if flag # sparse data
-            il = floor(Int, (partition_index - 1)/npartitions*nsamples + 1)
-            iu = floor(Int, partition_index/npartitions*nsamples)
-            X_sparse = H5SparseMatrixCSC(fid, inputdataset)
+            X_sparse = H5SparseMatrixCSC(fid, inputdataset, :, il:iu)
             return partition_samples(X_sparse, nsubpartitions), dimension, nsamples
         else # dense data
-            il = floor(Int, (partition_index - 1)/npartitions*nsamples + 1)
-            iu = floor(Int, partition_index/npartitions*nsamples)
             X_dense = fid[inputdataset][:, il:iu]
             return partition_samples(X_dense, nsubpartitions), dimension, nsamples
         end
