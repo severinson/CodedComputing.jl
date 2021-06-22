@@ -230,6 +230,36 @@ end
     v = vs[end]
     f = logreg_loss(v, X, b)
     @test f < opt || isapprox(f, opt, rtol=1e-2)
+
+    # DSAG w. sparse input data
+    X = sparse(X)
+    inputfile = tempname()
+    h5writecsc(inputfile, inputdataset, X)
+    h5open(inputfile, "cw") do file
+        file[labeldataset] = b
+    end
+
+    nworkers = 2
+    nwait = 1
+    niterations = 100
+    stepsize = 0.1
+    nsubpartitions = 2
+    outputfile = tempname()
+    mpiexec(cmd -> run(```
+        $cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile        
+        --inputdataset $inputdataset
+        --nwait $nwait
+        --variancereduced
+        --nsubpartitions $nsubpartitions
+        --outputdataset $outputdataset
+        --niterations $niterations
+        --saveiterates
+        --lambda $λ
+        ```))
+    vs = load_logreg_iterates(outputfile, outputdataset)
+    v = vs[end]
+    f = logreg_loss(v, X, b)
+    @test f < opt || isapprox(f, opt, rtol=1e-2)    
 end
 
 @testset "pca.jl" begin
