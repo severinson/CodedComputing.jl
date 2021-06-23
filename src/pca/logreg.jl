@@ -55,6 +55,12 @@ function update_parsed_args!(s::ArgParseSettings, parsed_args)
     mod(nworkers, nreplicas) == 0 || throw(ArgumentError("nworkers is $nworkers, but must be divisible by nreplicas"))
     npartitions = div(nworkers, nreplicas)
     parsed_args[:nwait] = isnothing(parsed_args[:nwait]) ? npartitions : parsed_args[:nwait]
+
+    # record the number of rows and columns of the dataset
+    nrows, ncolumns = problem_size(parsed_args[:inputfile], parsed_args[:inputdataset])
+    parsed_args[:nrows] = nrows
+    parsed_args[:ncolumns] = ncolumns
+
     parsed_args
 end
 
