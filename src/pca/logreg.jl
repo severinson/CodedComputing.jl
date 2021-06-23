@@ -382,11 +382,8 @@ update_gradient!(args...; variancereduced::Bool, kwargs...) = variancereduced ? 
 
 function update_iterate!(v, ∇; state=nothing, stepsize, lambda, kwargs...)
     size(v) == size(∇) || throw(DimensionMismatch("v has dimensions $(size(v)), but ∇ has dimensions $(size(∇))"))
-    # println(("coordinator", v, ∇))
-    v .*= 1 - stepsize * lambda/2
+    v .*= 1 - stepsize * lambda
     v .-= stepsize .* ∇
-    # println(("coordinator", v, ∇))
-    # println()
     return
 end
 
