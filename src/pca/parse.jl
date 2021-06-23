@@ -10,10 +10,6 @@ Create a DataFrame for a particular job. `nrows=2504` and `ncolumns=81271767` is
 function create_df(fid, nrows=2504, ncolumns=81271767)
     rv = DataFrame()
     row = Dict{String, Any}()
-    row["nrows"] = nrows
-    row["ncolumns"] = ncolumns
-    niterations = fid["parameters/niterations"][]
-    nworkers = fid["parameters/nworkers"][]
     row["mse"] = missing # initialize to missing, it's computed later
 
     # store job parameters
@@ -25,7 +21,18 @@ function create_df(fid, nrows=2504, ncolumns=81271767)
         end
     end
 
+    # default values for nrows and ncolumns
+    # (previous versions would not store these in the output file)
+    if !haskey(row, "nrows")
+        row["nrows"] = nrows
+    end
+    if !haskey(row, "ncolumns")
+        row["ncolumns"] = ncolumns
+    end    
+
     # add benchmark data
+    niterations = Int(row["niterations"])
+    nworkers = Int(row["nworkers"])    
     for i in 1:niterations
         row["iteration"] = i
         row["t_compute"] = fid["benchmark/t_compute"][i]
