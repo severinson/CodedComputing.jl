@@ -6,10 +6,4 @@ include("Linalg.jl")
 include("Datasets.jl")
 include("HDF5Sparse.jl")
 
-include("latency/parse.jl")
-include("latency/benchmark.jl")
-
-include("pca/parse.jl")
-include("pca/benchmark.jl")
-
 end
