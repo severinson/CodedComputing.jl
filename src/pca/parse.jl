@@ -98,13 +98,12 @@ i.e., `X = hcat(Xs, ...)`. Explained variance is computed for of up to `mseitera
 iterations.
 """
 function df_from_output_file(filename::AbstractString, Xs::Union{Nothing, Vector{<:AbstractMatrix}}; df_filename::AbstractString=replace(filename, ".h5"=>".csv"), mseiterations=0, reparse=false)
-    # skip non-existing/non-hdf5 files
+    if !reparse && isfile(df_filename)
+        return DataFrame(CSV.File(df_filename))
+    end
     if !HDF5.ishdf5(filename)
         println("skipping (not a HDF5 file): $filename")
         return DataFrame()
-    end
-    if !reparse && isfile(df_filename)
-        return DataFrame(CSV.File(df_filename))
     end
     h5open(filename) do fid
         df = isfile(df_filename) ? DataFrame(CSV.File(df_filename)) : create_df(fid)
