@@ -88,14 +88,11 @@ function problem_size(filename::String, dataset::String)
     HDF5.ishdf5(filename) || throw(ArgumentError("$filename isn't an HDF5 file"))
     h5open(filename, "r") do fid
         dataset in keys(fid) || throw(ArgumentError("$dataset is not in $fid"))
-        try
+        if H5Sparse.h5isvalidcsc(fid, dataset)
             return size(H5SparseMatrixCSC(fid, dataset))
-        catch e
-            if !(isa(e, ArgumentError) || isa(e, KeyError))
-                rethrow()
-            end
+        else
+            return size(fid[dataset])
         end
-        return size(fid[dataset])
     end
 end
 
@@ -122,11 +119,10 @@ function read_localdata(i::Integer, nworkers::Integer; inputfile::String, inputd
     dimension, nsamples = problem_size(inputfile, inputdataset)    
     h5open(inputfile, "r") do fid
         inputdataset in keys(fid) || throw(ArgumentError("$inputdataset is not in $fid"))
-        flag, _ = isvalidh5csc(fid, inputdataset)
-        # read nreplicas/nworkers samples        
+        # read nreplicas/nworkers samples
         il = floor(Int, (partition_index - 1)/npartitions*nsamples + 1)
         iu = floor(Int, partition_index/npartitions*nsamples)
-        if flag # sparse data
+        if H5Sparse.h5isvalidcsc(fid, inputdataset) # sparse data
             X_sparse = H5SparseMatrixCSC(fid, inputdataset, :, il:iu)
             return partition_samples(X_sparse, nsubpartitions), dimension, nsamples
         else # dense data
