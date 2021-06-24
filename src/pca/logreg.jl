@@ -182,7 +182,7 @@ end
 metadata_view(buffer) = view(buffer, COMMON_BYTES+1:(COMMON_BYTES + METADATA_BYTES))
 data_view(buffer) = reinterpret(ELEMENT_TYPE, @view buffer[(COMMON_BYTES + METADATA_BYTES+1):end])
 
-function worker_task!(recvbuf, sendbuf, localdata; state=nothing, nsubpartitions::Integer, kwargs...)
+function worker_task!(recvbuf, sendbuf, localdata; state=nothing, nsubpartitions::Integer, ncolumns::Integer, kwargs...)
     sizeof(recvbuf) + COMMON_BYTES + METADATA_BYTES == sizeof(sendbuf) || throw(DimensionMismatch("recvbuf has size $(sizeof(recvbuf)), but sendbuf has size $(sizeof(sendbuf))"))
     feature_partitions, label_partitions = localdata
     length(feature_partitions) == nsubpartitions || throw(DimensionMismatch("There are $(length(feature_partitions)) feature partitions, but nsubpartitions is $nsubpartitions"))
@@ -208,9 +208,6 @@ function worker_task!(recvbuf, sendbuf, localdata; state=nothing, nsubpartitions
         w::Vector{eltype(v)} = state
     end
 
-    # sleep(rank / 5)
-    # println((rank, v))
-
     # compute gradient
     wv = view(w, 1:nlocalsamples)
     mul!(wv', view(v, 2:length(v))', Xw)
@@ -222,12 +219,7 @@ function worker_task!(recvbuf, sendbuf, localdata; state=nothing, nsubpartitions
     wv .*= -1
     v[1] = sum(wv) # intercept derivative
     mul!(view(v, 2:length(v), :), Xw, wv) # derivative w. respect to each feature
-    v ./= nlocalsamples
-
-    # println((rank, Xw))
-    # println((rank, bw))
-    # println((rank, v))
-    # println()    
+    v ./= ncolumns # normalize by the total number of samples
     
     # populate the send buffer
     metadata = reinterpret(UInt16, metadata_view(sendbuf))
