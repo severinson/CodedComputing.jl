@@ -52,87 +52,87 @@ end
     @test V'*V ≈ I
 end
 
-@testset "HDF5Sparse.jl" begin
-    Random.seed!(123)
+# @testset "HDF5Sparse.jl" begin
+#     Random.seed!(123)
 
-    # test writing and reading a sparse matrix
-    m, n, p = 10, 6, 0.5
-    M = sprand(Float32, m, n, p)
-    filename = tempname()
-    name = "M"
-    h5writecsc(filename, name, M, batchsize=5)
-    M_hat = h5readcsc(filename, name)
-    @test typeof(M_hat) == typeof(M)
-    @test M_hat ≈ M
+#     # test writing and reading a sparse matrix
+#     m, n, p = 10, 6, 0.5
+#     M = sprand(Float32, m, n, p)
+#     filename = tempname()
+#     name = "M"
+#     h5writecsc(filename, name, M, batchsize=5)
+#     M_hat = h5readcsc(filename, name)
+#     @test typeof(M_hat) == typeof(M)
+#     @test M_hat ≈ M
 
-    # test reading each column separately
-    for i in 1:n
-        v = h5readcsc(filename, name, i)
-        @test v ≈ M[:, i]
-    end
+#     # test reading each column separately
+#     for i in 1:n
+#         v = h5readcsc(filename, name, i)
+#         @test v ≈ M[:, i]
+#     end
 
-    # test reading blocks of columns
-    for i in 1:n
-        for j in i:n
-            correct = M[:, i:j]
-            V = h5readcsc(filename, name, i, j)
-            @test V ≈ M[:, i:j]
-        end
-    end
+#     # test reading blocks of columns
+#     for i in 1:n
+#         for j in i:n
+#             correct = M[:, i:j]
+#             V = h5readcsc(filename, name, i, j)
+#             @test V ≈ M[:, i:j]
+#         end
+#     end
 
-    # test appending more columns to a matrix
-    M2 = sprand(Float32, m, n, p)
-    h5appendcsc(filename, name, M2)
-    M_hat = h5readcsc(filename, name)
-    @test typeof(M_hat) == typeof(M)
-    @test M_hat ≈ hcat(M, M2)
+#     # test appending more columns to a matrix
+#     M2 = sprand(Float32, m, n, p)
+#     h5appendcsc(filename, name, M2)
+#     M_hat = h5readcsc(filename, name)
+#     @test typeof(M_hat) == typeof(M)
+#     @test M_hat ≈ hcat(M, M2)
 
-    # test out-of-core column-wise block permutation
-    M = sprand(10, 20, 0.5)
-    h5writecsc(filename, "M", M, overwrite=true)
-    p = [1, 2, 3]
-    h5permutecsc(filename, "M", filename, "Mp", p, overwrite=true)
-    Mp = h5readcsc(filename, "Mp")
-    @test Mp ≈ M
+#     # test out-of-core column-wise block permutation
+#     M = sprand(10, 20, 0.5)
+#     h5writecsc(filename, "M", M, overwrite=true)
+#     p = [1, 2, 3]
+#     h5permutecsc(filename, "M", filename, "Mp", p, overwrite=true)
+#     Mp = h5readcsc(filename, "Mp")
+#     @test Mp ≈ M
 
-    p = [2, 1]
-    h5permutecsc(filename, "M", filename, "Mp", p, overwrite=true)
-    Mp = h5readcsc(filename, "Mp")
-    @test Mp[:, 1:10] ≈ M[:, 11:20]
-    @test Mp[:, 11:20] ≈ M[:, 1:10]
+#     p = [2, 1]
+#     h5permutecsc(filename, "M", filename, "Mp", p, overwrite=true)
+#     Mp = h5readcsc(filename, "Mp")
+#     @test Mp[:, 1:10] ≈ M[:, 11:20]
+#     @test Mp[:, 11:20] ≈ M[:, 1:10]
 
-    p = randperm(size(M, 2))
-    h5permutecsc(filename, "M", filename, "Mp", p, overwrite=true)
-    Mp = h5readcsc(filename, "Mp")
-    @test Mp ≈ M[:, p]
+#     p = randperm(size(M, 2))
+#     h5permutecsc(filename, "M", filename, "Mp", p, overwrite=true)
+#     Mp = h5readcsc(filename, "Mp")
+#     @test Mp ≈ M[:, p]
 
-    for n in [20, 21, 23, 23]
-        M = sprand(10, n, 0.5)
-        h5writecsc(filename, "M", M, overwrite=true)
-        p = randperm(4)
-        h5permutecsc(filename, "M", filename, "Mp", p, overwrite=true)
-        Mp = h5readcsc(filename, "Mp")
-        @test size(Mp) == size(M)
-    end
+#     for n in [20, 21, 23, 23]
+#         M = sprand(10, n, 0.5)
+#         h5writecsc(filename, "M", M, overwrite=true)
+#         p = randperm(4)
+#         h5permutecsc(filename, "M", filename, "Mp", p, overwrite=true)
+#         Mp = h5readcsc(filename, "Mp")
+#         @test size(Mp) == size(M)
+#     end
 
-    # test partially out-of-core column-wise permutation
-    for n in [20, 21, 23, 23]
-        M = sprand(10, n, 0.5)
-        p = randperm(n)
-        h5permutecsc(M, filename, "Mp", p, nblocks=4, overwrite=true)
-        Mp = h5readcsc(filename, "Mp")
-        @test Mp ≈ M[:, p]
-    end
+#     # test partially out-of-core column-wise permutation
+#     for n in [20, 21, 23, 23]
+#         M = sprand(10, n, 0.5)
+#         p = randperm(n)
+#         h5permutecsc(M, filename, "Mp", p, nblocks=4, overwrite=true)
+#         Mp = h5readcsc(filename, "Mp")
+#         @test Mp ≈ M[:, p]
+#     end
 
-    # test matrix-matrix multiplication
-    for n in [20, 21, 23, 23, 24]
-        M = sprand(10, n, 0.5)
-        h5writecsc(filename, "M", M, overwrite=true)        
-        A = randn(20, 10)
-        C = h5mulcsc(A, filename, "M", nblocks=4)
-        @test C ≈ A*M
-    end
-end
+#     # test matrix-matrix multiplication
+#     for n in [20, 21, 23, 23, 24]
+#         M = sprand(10, n, 0.5)
+#         h5writecsc(filename, "M", M, overwrite=true)        
+#         A = randn(20, 10)
+#         C = h5mulcsc(A, filename, "M", nblocks=4)
+#         @test C ≈ A*M
+#     end
+# end
 
 @testset "latency.jl" begin
     kernel = "../src/latency/kernel.jl"
@@ -161,12 +161,12 @@ end
     @test all(diff(df.timestamp) .>= timeout)
 end
 
-function logreg_loss(v, X, b)
+function logreg_loss(v, X, b, λ)
     rv = 0.0
     for i in 1:length(b)
         rv += log(1 + exp(-b[i]*(v[1]+dot(X[:, i], view(v, 2:length(v))))))
     end
-    rv
+    rv / length(b) + λ/2 * norm(v)^2
 end
 
 @testset "logreg.jl" begin
@@ -175,10 +175,10 @@ end
     # input data set with known optimal solution
     X = [1.444786643000158 0.49236792885913283 -0.53258473265429 0.05476455630673194 -1.3473893605265843; 0.48932299731783646 2.0708445447107926 1.2414596020757043 0.9131934117095984 -0.15692043560721075; 0.7774625331093794 0.7234405608945721 -0.037446104354257874 -1.1104987697394342 1.354975413199728]
     b = [-1, 1, -1, -1, 1]
-    v_opt = [-1.09844796637643, -0.8475330987445191, 0.5529125288210748, 1.3452124585890295]
-    opt = logreg_loss(v_opt, X, b)
+    v_opt = [-0.3423591553493419, -0.41317049965033387, 0.007294166575956451, 0.6763846515861628]
     m, n = size(X)
     λ = 1 / n
+    opt = logreg_loss(v_opt, X, b, λ)
 
     # write test problem to disk
     inputfile = tempname()    
@@ -205,7 +205,7 @@ end
         ```))
     vs = load_logreg_iterates(outputfile, outputdataset)
     v = vs[end]
-    f = logreg_loss(v, X, b)
+    f = logreg_loss(v, X, b, λ)
     @test f < opt || isapprox(f, opt, rtol=1e-2)
 
     # DSAG
@@ -228,7 +228,7 @@ end
         ```))
     vs = load_logreg_iterates(outputfile, outputdataset)
     v = vs[end]
-    f = logreg_loss(v, X, b)
+    f = logreg_loss(v, X, b, λ)    
     @test f < opt || isapprox(f, opt, rtol=1e-2)
 
     # DSAG w. sparse input data
@@ -258,7 +258,7 @@ end
         ```))
     vs = load_logreg_iterates(outputfile, outputdataset)
     v = vs[end]
-    f = logreg_loss(v, X, b)
+    f = logreg_loss(v, X, b, λ)        
     @test f < opt || isapprox(f, opt, rtol=1e-2)    
 end
 
