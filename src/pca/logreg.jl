@@ -15,7 +15,7 @@ function update_argsettings!(s::ArgParseSettings)
             default = "b"
             arg_type = String
         "--iteratedataset"
-            help = "Initial iterate dataset name (an initial iterate is selected at random if not provided)"
+            help = "Initial iterate dataset name (chosen to be all-zeros if not provided)"
             arg_type = String 
         "--nsubpartitions"
             help = "Number of sub-partitions to split the data stored at each worker into"
@@ -157,8 +157,8 @@ function coordinator_setup(nworkers::Integer; inputfile::String, inputdataset::S
     dimension, nsamples = problem_size(inputfile, inputdataset)
 
     # initial iterate
-    if isnothing(iteratedataset) # initialized at random
-        V = randn(dimension+1)
+    if isnothing(iteratedataset)
+        V = zeros(dimension+1)
     else # given as an argument and loaded from disk
         h5open(inputfile) do fid
             iteratedataset in keys(fid) || throw(ArgumentError("iterate dataset $iteratedataset not found"))
