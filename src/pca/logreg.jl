@@ -42,6 +42,11 @@ function update_argsettings!(s::ArgParseSettings)
             help = "Number of replicas to wait for in each iteration (defaults to all replicas)"
             arg_type = Int
             range_tester = (x) -> x >= 1
+        "--nwaitschedule"
+            help = "Factor by which nwait is reduced per iteration"
+            arg_type = Float64
+            default = 1.0
+            range_tester = (x) -> 0 < x <= 1            
         "--kickstart"
             help = "Wait for all partitions in the first iteration"
             action = :store_true            
@@ -69,10 +74,11 @@ end
 Called inside `asyncmap!` to determine if enough workers have responded. Returns `true` if at 
 least `nwait` workers have responded and `false` otherwise.
 """
-function fwait(epoch, repochs; nworkers, nwait, kickstart, kwargs...)
+function fwait(epoch, repochs; nworkers, nwait, kickstart, nwaitschedule, kwargs...)
     length(repochs) == nworkers || throw(DomainError(nworkers, "repochs must have length nworkers"))
     0 < nwait <= nworkers || throw(ArgumentError("nwait is $nwait, but must be in [1, npartitions]"))
-    nrec = 0    
+    nwait = min(max(1, ceil(Int, nwait*nwaitschedule^epoch)), nworkers)
+    nrec = 0
     for repoch in repochs
         nrec += repoch == epoch
     end

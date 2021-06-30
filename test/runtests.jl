@@ -134,32 +134,32 @@ end
 #     end
 # end
 
-@testset "latency.jl" begin
-    kernel = "../src/latency/kernel.jl"
-    nwait = 1
-    nworkers = 3
-    niterations = 10
-    timeout = 0.1
-    nbytes = 100
-    nrows = 100
-    ncols = 100
-    ncomponents = 3
-    density = 0.1
-    outputfile = tempname()
-    mpiexec(cmd -> run(```
-        $cmd -n $(nworkers+1) julia --project $kernel $outputfile
-            --niterations $niterations
-            --nbytes $nbytes
-            --nrows $nrows
-            --ncols $ncols
-            --ncomponents $ncomponents
-            --density $density
-            --nwait $nwait
-            --timeout $timeout            
-    ```))
-    df = df_from_latency_file(outputfile)
-    @test all(diff(df.timestamp) .>= timeout)
-end
+# @testset "latency.jl" begin
+#     kernel = "../src/latency/kernel.jl"
+#     nwait = 1
+#     nworkers = 3
+#     niterations = 10
+#     timeout = 0.1
+#     nbytes = 100
+#     nrows = 100
+#     ncols = 100
+#     ncomponents = 3
+#     density = 0.1
+#     outputfile = tempname()
+#     mpiexec(cmd -> run(```
+#         $cmd -n $(nworkers+1) julia --project $kernel $outputfile
+#             --niterations $niterations
+#             --nbytes $nbytes
+#             --nrows $nrows
+#             --ncols $ncols
+#             --ncomponents $ncomponents
+#             --density $density
+#             --nwait $nwait
+#             --timeout $timeout            
+#     ```))
+#     df = df_from_latency_file(outputfile)
+#     @test all(diff(df.timestamp) .>= timeout)
+# end
 
 function logreg_loss(v, X, b, λ)
     rv = 0.0
@@ -230,6 +230,31 @@ end
     v = vs[end]
     f = logreg_loss(v, X, b, λ)    
     @test f < opt || isapprox(f, opt, rtol=1e-2)
+
+    # DSAG w. nwaitschedule < 1.0
+    nworkers = 2
+    nwait = 2
+    niterations = 100
+    stepsize = 0.1
+    nsubpartitions = 2
+    nwaitschedule = 0.9
+    outputfile = tempname()
+    mpiexec(cmd -> run(```
+        $cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile        
+        --inputdataset $inputdataset
+        --nwait $nwait
+        --variancereduced
+        --nsubpartitions $nsubpartitions
+        --outputdataset $outputdataset
+        --niterations $niterations
+        --saveiterates
+        --lambda $λ
+        --nwaitschedule $nwaitschedule
+        ```))
+    vs = load_logreg_iterates(outputfile, outputdataset)
+    v = vs[end]
+    f = logreg_loss(v, X, b, λ)    
+    @test f < opt || isapprox(f, opt, rtol=1e-2)    
 
     # DSAG w. sparse input data
     X = sparse(X)
@@ -482,6 +507,22 @@ end
         --saveiterates        
         ```))
     test_pca_iterates(;X, niterations, ncomponents, ev, outputfile, outputdataset)                    
+
+    ### same as the previous, but with nwaitschedule < 1
+    nwaitschedule = 0.9
+    outputfile = tempname()    
+    mpiexec(cmd -> run(```$cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile 
+        --ncomponents $ncomponents    
+        --niterations $niterations 
+        --stepsize $stepsize        
+        --nsubpartitions $nsubpartitions
+        --nwait $(npartitions-1)
+        --variancereduced
+        --kickstart
+        --saveiterates        
+        --nwaitschedule $nwaitschedule
+        ```))
+    test_pca_iterates(;X, niterations, ncomponents, ev, outputfile, outputdataset)          
     
     ### with a factor 3 replication
     outputfile = tempname()
