@@ -1,0 +1,66 @@
+#!/bin/sh -l
+# Run 
+#SBATCH --job-name=logreg.jl
+#SBATCH --output=logreg.out
+#SBATCH --nodes=11
+#SBATCH --ntasks-per-node=1
+#SBATCH --time=600:00
+#SBATCH --partition=rome16q
+
+# Remember to load eX3 modules:
+# module use /cm/shared/ex3-modules/0.6.1/modulefiles
+# module load slurm/20.02.6
+# module load openmpi-4.0.5
+
+export JULIA_DEPOT_PATH="/home/albin/.julia/"
+date
+filename=/home/albin/.julia/dev/CodedComputing/src/pca/logreg.jl
+execname=/home/albin/julia/julia-1.6.1/bin/julia
+
+# rcv1
+input_file=/home/albin/rcv1/rcv1_shuffled.h5
+output_directory=/home/albin/rcv1/rome16q/210630/
+
+# 1000 genomes (entire dataset, fully shuffled)
+# input_file=/home/albin/1000genomes-matrix.h5
+# output_directory=/home/albin/rome16q/210429/
+
+# 1000 genomes dense-equivalent matrix
+# input_file=/home/albin/traces/1000genomes-dense-equiv-matrix/1000genomes-dense-equiv-matrix.h5
+# output_directory=/home/albin/traces/1000genomes-dense-equiv-matrix/rome16q/210429/
+
+inputdataset=X
+# iteratedataset=V0 # leave blank to set to all-zeros
+npasses=25
+
+stepsize_all=( 10.0 100.0)
+nwait_all=( 10)
+# nsubpartitions_all=( 1 2 5 10 40 80 120 160 240 320)
+nsubpartitions_all=( 240)
+# nsubpartitions_all=( 40 80 120 160 240 320)
+# nsubpartitions_all=( 320)
+# nsubpartitions_all=( 10 14 20 40 80 160 240 320 2304)
+# nsubpartitions_all=( 14 2304)
+
+lambda=$(python3 -c 'print(1/697641)')
+# stepsize=100.0
+
+for i in {1..10}
+do
+    for nsubpartitions in ${nsubpartitions_all[@]}
+    do
+        # niterations=100
+        niterations=$(($npasses * $nsubpartitions))
+        nwaitschedule=$(python3 -c 'print(pow(2, -1/240))')
+        for nwait in ${nwait_all[@]}
+        do
+            for stepsize in ${stepsize_all[@]}
+            do
+                echo "[DSAG] nsubpartitions: ${nsubpartitions}, nwait: ${nwait}, niterations: $niterations, stepsize: $stepsize"
+                srun ${execname} --project "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --inputdataset ${inputdataset} --stepsize ${stepsize} --lambda ${lambda} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --nwaitschedule ${nwaitschedule} --niterations ${niterations} --variancereduced --saveiterates
+            done
+        done
+    done
+done
+
+echo "Done"
