@@ -1,4 +1,4 @@
-using ArgParse, Random, SparseArrays, H5Sparse, SAG
+using ArgParse, Random, SparseArrays, HDF5, H5Sparse, SAG
 
 const METADATA_BYTES = 6
 const ELEMENT_TYPE = Float32
