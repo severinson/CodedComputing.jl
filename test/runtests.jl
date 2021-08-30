@@ -85,3 +85,4 @@ end
 @time @testset "pca.jl" begin include("pca_test.jl") end
 @time @testset "eventdriven.jl" begin include("eventdriven_test.jl") end
 @time @testset "profiling.jl" begin include("profiling_test.jl") end
+@time @testset "loadbalancing.jl" begin include("loadbalancing_test.jl") end

@@ -8,5 +8,6 @@ include("Linalg.jl")
 include("Datasets.jl")
 include("profiling.jl")
 include("eventdriven.jl")
+include("loadbalancing.jl")
 
 end
