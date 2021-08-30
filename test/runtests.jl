@@ -1,5 +1,6 @@
 using CodedComputing
 using Random, MPI, HDF5, H5Sparse, LinearAlgebra, SparseArrays
+using Dates
 using Test
 
 """
@@ -83,3 +84,4 @@ end
 @time @testset "logreg.jl" begin include("logreg_test.jl") end
 @time @testset "pca.jl" begin include("pca_test.jl") end
 @time @testset "eventdriven.jl" begin include("eventdriven_test.jl") end
+@time @testset "profiling.jl" begin include("profiling_test.jl") end
