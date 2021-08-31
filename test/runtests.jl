@@ -81,6 +81,7 @@ end
 # end
 
 @time @testset "Linalg.jl" begin include("linalg_test.jl") end
+@time @testset "partitioning.jl" begin include("partitioning_test.jl") end
 @time @testset "eventdriven.jl" begin include("eventdriven_test.jl") end
 @time @testset "profiling.jl" begin include("profiling_test.jl") end
 @time @testset "loadbalancing.jl" begin include("loadbalancing_test.jl") end
