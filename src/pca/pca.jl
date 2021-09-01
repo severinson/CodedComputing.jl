@@ -102,19 +102,7 @@ function problem_size(filename::String, dataset::String)
     end
 end
 
-function partition_samples(X::H5SparseMatrixCSC, nsubpartitions::Integer)
-    nsamples = size(X, 2)
-    dividers = round.(Int, range(1, nsamples+1, length=nsubpartitions+1))
-    [sparse(X[:, dividers[i]:(dividers[i+1]-1)]) for i in 1:nsubpartitions]
-end
-
-function partition_samples(X::Matrix, nsubpartitions::Integer)
-    nsamples = size(X, 2)
-    dividers = round.(Int, range(1, nsamples+1, length=nsubpartitions+1))
-    [view(X, :, dividers[i]:(dividers[i+1]-1)) for i in 1:nsubpartitions]
-end
-
-function read_localdata(i::Integer, nworkers::Integer; inputfile::String, inputdataset::String, nreplicas::Integer, nsubpartitions::Integer, kwargs...)
+function read_localdata(i::Integer, nworkers::Integer; inputfile::String, inputdataset::String, nreplicas::Integer, kwargs...)
     HDF5.ishdf5(inputfile) || throw(ArgumentError("$inputfile isn't an HDF5 file"))
     0 < nworkers || throw(DomainError(nworkers, "nworkers must be positive"))
     0 < nreplicas || throw(DomainError(nreplicas, "nreplicas must be positive"))
@@ -122,31 +110,30 @@ function read_localdata(i::Integer, nworkers::Integer; inputfile::String, inputd
     mod(nworkers, nreplicas) == 0 || throw(ArgumentError("nworkers must be divisible by nreplicas"))
     npartitions = div(nworkers, nreplicas)
     partition_index = ceil(Int, i/nreplicas)
-    dimension, nsamples = problem_size(inputfile, inputdataset)    
+    _, nsamples = problem_size(inputfile, inputdataset)
     h5open(inputfile, "r") do fid
         inputdataset in keys(fid) || throw(ArgumentError("$inputdataset is not in $fid"))
+        
+        # determine the indices of the samples to be stored locally
+        Is = partition(nsamples, npartitions, partition_index)
 
-        # TODO: load the entire local dataset as a single matrix
-
-        # read nreplicas/nworkers samples
-        il = floor(Int, (partition_index - 1)/npartitions*nsamples + 1)
-        iu = floor(Int, partition_index/npartitions*nsamples)
-        if H5Sparse.h5isvalidcsc(fid, inputdataset) # sparse data
-            X_sparse = H5SparseMatrixCSC(fid, inputdataset, :, il:iu)
-            return partition_samples(X_sparse, nsubpartitions), dimension, nsamples
-        else # dense data
-            X_dense = fid[inputdataset][:, il:iu]
-            return partition_samples(X_dense, nsubpartitions), dimension, nsamples
+        # load those samples into memory
+        if H5Sparse.h5isvalidcsc(fid, inputdataset)
+            return sparse(H5SparseMatrixCSC(fid, inputdataset, :, Is))::SparseMatrixCSC
+        else
+            return fid[inputdataset][:, Is]::Matrix
         end
     end
 end
 
 function worker_setup(rank::Integer, nworkers::Integer; ncomponents::Integer, kwargs...)
-    0 < nworkers || throw(DomainError(nworkers, "nworkers must be positive"))
+    0 < nworkers || throw(DomainError(nworkers, "nworkers must be positive"))    
     isnothing(ncomponents) || 0 < ncomponents || throw(DomainError(ncomponents, "ncomponents must be positive"))
-    localdata, dimension, nsamples = read_localdata(rank, nworkers; kwargs...)
+    localdata = read_localdata(rank, nworkers; kwargs...)
+    dimension = size(localdata, 1)
     recvbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*ncomponents)
     sendbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*ncomponents + COMMON_BYTES + METADATA_BYTES)
+    @info "(rank $rank) setup finished"
     localdata, recvbuf, sendbuf
 end
 
@@ -181,35 +168,30 @@ data_view(buffer) = reinterpret(ELEMENT_TYPE, @view buffer[(COMMON_BYTES + METAD
 function worker_task!(recvbuf, sendbuf, localdata; state=nothing, nsubpartitions::Integer, ncomponents::Integer, kwargs...)
     0 < ncomponents || throw(DomainError(ncomponents, "ncomponents must be positive"))        
     sizeof(recvbuf) + COMMON_BYTES + METADATA_BYTES == sizeof(sendbuf) || throw(DimensionMismatch("recvbuf has size $(sizeof(recvbuf)), but sendbuf has size $(sizeof(sendbuf))"))
+    dimension, nlocalsamples = size(localdata)
+    1 <= nsubpartitions <= nlocalsamples || throw(DimensionMismatch("nsubpartitions is $nsubpartitions, but nlocalsamples is $nlocalsamples"))
 
-    # TODO: remove
-    length(localdata) == nsubpartitions || throw(DimensionMismatch("Expected localdata to be of length nsubpartitions"))    
-    
-    # select a random sub-partition
+    # randomly select a sub-partition
     subpartition_index = rand(1:nsubpartitions)
 
-    # TODO: 
-    Xw = localdata[subpartition_index]
-    dimension, nlocalsamples = size(Xw)
-    1 <= nsubpartitions <= dimension || throw(DimensionMismatch("nsubpartitions is $nsubpartitions, but the dimension is $dimension"))    
-
     # format the recvbuf into a matrix we can operate on
-    length(reinterpret(ELEMENT_TYPE, recvbuf)) == dimension*ncomponents || throw(DimensionMismatch("recvbuf has length $(length(reinterpret(ELEMENT_TYPE, recvbuf))), but the data dimension is $dimension and ncomponents is $k"))
+    length(reinterpret(ELEMENT_TYPE, recvbuf)) == dimension*ncomponents || throw(DimensionMismatch("recvbuf has length $(length(reinterpret(ELEMENT_TYPE, recvbuf))), but the data dimension is $dimension and ncomponents is $ncomponents"))
     V = reshape(reinterpret(ELEMENT_TYPE, recvbuf), dimension, ncomponents)
 
     # prepare working memory
     if isnothing(state) # first iteration
-        max_samples = maximum((x)->size(x, 2), localdata) # max number of samples processed per iteration
+        max_samples = nlocalsamples # max number of samples processed per iteration
         W = Matrix{eltype(V)}(undef, max_samples, ncomponents)
     else # subsequent iterations
         W::Matrix{eltype(V)} = state
     end
 
-    # do the computation
-    # TODO: use colsmul! instead
-    Wv = view(W, 1:size(Xw, 2), :)
-    mul!(Wv, Xw', V)
-    mul!(V, Xw, Wv)
+    # indices of the local samples to process in this iteration
+    cols = partition(nlocalsamples, nsubpartitions, subpartition_index)
+
+    # perform the computation
+    tcolsmul!(W, localdata, V, cols)
+    colsmul!(V, localdata, W, cols)
     V .*= -1
     
     # populate the send buffer
