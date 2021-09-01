@@ -1,6 +1,6 @@
 using ArgParse, Random, SparseArrays, HDF5, H5Sparse, SAG
 
-const FROM_WORKER_METADATA_BYTES = 6
+const FROM_WORKER_METADATA_BYTES = 8
 const ELEMENT_TYPE = Float32
 const CANARY_VALUE = UInt16(2^16 - 1)
 
@@ -204,7 +204,8 @@ function worker_task!(recvbuf, sendbuf, localdata; state=nothing, ncomponents::I
     metadata = reinterpret(UInt16, metadata_view(sendbuf))
     metadata[1] = CANARY_VALUE
     metadata[2] = rank
-    metadata[3] = subpartition_index
+    metadata[3] = nsubpartitions
+    metadata[4] = subpartition_index
     data_view(sendbuf) .= view(V, :)
     W
 end
@@ -237,11 +238,11 @@ function update_gradient_sgd!(∇, recvbufs, epoch::Integer, repochs::Vector{<:I
         end
 
         metadata = reinterpret(UInt16, metadata_view(recvbufs[worker_index]))
-        if length(metadata) != 3
+        if length(metadata) != 4
             @error "received incorrectly formatted metadata from the $(worker_index)-th worker in epoch $epoch: $metadata"
             continue
         end
-        canary, worker_rank, subpartition_index = metadata
+        canary, worker_rank, nsubpartitions, subpartition_index = metadata
         if  canary != CANARY_VALUE
             @error "recieved incorrect canary value from the $(worker_index)-th worker in epoch $epoch: $canary"
             continue
@@ -303,11 +304,11 @@ function update_gradient_vr!(∇, recvbufs, epoch::Integer, repochs::Vector{<:In
         end
 
         metadata = reinterpret(UInt16, metadata_view(recvbufs[worker_index]))
-        if length(metadata) != 3
+        if length(metadata) != 4
             @error "received incorrectly formatted metadata from the $(worker_index)-th worker in epoch $epoch: $metadata"
             continue
         end
-        canary, worker_rank, subpartition_index = metadata
+        canary, worker_rank, nsubpartitions, subpartition_index = metadata
         if  canary != CANARY_VALUE
             @error "recieved incorrect canary value from the $(worker_index)-th worker in epoch $epoch: $canary"
             continue
