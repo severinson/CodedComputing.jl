@@ -11,5 +11,6 @@ include("Datasets.jl")
 include("profiling.jl")
 include("eventdriven.jl")
 include("loadbalancing.jl")
+include("treegradient.jl")
 
 end
