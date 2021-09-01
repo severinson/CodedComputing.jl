@@ -27,7 +27,6 @@ end
 @testset "Transposed SparseMatrixCSC with matrices" begin
     rng = MersenneTwister(123)
     A = sprand(rng, 10, 5, 0.2)
-    # At = Transpose(A)
     C = zeros(5, 2)
     B = randn(10, 2)
 
@@ -94,4 +93,27 @@ end
     Cc = copy(C)
     colsmul!(C, A, B, cols, α, β)
     @test C ≈ α.*A[:, cols]*B[cols, :] .+ β.*Cc
+end
+
+@testset "Transposed Matrix with matrices" begin
+    A = randn(10, 5)
+    C = zeros(5, 2)
+    B = randn(10, 2)
+
+    cols = 1:5
+    tcolsmul!(C, A, B, cols)
+    @test C[cols, :] ≈ A[:, cols]'*B
+
+    cols = 2:4
+    tcolsmul!(C, A, B, cols)
+    @test C[cols, :] ≈ A[:, cols]'*B
+
+    cols = [1, 5]
+    tcolsmul!(C, A, B, cols)
+    @test C[cols, :] ≈ A[:, cols]'*B
+
+    α, β = rand(), rand()
+    Cc = copy(C)
+    tcolsmul!(C, A, B, cols, α, β)
+    @test C[cols, :] ≈ α.*A[:, cols]'*B .+ β.*Cc[cols, :]
 end

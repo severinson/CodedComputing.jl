@@ -67,3 +67,12 @@ function tcolsmul!(C::AbstractMatrix, A::SparseArrays.AbstractSparseMatrixCSC, B
     end
     C
 end
+
+function tcolsmul!(C::AbstractMatrix, A::AbstractMatrix, B::AbstractMatrix, cols, args...)
+    @views mul!(C[cols, :], transpose(A[:, cols]), B, args...)
+end
+
+function tcolsmul!(c::AbstractVector, A::AbstractMatrix, b::AbstractVector, args...)
+    colsmul!(reshape(c, length(c), 1), A, reshape(b, length(b), 1), args...)
+    c
+end
