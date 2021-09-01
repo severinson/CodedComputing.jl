@@ -201,12 +201,11 @@ function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Re
         end
 
         # new = balance_contribution(ps, min_processed_fraction; θs, ds_comm, cms_comp, cvs_comp, nwait)
-        @info "load-balancing optimization started"
         t = @elapsed begin
             result = optimize(sim, qs; θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit)        
         end
         new_qs = result.minimizer
-        @info "load-balancing optimization finished in $t"
+        @info "load-balancer finished in $t seconds"
 
         # push any changes into the output channel
         for i in 1:nworkers
