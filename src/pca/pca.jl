@@ -125,6 +125,9 @@ function read_localdata(i::Integer, nworkers::Integer; inputfile::String, inputd
     dimension, nsamples = problem_size(inputfile, inputdataset)    
     h5open(inputfile, "r") do fid
         inputdataset in keys(fid) || throw(ArgumentError("$inputdataset is not in $fid"))
+
+        # TODO: load the entire local dataset as a single matrix
+
         # read nreplicas/nworkers samples
         il = floor(Int, (partition_index - 1)/npartitions*nsamples + 1)
         iu = floor(Int, partition_index/npartitions*nsamples)
@@ -178,10 +181,14 @@ data_view(buffer) = reinterpret(ELEMENT_TYPE, @view buffer[(COMMON_BYTES + METAD
 function worker_task!(recvbuf, sendbuf, localdata; state=nothing, nsubpartitions::Integer, ncomponents::Integer, kwargs...)
     0 < ncomponents || throw(DomainError(ncomponents, "ncomponents must be positive"))        
     sizeof(recvbuf) + COMMON_BYTES + METADATA_BYTES == sizeof(sendbuf) || throw(DimensionMismatch("recvbuf has size $(sizeof(recvbuf)), but sendbuf has size $(sizeof(sendbuf))"))
+
+    # TODO: remove
     length(localdata) == nsubpartitions || throw(DimensionMismatch("Expected localdata to be of length nsubpartitions"))    
     
     # select a random sub-partition
     subpartition_index = rand(1:nsubpartitions)
+
+    # TODO: 
     Xw = localdata[subpartition_index]
     dimension, nlocalsamples = size(Xw)
     1 <= nsubpartitions <= dimension || throw(DimensionMismatch("nsubpartitions is $nsubpartitions, but the dimension is $dimension"))    
@@ -199,6 +206,7 @@ function worker_task!(recvbuf, sendbuf, localdata; state=nothing, nsubpartitions
     end
 
     # do the computation
+    # TODO: use colsmul! instead
     Wv = view(W, 1:size(Xw, 2), :)
     mul!(Wv, Xw', V)
     mul!(V, Xw, Wv)
