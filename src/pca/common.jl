@@ -3,6 +3,7 @@ using CodedComputing
 using HDF5, LinearAlgebra
 using MKLSparse
 using ArgParse
+using Dates
 
 MPI.Init()
 const comm = MPI.COMM_WORLD
@@ -233,6 +234,11 @@ function coordinator_main()
     # 2-argument fwait needed for asyncmap!
     f = (epoch, repochs) -> fwait(epoch, repochs; parsed_args...)
 
+    # setup the latency profiler
+    profiler_chin, profiler_chout = CodedComputing.setup_profiler_channels()
+    windowsize = Second(1)
+    profiler_task = Threads.@spawn CodedComputing.latency_profiler(profiler_chin, profiler_chout; nworkers, windowsize)
+
     # manually call the GC now, and optionally turn off GC, to avoid pauses later during execution
     GC.gc()
     GC.enable(parsed_args[:enablegc])
@@ -244,20 +250,35 @@ function coordinator_main()
 
     # first iteration (initializes state)
     epoch = 1
+
+    ## force an error if the profiler task has failed
+    if istaskfailed(profiler_task)
+        wait(profiler_task)
+    end
+
+    ## update partitioning
     select_partitions!(partition_indices, nsubpartitions_all)
     write_partitions!(sendbuf; partition_indices, nsubpartitions_all)
+
+    ## worker task
     ts_compute[epoch] = @elapsed begin
         repochs = asyncmap!(pool, sendbuf, recvbuf, isendbuf, irecvbuf, comm, nwait=f, epoch=epoch, tag=data_tag)
     end
-    responded[:, epoch] .= repochs
+    responded[:, epoch] .= repochs    
+
+    ## record latency
     latency[:, epoch] .= pool.latency
     for i in 1:nworkers
         t = repochs[i] == epoch ? reinterpret(Float64, view(recvbufs[i], 1:COMMON_BYTES))[1] : NaN
         compute_latency[i, epoch] = t
     end
+
+    ## coordinator task
     ts_update[epoch] = @elapsed begin
         state = coordinator_task!(V, ∇, recvbufs, sendbuf, epoch, repochs; parsed_args...)    
     end
+
+    ## optinally record the iterate
     if saveiterates
         ndims = length(size(V))
         selectdim(iterates, ndims+1, epoch) .= V
@@ -265,20 +286,35 @@ function coordinator_main()
 
     # remaining iterations
     for epoch in 2:niterations
+
+        ## force an error if the profiler task has failed
+        if istaskfailed(profiler_task)
+            wait(profiler_task)
+        end        
+
+        ## update partitioning        
         select_partitions!(partition_indices, nsubpartitions_all)
         write_partitions!(sendbuf; partition_indices, nsubpartitions_all)
+
+        ## worker task
         ts_compute[epoch] = @elapsed begin
             repochs = asyncmap!(pool, sendbuf, recvbuf, isendbuf, irecvbuf, comm, nwait=f, epoch=epoch, tag=data_tag)
         end
         responded[:, epoch] .= repochs
+
+        ## record latency
         latency[:, epoch] .= pool.latency
         for i in 1:nworkers
             t = repochs[i] == epoch ? reinterpret(Float64, view(recvbufs[i], 1:COMMON_BYTES))[1] : NaN
             compute_latency[i, epoch] = t
         end
+
+        ## coordinator task
         ts_update[epoch] = @elapsed begin
             state = coordinator_task!(V, ∇, recvbufs, sendbuf, epoch, repochs; state, parsed_args...)    
         end
+
+        ## optinally record the iterate
         if saveiterates
             ndims = length(size(V))
             selectdim(iterates, ndims+1, epoch) .= V
@@ -286,9 +322,6 @@ function coordinator_main()
     end
 
     @info "Optimization finished; writing output to disk"
-
-    # signal all workers to stop
-    shutdown(pool)
 
     # write output
     h5open(parsed_args[:outputfile], "w") do fid
@@ -317,6 +350,15 @@ function coordinator_main()
         fid["benchmark/compute_latency"] = compute_latency
     end
     @info "Output written to disk; exiting"
+
+    # signal all workers to stop
+    shutdown(pool)
+
+    # stop the profiler
+    close(profiler_chin)
+    wait(profiler_task)
+    close(profiler_chout)    
+
     return
 end
 
