@@ -15,6 +15,7 @@
     inputfile = tempname()
     h5open(inputfile, "w") do file
         file[inputdataset] = X
+        flush(file)
     end
 
     # correct solution (computed via LinearAlgebra.svd)
