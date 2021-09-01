@@ -167,14 +167,17 @@ end
 metadata_view(buffer) = view(buffer, COMMON_BYTES+1:(COMMON_BYTES + FROM_WORKER_METADATA_BYTES))
 data_view(buffer) = reinterpret(ELEMENT_TYPE, @view buffer[(COMMON_BYTES + FROM_WORKER_METADATA_BYTES+1):end])
 
-function worker_task!(recvbuf, sendbuf, localdata; state=nothing, nsubpartitions::Integer, ncomponents::Integer, nworkers::Integer, kwargs...)
+function worker_task!(recvbuf, sendbuf, localdata; state=nothing, ncomponents::Integer, nworkers::Integer, kwargs...)
     0 < ncomponents || throw(DomainError(ncomponents, "ncomponents must be positive"))
     to_worker_metadata_bytes = sizeof(UInt16) * 2 * nworkers
     dimension, nlocalsamples = size(localdata)
-    1 <= nsubpartitions <= nlocalsamples || throw(DimensionMismatch("nsubpartitions is $nsubpartitions, but nlocalsamples is $nlocalsamples"))
 
-    # randomly select a sub-partition
-    subpartition_index = rand(1:nsubpartitions)
+    # get the number of sub-partitions and the index of the sub-partition to process
+    vs = reinterpret(Tuple{UInt16,UInt16}, view(recvbuf, 1:to_worker_metadata_bytes))
+    rank <= length(vs) || throw(DimensionMismatch("vs has length $(length(vs)), but rank is $rank"))
+    nsubpartitions, subpartition_index = vs[rank]
+    0 < nsubpartitions <= nlocalsamples || throw(DimensionMismatch("nsubpartitions is $nsubpartitions, but nlocalsamples is $nlocalsamples"))
+    0 < subpartition_index <= nsubpartitions || throw(ArgumentError("subpartition_index is $subpartition_index, but nsubpartitions is $nsubpartitions"))
 
     # format the recvbuf into a matrix we can operate on
     recvdata = view(recvbuf, (to_worker_metadata_bytes+1):length(recvbuf))

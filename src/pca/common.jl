@@ -157,6 +157,35 @@ end
 
 """
 
+For each worker, choose the sub-partition it should process.
+"""
+function select_partitions!(partition_indices::AbstractVector{<:Integer}, nsubpartitions_all::AbstractVector{<:Integer})
+    length(partition_indices) == length(nsubpartitions_all) || throw(DimensionMismatch("partition_indices has dimension $(length(partition_indices)), but nsubpartitions_all has dimension $(size(nsubpartitions_all))"))    
+    for i in 1:length(partition_indices)
+        0 < nsubpartitions_all[i] || throw(ArgumentError("Invalid number of partitions for worker $i: $nsubpartitions_all"))
+        partition_indices[i] = rand(1:nsubpartitions_all[i])
+    end
+    partition_indices
+end
+
+"""
+
+For each worker, write the number of sub-partitions and the index of the sub-partition to process to `sendbuf`.
+"""
+function write_partitions!(sendbuf::AbstractVector{UInt8}; partition_indices::AbstractVector{<:Integer}, nsubpartitions_all::AbstractVector{<:Integer})
+    length(partition_indices) == length(nsubpartitions_all) || throw(DimensionMismatch("partition_indices has dimension $(length(partition_indices)), but nsubpartitions_all has dimension $(size(nsubpartitions_all))"))        
+    nworkers = length(partition_indices)
+    s = sizeof(UInt16) * 2 * nworkers
+    s <= length(sendbuf) || throw(DimensionMismatch("sendbuf is of length $(length(sendbuf)), but nworkers is $nworkers"))
+    vs = reinterpret(Tuple{UInt16,UInt16}, view(sendbuf, 1:s))
+    for i in 1:nworkers
+        vs[i] = (nsubpartitions_all[i], partition_indices[i])
+    end
+    sendbuf
+end
+
+"""
+
 Main loop run by the coordinator.
 """
 function coordinator_main()
@@ -166,6 +195,9 @@ function coordinator_main()
     niterations::Int = parsed_args[:niterations]
     saveiterates::Bool = parsed_args[:saveiterates]
     nworkers::Int = parsed_args[:nworkers]
+    nsubpartitions_all = fill(parsed_args[:nsubpartitions], nworkers)
+    partition_indices = zeros(UInt16, nworkers)
+    to_worker_common_bytes = sizeof(UInt16) * 2 * nworkers
     @info "Coordinator started"
 
     # create the output directory if it doesn't exist, and make sure we can write to the output file
@@ -212,6 +244,8 @@ function coordinator_main()
 
     # first iteration (initializes state)
     epoch = 1
+    select_partitions!(partition_indices, nsubpartitions_all)
+    write_partitions!(sendbuf; partition_indices, nsubpartitions_all)
     ts_compute[epoch] = @elapsed begin
         repochs = asyncmap!(pool, sendbuf, recvbuf, isendbuf, irecvbuf, comm, nwait=f, epoch=epoch, tag=data_tag)
     end
@@ -231,6 +265,8 @@ function coordinator_main()
 
     # remaining iterations
     for epoch in 2:niterations
+        select_partitions!(partition_indices, nsubpartitions_all)
+        write_partitions!(sendbuf; partition_indices, nsubpartitions_all)
         ts_compute[epoch] = @elapsed begin
             repochs = asyncmap!(pool, sendbuf, recvbuf, isendbuf, irecvbuf, comm, nwait=f, epoch=epoch, tag=data_tag)
         end
