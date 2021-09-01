@@ -216,6 +216,7 @@ function coordinator_main()
     niterations::Int = parsed_args[:niterations]
     saveiterates::Bool = parsed_args[:saveiterates]
     nworkers::Int = parsed_args[:nworkers]
+    nwait::Int = parsed_args[:nwait]
     nsubpartitions_all = fill(parsed_args[:nsubpartitions], nworkers)
     partition_indices = zeros(UInt16, nworkers)
     to_worker_common_bytes = sizeof(UInt16) * 2 * nworkers
@@ -260,6 +261,11 @@ function coordinator_main()
     windowsize = Second(1)
     profiler_task = Threads.@spawn CodedComputing.latency_profiler(profiler_chin, profiler_chout; nworkers, windowsize)
 
+    # setup the load-balancer
+    _, loadbalancer_chout = CodedComputing.setup_loadbalancer_channels()
+    min_processed_fraction = nwait / nworkers / parsed_args[:nsubpartitions]
+    loadbalancer_task = Threads.@spawn CodedComputing.load_balancer(profiler_chout, loadbalancer_chout; min_processed_fraction, nwait, nworkers, time_limit=1.0)
+
     # manually call the GC now, and optionally turn off GC, to avoid pauses later during execution
     GC.gc()
     GC.enable(parsed_args[:enablegc])
@@ -272,9 +278,12 @@ function coordinator_main()
     # first iteration (initializes state)
     epoch = 1
 
-    ## force an error if the profiler task has failed
+    ## force an error if the profiler or load-balancer task has failed
     if istaskfailed(profiler_task)
         wait(profiler_task)
+    end
+    if istaskfailed(loadbalancer_task)
+        wait(loadbalancer_task)
     end
 
     ## update partitioning
@@ -321,9 +330,12 @@ function coordinator_main()
     # remaining iterations
     for epoch in 2:niterations
 
-        ## force an error if the profiler task has failed
+        ## force an error if the profiler or load-balancer task has failed
         if istaskfailed(profiler_task)
             wait(profiler_task)
+        end
+        if istaskfailed(loadbalancer_task)
+            wait(loadbalancer_task)
         end        
 
         ## update partitioning        
@@ -401,10 +413,12 @@ function coordinator_main()
     # signal all workers to stop
     shutdown(pool)
 
-    # stop the profiler
+    # stop the profiler and load-balancer
     close(profiler_chin)
     wait(profiler_task)
-    close(profiler_chout)    
+    close(profiler_chout)
+    wait(loadbalancer_task)
+    close(loadbalancer_chout)
 
     return
 end
