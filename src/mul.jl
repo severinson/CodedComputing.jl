@@ -1,6 +1,6 @@
 # Specialized routines for multiplying a subset of the columns of a sparse matrix by a vector or matrix
 
-export colsmul!
+export colsmul!, tcolsmul!
 
 """
     colsmul!(C::AbstractMatrix, A::SparseArrays.AbstractSparseMatrixCSC, B::AbstractMatrix, cols, α=1, β=0)
@@ -30,17 +30,25 @@ function colsmul!(C::AbstractMatrix, A::SparseArrays.AbstractSparseMatrixCSC, B:
     C
 end
 
+function colsmul!(C::AbstractMatrix, A::AbstractMatrix, B::AbstractMatrix, cols, args...)
+    mul!(C, view(A, :, cols), view(B, cols, :), args...)
+end
+
+function colsmul!(c::AbstractVector, A::AbstractMatrix, b::AbstractVector, args...)
+    colsmul!(reshape(c, length(c), 1), A, reshape(b, length(b), 1), args...)
+    c
+end
+
 """
 
 Efficient implementation of the multiplication `α .* Transpose(A[:, cols]) * B .+ β .* C`, where 
 `A` is sparse. The result is stored in-place in `C[cols, :]`.
 """
-function colsmul!(C::AbstractMatrix, At::Transpose{Vt,<:SparseArrays.AbstractSparseMatrixCSC{Vt}}, B::AbstractMatrix, cols, α=1, β=0) where Vt
+function tcolsmul!(C::AbstractMatrix, A::SparseArrays.AbstractSparseMatrixCSC, B::AbstractMatrix, cols, α=1, β=0)
     length(size(C)) == length(size(B)) || throw(DimensionMismatch("C has dimensions $(size(C)), but B has dimensions $(size(B))"))
-    size(C, 1) == size(At, 1) || throw(DimensionMismatch("C has dimensions $(size(C)), but At has dimensions $(size(At))"))
-    size(At, 2) == size(B, 1) || throw(DimensionMismatch("At has dimensions $(size(At)), but B has dimensions $(size(B))"))    
-    0 < minimum(cols) <= maximum(cols) <= size(At, 2) || throw(ArgumentError("At has dimensions $(size(At)), but cols is $cols"))
-    A = parent(At)
+    size(C, 1) == size(A, 2) || throw(DimensionMismatch("C has dimensions $(size(C)), but A has dimensions $(size(A))"))
+    size(A, 1) == size(B, 1) || throw(DimensionMismatch("A has dimensions $(size(A)), but B has dimensions $(size(B))"))    
+    0 < minimum(cols) <= maximum(cols) <= size(A, 2) || throw(ArgumentError("A has dimensions $(size(A)), but cols is $cols"))
     rows = rowvals(A)
     vals = nonzeros(A)
     C .*= β
@@ -58,13 +66,4 @@ function colsmul!(C::AbstractMatrix, At::Transpose{Vt,<:SparseArrays.AbstractSpa
         end
     end
     C
-end
-
-function colsmul!(C::AbstractMatrix, A::AbstractMatrix, B::AbstractMatrix, cols, args...)
-    mul!(C, view(A, :, cols), view(B, cols, :), args...)
-end
-
-function colsmul!(c::AbstractVector, A::AbstractMatrix, b::AbstractVector, args...)
-    colsmul!(reshape(c, length(c), 1), A, reshape(b, length(b), 1), args...)
-    c
 end
