@@ -60,8 +60,8 @@ function update_parsed_args!(s::ArgParseSettings, parsed_args)
 
     # record the number of rows and columns of the dataset
     nrows, ncolumns = problem_size(parsed_args[:inputfile], parsed_args[:inputdataset])
-    parsed_args[:nrows] = nrows
-    parsed_args[:ncolumns] = ncolumns    
+    parsed_args[:nrows] = nrows # problem dimension
+    parsed_args[:ncolumns] = ncolumns # number of samples
 
     parsed_args
 end
@@ -210,13 +210,12 @@ function worker_task!(recvbuf, sendbuf, localdata; state=nothing, ncomponents::I
     W
 end
 
-function update_gradient_sgd!(∇, recvbufs, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, nreplicas, nsubpartitions, kwargs...)
+function update_gradient_sgd!(∇, recvbufs, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, nreplicas, ncolumns::Integer, kwargs...)
     length(recvbufs) == length(repochs) || throw(DimensionMismatch("recvbufs has dimension $(length(recvbufs)), but repochs has dimension $(length(repochs))"))
     0 < nreplicas || throw(DomainError(nreplicas, "nreplicas must be positive"))
     epoch <= 1 || !isnothing(state) || error("expected state to be initiated for epoch > 1")
     nworkers = length(recvbufs)
     mod(nworkers, nreplicas) == 0 || throw(ArgumentError("nworkers must be divisible by nreplicas"))
-    npartitions = div(nworkers, nreplicas) * nsubpartitions
 
     # record the epoch at which each partition was last updated
     if isnothing(state)
@@ -229,7 +228,7 @@ function update_gradient_sgd!(∇, recvbufs, epoch::Integer, repochs::Vector{<:I
     # the partitions are arranged sequentially, so if there are 2 partitions and 3 replicas, then
     # Vs is of length 6, and its elements correspond to partitions [1, 1, 1, 2, 2, 2]
     ∇ .= 0
-    nresults = 0
+    processed_nsamples = 0
     for worker_index in 1:nworkers
 
         # skip workers that we've never received anything from
@@ -264,15 +263,19 @@ function update_gradient_sgd!(∇, recvbufs, epoch::Integer, repochs::Vector{<:I
             continue
         end
 
+        # compute the number of samples that make up this partition, and add it to the total
+        worker_nsamples = length(partition(ncolumns, div(nworkers, nreplicas), worker_rank))
+        subpartition_nsamples = length(partition(worker_nsamples, nsubpartitions, subpartition_index))
+        processed_nsamples += subpartition_nsamples
+
         # add the sub-gradient computed by this worker
         uepochs[partition_index] = epoch
         Vw = reshape(data_view(recvbufs[worker_index]), size(∇)...)
         ∇ .+= Vw
-        nresults += 1
     end
 
     # scale the (stochastic) gradient to make it unbiased estimate of the true gradient
-    ∇ .*= npartitions / nresults
+    ∇ .*= ncolumns / processed_nsamples
     uepochs
 end
 
