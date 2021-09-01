@@ -1,7 +1,6 @@
 using MPI, MPIAsyncPools
 using CodedComputing
 using HDF5, LinearAlgebra
-using MKLSparse
 using ArgParse
 using Dates
 
