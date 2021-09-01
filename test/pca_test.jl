@@ -29,6 +29,7 @@
         --niterations $niterations 
         --ncomponents $ncomponents
         --saveiterates
+        --loadbalance
         ```))
     Vs, _ = test_pca_iterates(;X, niterations, ncomponents, ev, outputfile, outputdataset)
 
@@ -45,6 +46,7 @@
         --ncomponents $ncomponents
         --saveiterates
         --iteratedataset $iteratedataset
+        --loadbalance
         ```))    
     test_pca_iterates(;X, niterations, ncomponents, ev, outputfile, outputdataset)        
     
@@ -58,6 +60,7 @@
         --ncomponents $ncomponents
         --nreplicas $nreplicas
         --saveiterates
+        --loadbalance
         ```))
     test_pca_iterates(;X, niterations, ncomponents, ev, outputfile, outputdataset)                
 
@@ -71,6 +74,7 @@
         --nwait $(nworkers-1)
         --nreplicas $nreplicas        
         --saveiterates
+        --loadbalance
         ```))
     test_pca_iterates(;X, niterations, ncomponents, ev, outputfile, outputdataset)
 
@@ -86,6 +90,7 @@
         --nreplicas $nreplicas
         --nwait $nwait
         --saveiterates
+        --loadbalance
         ```))
     test_pca_iterates(;X, niterations, ncomponents, ev, outputfile, outputdataset)                            
 
@@ -100,6 +105,7 @@
         --nwait $(nworkers-1) 
         --stepsize $stepsize
         --saveiterates
+        --loadbalance
         ```))
     test_pca_iterates(;X, niterations, ncomponents, ev, outputfile, outputdataset, atol=Inf)
 
@@ -115,6 +121,7 @@
         --nsubpartitions $nsubpartitions 
         --stepsize $stepsize
         --saveiterates
+        --loadbalance
         ```))
     test_pca_iterates(;X, niterations, ncomponents, ev, outputfile, outputdataset, atol=Inf)
 end
@@ -153,6 +160,7 @@ end
         --niterations $niterations
         --ncomponents $ncomponents
         --saveiterates
+        --loadbalance
         ```))
     test_pca_iterates(;X, niterations, ncomponents, ev, outputfile, outputdataset)
 end

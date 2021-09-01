@@ -72,6 +72,9 @@ function parse_commandline(isroot::Bool)
         "--enablegc"
             help = "Enable garbage collection while running the computation (defaults to disabled)"
             action = :store_true
+        "--loadbalance"
+            help = "Enable the load-balancer"
+            action = :store_true
     end
 
     # optionally add implementation-specific arguments
@@ -217,6 +220,7 @@ function coordinator_main()
     saveiterates::Bool = parsed_args[:saveiterates]
     nworkers::Int = parsed_args[:nworkers]
     nwait::Int = parsed_args[:nwait]
+    loadbalance::Bool = parsed_args[:loadbalance]
     nsubpartitions_all = fill(parsed_args[:nsubpartitions], nworkers)
     partition_indices = zeros(UInt16, nworkers)
     to_worker_common_bytes = sizeof(UInt16) * 2 * nworkers
@@ -304,16 +308,18 @@ function coordinator_main()
     end
 
     ## send any new latency information to the profiling sub-system
-    timestamp = Time(now())
-    for i in 1:nworkers
-        if repochs[i] != prev_repochs[i]
-            _, nsubpartitions, subpartition_index = metadata_from_recvbuf(recvbufs[i])            
-            comp_delay = comp_delay_from_recvbuf(recvbufs[i])
-            comm_delay = pool.latency[i] - comp_delay
-            v = CodedComputing.ProfilerInput(i, 1/nworkers, 1/nsubpartitions, timestamp, comp_delay, comm_delay)
-            push!(profiler_chin, v)
+    if loadbalance
+        timestamp = Time(now())
+        for i in 1:nworkers
+            if repochs[i] != prev_repochs[i]
+                _, nsubpartitions, subpartition_index = metadata_from_recvbuf(recvbufs[i])            
+                comp_delay = comp_delay_from_recvbuf(recvbufs[i])
+                comm_delay = pool.latency[i] - comp_delay
+                v = CodedComputing.ProfilerInput(i, 1/nworkers, 1/nsubpartitions, timestamp, comp_delay, comm_delay)
+                push!(profiler_chin, v)
+            end
+            prev_repochs[i] = repochs[i]
         end
-        prev_repochs[i] = repochs[i]
     end
 
     ## coordinator task
@@ -367,17 +373,19 @@ function coordinator_main()
         end
 
         ## send any new latency information to the profiling sub-system
-        timestamp = Time(now())
-        for i in 1:nworkers
-            if repochs[i] != prev_repochs[i]
-                _, nsubpartitions, subpartition_index = metadata_from_recvbuf(recvbufs[i])            
-                comp_delay = comp_delay_from_recvbuf(recvbufs[i])
-                comm_delay = pool.latency[i] - comp_delay
-                v = CodedComputing.ProfilerInput(i, 1/nworkers, 1/nsubpartitions, timestamp, comp_delay, comm_delay)
-                push!(profiler_chin, v)
+        if loadbalance
+            timestamp = Time(now())
+            for i in 1:nworkers
+                if repochs[i] != prev_repochs[i]
+                    _, nsubpartitions, subpartition_index = metadata_from_recvbuf(recvbufs[i])            
+                    comp_delay = comp_delay_from_recvbuf(recvbufs[i])
+                    comm_delay = pool.latency[i] - comp_delay
+                    v = CodedComputing.ProfilerInput(i, 1/nworkers, 1/nsubpartitions, timestamp, comp_delay, comm_delay)
+                    push!(profiler_chin, v)
+                end
+                prev_repochs[i] = repochs[i]
             end
-            prev_repochs[i] = repochs[i]
-        end        
+        end      
 
         ## coordinator task
         ts_update[epoch] = @elapsed begin
