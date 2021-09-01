@@ -311,11 +311,12 @@ function update_gradient_vr!(∇, recvbufs, epoch::Integer, repochs::Vector{<:In
             @error "received incorrectly formatted metadata from the $(worker_index)-th worker in epoch $epoch: $metadata"
             continue
         end
-        canary, worker_rank, nsubpartitions, subpartition_index = metadata
+        canary, worker_rank, worker_nsubpartitions, subpartition_index = metadata
         if  canary != CANARY_VALUE
             @error "recieved incorrect canary value from the $(worker_index)-th worker in epoch $epoch: $canary"
             continue
         end
+        worker_nsubpartitions == nsubpartitions || throw(ArgumentError("update_gradient_vr doesn't support dynamically changing the number of partitions"))
         if worker_rank != worker_index
             @error "unexpected rank for the $(worker_index)-th worker in epoch $epoch: $worker_rank"
             continue
