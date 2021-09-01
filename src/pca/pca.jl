@@ -1,6 +1,6 @@
 using ArgParse, Random, SparseArrays, HDF5, H5Sparse, SAG
 
-const TO_WORKER_METADATA_BYTES = 6
+const FROM_WORKER_METADATA_BYTES = 6
 const ELEMENT_TYPE = Float32
 const CANARY_VALUE = UInt16(2^16 - 1)
 
@@ -132,7 +132,7 @@ function worker_setup(rank::Integer, nworkers::Integer; ncomponents::Integer, kw
     localdata = read_localdata(rank, nworkers; kwargs...)
     dimension = size(localdata, 1)
     recvbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*ncomponents)
-    sendbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*ncomponents + COMMON_BYTES + TO_WORKER_METADATA_BYTES)
+    sendbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*ncomponents + COMMON_BYTES + FROM_WORKER_METADATA_BYTES)
     @info "(rank $rank) setup finished"
     localdata, recvbuf, sendbuf
 end
@@ -156,18 +156,18 @@ function coordinator_setup(nworkers::Integer; inputfile::String, inputdataset::S
 
     # communication buffers
     sendbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*ncomponents)
-    recvbuf = Vector{UInt8}(undef, (sizeof(ELEMENT_TYPE)*dimension*ncomponents + COMMON_BYTES + TO_WORKER_METADATA_BYTES) * nworkers)
+    recvbuf = Vector{UInt8}(undef, (sizeof(ELEMENT_TYPE)*dimension*ncomponents + COMMON_BYTES + FROM_WORKER_METADATA_BYTES) * nworkers)
     reinterpret(ELEMENT_TYPE, view(sendbuf, :)) .= view(V, :)
 
     V, recvbuf, sendbuf
 end
 
-metadata_view(buffer) = view(buffer, COMMON_BYTES+1:(COMMON_BYTES + TO_WORKER_METADATA_BYTES))
-data_view(buffer) = reinterpret(ELEMENT_TYPE, @view buffer[(COMMON_BYTES + TO_WORKER_METADATA_BYTES+1):end])
+metadata_view(buffer) = view(buffer, COMMON_BYTES+1:(COMMON_BYTES + FROM_WORKER_METADATA_BYTES))
+data_view(buffer) = reinterpret(ELEMENT_TYPE, @view buffer[(COMMON_BYTES + FROM_WORKER_METADATA_BYTES+1):end])
 
 function worker_task!(recvbuf, sendbuf, localdata; state=nothing, nsubpartitions::Integer, ncomponents::Integer, kwargs...)
     0 < ncomponents || throw(DomainError(ncomponents, "ncomponents must be positive"))        
-    sizeof(recvbuf) + COMMON_BYTES + TO_WORKER_METADATA_BYTES == sizeof(sendbuf) || throw(DimensionMismatch("recvbuf has size $(sizeof(recvbuf)), but sendbuf has size $(sizeof(sendbuf))"))
+    sizeof(recvbuf) + COMMON_BYTES + FROM_WORKER_METADATA_BYTES == sizeof(sendbuf) || throw(DimensionMismatch("recvbuf has size $(sizeof(recvbuf)), but sendbuf has size $(sizeof(sendbuf))"))
     dimension, nlocalsamples = size(localdata)
     1 <= nsubpartitions <= nlocalsamples || throw(DimensionMismatch("nsubpartitions is $nsubpartitions, but nlocalsamples is $nlocalsamples"))
 
