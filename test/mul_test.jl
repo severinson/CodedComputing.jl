@@ -24,6 +24,31 @@ using Random, SparseArrays
     @test C ≈ α.*A[:, cols]*B[cols, :] .+ β.*Cc
 end
 
+@testset "Transposed SparseMatrixCSC with matrices" begin
+    rng = MersenneTwister(123)
+    A = sprand(rng, 10, 5, 0.2)
+    At = Transpose(A)
+    C = zeros(5, 2)
+    B = randn(10, 2)
+
+    cols = 1:5
+    colsmul!(C, At, B, cols)
+    @test C[cols, :] ≈ A[:, cols]'*B
+
+    cols = 2:4
+    colsmul!(C, At, B, cols)
+    @test C[cols, :] ≈ A[:, cols]'*B
+
+    cols = [1, 5]
+    colsmul!(C, At, B, cols)
+    @test C[cols, :] ≈ A[:, cols]'*B
+
+    α, β = rand(), rand()
+    Cc = copy(C)
+    colsmul!(C, At, B, cols, α, β)
+    @test C[cols, :] ≈ α.*A[:, cols]'*B .+ β.*Cc[cols, :]
+end
+
 @testset "SparseMatrixCSC with vectors" begin
     rng = MersenneTwister(123)
     A = sprand(rng, 10, 5, 0.2)
