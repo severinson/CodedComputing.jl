@@ -60,7 +60,7 @@ function latency_profiler(chin::Channel{ProfilerInput}, chout::Channel{ProfilerO
     function window_mean(w, key)
         rv = 0.0
         n = 0
-        for (_, t) in value(w)
+        for (_, t) in OnlineStats.value(w)
             rv += getfield(t, key)
             n += 1
         end
@@ -74,7 +74,7 @@ function latency_profiler(chin::Channel{ProfilerInput}, chout::Channel{ProfilerO
         # populate the buffer
         i = 0
         n = 0
-        for (_, t) in value(w)
+        for (_, t) in OnlineStats.value(w)
             v = getfield(t, key)
 
             # compute delay should be normalized
