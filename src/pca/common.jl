@@ -187,6 +187,26 @@ end
 
 """
 
+Return the metadata recorded in a buffer received from a worker.
+"""
+function metadata_from_recvbuf(recvbuf::AbstractVector{UInt8})
+    metadata = reinterpret(UInt16, metadata_view(recvbuf))
+    length(metadata) == 4 || throw(ArgumentError("metadata is $metadata"))
+    canary, worker_rank, nsubpartitions, subpartition_index = metadata
+    canary == CANARY_VALUE || throw(ArgumentError("metadata is $metadata"))
+    worker_rank, nsubpartitions, subpartition_index
+end
+
+"""
+
+Return the compute delay recorded in a buffer received from a worker.
+"""
+function comp_delay_from_recvbuf(recvbuf::AbstractVector{UInt8})
+    reinterpret(Float64, view(recvbuf, 1:COMMON_BYTES))[1]
+end
+
+"""
+
 Main loop run by the coordinator.
 """
 function coordinator_main()
@@ -199,6 +219,7 @@ function coordinator_main()
     nsubpartitions_all = fill(parsed_args[:nsubpartitions], nworkers)
     partition_indices = zeros(UInt16, nworkers)
     to_worker_common_bytes = sizeof(UInt16) * 2 * nworkers
+    prev_repochs = zeros(Int, nworkers)
     @info "Coordinator started"
 
     # create the output directory if it doesn't exist, and make sure we can write to the output file
@@ -269,8 +290,21 @@ function coordinator_main()
     ## record latency
     latency[:, epoch] .= pool.latency
     for i in 1:nworkers
-        t = repochs[i] == epoch ? reinterpret(Float64, view(recvbufs[i], 1:COMMON_BYTES))[1] : NaN
+        t = repochs[i] == epoch ? comp_delay_from_recvbuf(recvbufs[i]) : NaN
         compute_latency[i, epoch] = t
+    end
+
+    ## send any new latency information to the profiling sub-system
+    timestamp = Time(now())
+    for i in 1:nworkers
+        if repochs[i] != prev_repochs[i]
+            _, nsubpartitions, subpartition_index = metadata_from_recvbuf(recvbufs[i])            
+            comp_delay = comp_delay_from_recvbuf(recvbufs[i])
+            comm_delay = pool.latency[i] - comp_delay
+            v = CodedComputing.ProfilerInput(i, 1/nworkers, 1/nsubpartitions, timestamp, comp_delay, comm_delay)
+            push!(profiler_chin, v)
+        end
+        prev_repochs[i] = repochs[i]
     end
 
     ## coordinator task
@@ -308,6 +342,19 @@ function coordinator_main()
             t = repochs[i] == epoch ? reinterpret(Float64, view(recvbufs[i], 1:COMMON_BYTES))[1] : NaN
             compute_latency[i, epoch] = t
         end
+
+        ## send any new latency information to the profiling sub-system
+        timestamp = Time(now())
+        for i in 1:nworkers
+            if repochs[i] != prev_repochs[i]
+                _, nsubpartitions, subpartition_index = metadata_from_recvbuf(recvbufs[i])            
+                comp_delay = comp_delay_from_recvbuf(recvbufs[i])
+                comm_delay = pool.latency[i] - comp_delay
+                v = CodedComputing.ProfilerInput(i, 1/nworkers, 1/nsubpartitions, timestamp, comp_delay, comm_delay)
+                push!(profiler_chin, v)
+            end
+            prev_repochs[i] = repochs[i]
+        end        
 
         ## coordinator task
         ts_update[epoch] = @elapsed begin
