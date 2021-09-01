@@ -220,9 +220,9 @@ function update_gradient_sgd!(∇, recvbufs, epoch::Integer, repochs::Vector{<:I
 
     # record the epoch at which each partition was last updated
     if isnothing(state)
-        uepochs = zeros(Int, npartitions)        
+        uepochs = Dict{Int,Int}()
     else
-        uepochs = state
+        uepochs::Dict{Int,Int} = state
     end
 
     # add at most 1 replica of each partition to the overall gradient
@@ -260,7 +260,7 @@ function update_gradient_sgd!(∇, recvbufs, epoch::Integer, repochs::Vector{<:I
 
         # don't do anything if we didn't receive from this worker this epoch,
         # or if we've already updated that partition this epoch
-        if repochs[worker_index] < epoch || uepochs[partition_index] == epoch
+        if repochs[worker_index] < epoch || (haskey(uepochs, partition_index) && uepochs[partition_index] == epoch)
             continue
         end
 
