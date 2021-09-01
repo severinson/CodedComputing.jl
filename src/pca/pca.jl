@@ -264,7 +264,7 @@ function update_gradient_sgd!(∇, recvbufs, epoch::Integer, repochs::Vector{<:I
         end
 
         # compute the number of samples that make up this partition, and add it to the total
-        worker_nsamples = length(partition(ncolumns, div(nworkers, nreplicas), worker_rank))
+        worker_nsamples = length(partition(ncolumns, div(nworkers, nreplicas), replica_index))
         subpartition_nsamples = length(partition(worker_nsamples, nsubpartitions, subpartition_index))
         processed_nsamples += subpartition_nsamples
 
@@ -275,7 +275,10 @@ function update_gradient_sgd!(∇, recvbufs, epoch::Integer, repochs::Vector{<:I
     end
 
     # scale the (stochastic) gradient to make it unbiased estimate of the true gradient
-    ∇ .*= ncolumns / processed_nsamples
+    processed_fraction = processed_nsamples / ncolumns
+    if !(processed_fraction ≈ 1)
+        ∇ ./= processed_fraction
+    end
     uepochs
 end
 
