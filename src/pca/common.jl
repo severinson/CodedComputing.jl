@@ -182,8 +182,7 @@ function coordinator_main()
     irecvbuf = similar(recvbuf)
 
     # views into recvbuf corresponding to each worker
-    n = div(length(recvbuf), nworkers)
-    recvbufs = [view(recvbuf, (i-1)*n+1:i*n) for i in 1:nworkers]
+    recvbufs = [view(recvbuf, partition(length(recvbuf), nworkers, i)) for i in 1:nworkers]
 
     # optionally store all intermediate iterates
     if saveiterates
