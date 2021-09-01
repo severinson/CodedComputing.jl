@@ -131,7 +131,8 @@ function worker_setup(rank::Integer, nworkers::Integer; ncomponents::Integer, kw
     isnothing(ncomponents) || 0 < ncomponents || throw(DomainError(ncomponents, "ncomponents must be positive"))
     localdata = read_localdata(rank, nworkers; kwargs...)
     dimension = size(localdata, 1)
-    recvbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*ncomponents)
+    to_worker_metadata_bytes = sizeof(UInt16) * 2 * nworkers
+    recvbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*ncomponents + to_worker_metadata_bytes)
     sendbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*ncomponents + COMMON_BYTES + FROM_WORKER_METADATA_BYTES)
     @info "(rank $rank) setup finished"
     localdata, recvbuf, sendbuf
@@ -155,9 +156,10 @@ function coordinator_setup(nworkers::Integer; inputfile::String, inputdataset::S
     end
 
     # communication buffers
-    sendbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*ncomponents)
+    to_worker_metadata_bytes = sizeof(UInt16) * 2 * nworkers
+    sendbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*dimension*ncomponents + to_worker_metadata_bytes)
     recvbuf = Vector{UInt8}(undef, (sizeof(ELEMENT_TYPE)*dimension*ncomponents + COMMON_BYTES + FROM_WORKER_METADATA_BYTES) * nworkers)
-    reinterpret(ELEMENT_TYPE, view(sendbuf, :)) .= view(V, :)
+    reinterpret(ELEMENT_TYPE, view(sendbuf, (to_worker_metadata_bytes+1):length(sendbuf))) .= view(V, :)
 
     V, recvbuf, sendbuf
 end
@@ -165,9 +167,9 @@ end
 metadata_view(buffer) = view(buffer, COMMON_BYTES+1:(COMMON_BYTES + FROM_WORKER_METADATA_BYTES))
 data_view(buffer) = reinterpret(ELEMENT_TYPE, @view buffer[(COMMON_BYTES + FROM_WORKER_METADATA_BYTES+1):end])
 
-function worker_task!(recvbuf, sendbuf, localdata; state=nothing, nsubpartitions::Integer, ncomponents::Integer, kwargs...)
-    0 < ncomponents || throw(DomainError(ncomponents, "ncomponents must be positive"))        
-    sizeof(recvbuf) + COMMON_BYTES + FROM_WORKER_METADATA_BYTES == sizeof(sendbuf) || throw(DimensionMismatch("recvbuf has size $(sizeof(recvbuf)), but sendbuf has size $(sizeof(sendbuf))"))
+function worker_task!(recvbuf, sendbuf, localdata; state=nothing, nsubpartitions::Integer, ncomponents::Integer, nworkers::Integer, kwargs...)
+    0 < ncomponents || throw(DomainError(ncomponents, "ncomponents must be positive"))
+    to_worker_metadata_bytes = sizeof(UInt16) * 2 * nworkers
     dimension, nlocalsamples = size(localdata)
     1 <= nsubpartitions <= nlocalsamples || throw(DimensionMismatch("nsubpartitions is $nsubpartitions, but nlocalsamples is $nlocalsamples"))
 
@@ -175,8 +177,9 @@ function worker_task!(recvbuf, sendbuf, localdata; state=nothing, nsubpartitions
     subpartition_index = rand(1:nsubpartitions)
 
     # format the recvbuf into a matrix we can operate on
-    length(reinterpret(ELEMENT_TYPE, recvbuf)) == dimension*ncomponents || throw(DimensionMismatch("recvbuf has length $(length(reinterpret(ELEMENT_TYPE, recvbuf))), but the data dimension is $dimension and ncomponents is $ncomponents"))
-    V = reshape(reinterpret(ELEMENT_TYPE, recvbuf), dimension, ncomponents)
+    recvdata = view(recvbuf, (to_worker_metadata_bytes+1):length(recvbuf))
+    length(reinterpret(ELEMENT_TYPE, recvdata)) == dimension*ncomponents || throw(DimensionMismatch("recvdata has length $(length(reinterpret(ELEMENT_TYPE, recvdata))), but the data dimension is $dimension and ncomponents is $ncomponents"))
+    V = reshape(reinterpret(ELEMENT_TYPE, recvdata), dimension, ncomponents)
 
     # prepare working memory
     if isnothing(state) # first iteration
@@ -358,7 +361,7 @@ function update_iterate!(V, ∇; state=nothing, stepsize, kwargs...)
     return
 end
 
-function coordinator_task!(V, ∇, recvbufs, sendbuf, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, kwargs...)
+function coordinator_task!(V, ∇, recvbufs, sendbuf, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, nworkers::Integer, kwargs...)
     isnothing(state) || length(state) == 2 || throw(ArgumentError("expected state to be nothing or a tuple of length 2, but got $state"))
     if isnothing(state)
         gradient_state = update_gradient!(∇, recvbufs, epoch, repochs; kwargs...)
@@ -368,7 +371,8 @@ function coordinator_task!(V, ∇, recvbufs, sendbuf, epoch::Integer, repochs::V
         gradient_state = update_gradient!(∇, recvbufs, epoch, repochs; state=gradient_state, kwargs...)
         iterate_state = update_iterate!(V, ∇; state=iterate_state, kwargs...)
     end
-    reinterpret(ELEMENT_TYPE, view(sendbuf, :)) .= view(V, :)
+    to_worker_metadata_bytes = sizeof(UInt16) * 2 * nworkers
+    reinterpret(ELEMENT_TYPE, view(sendbuf, (to_worker_metadata_bytes+1):length(sendbuf))) .= view(V, :)
     gradient_state, iterate_state
 end
 
