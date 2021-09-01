@@ -166,7 +166,7 @@ function coordinator_main()
     niterations::Int = parsed_args[:niterations]
     saveiterates::Bool = parsed_args[:saveiterates]
     nworkers::Int = parsed_args[:nworkers]
-    println("Coordinator has started")
+    @info "Coordinator started"
 
     # create the output directory if it doesn't exist, and make sure we can write to the output file
     mkpath(dirname(parsed_args[:outputfile]))
@@ -209,6 +209,7 @@ function coordinator_main()
     # ensure all workers have finished compiling before starting the computation
     # (this is only necessary when benchmarking)
     MPI.Barrier(comm)
+    @info "Optimization starting"
 
     # first iteration (initializes state)
     epoch = 1
@@ -249,6 +250,8 @@ function coordinator_main()
         end
     end
 
+    @info "Optimization finished; writing output to disk"
+
     # signal all workers to stop
     shutdown(pool)
 
@@ -278,6 +281,7 @@ function coordinator_main()
         fid["benchmark/latency"] = latency
         fid["benchmark/compute_latency"] = compute_latency
     end
+    @info "Output written to disk; exiting"
     return
 end
 
