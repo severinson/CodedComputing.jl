@@ -221,7 +221,7 @@ function coordinator_main()
     partition_indices = zeros(UInt16, nworkers)
     to_worker_common_bytes = sizeof(UInt16) * 2 * nworkers
     prev_repochs = zeros(Int, nworkers)
-    @info "Coordinator started"
+    @info "Coordinator started with $(Threads.nthreads()) threads"
 
     # create the output directory if it doesn't exist, and make sure we can write to the output file
     mkpath(dirname(parsed_args[:outputfile]))
@@ -336,7 +336,15 @@ function coordinator_main()
         end
         if istaskfailed(loadbalancer_task)
             wait(loadbalancer_task)
-        end        
+        end
+        
+        ## get updated partitioning from the load-balancer
+        while isready(loadbalancer_chout)
+            vout = take!(loadbalancer_chout)
+            0 < vout.worker <= nworkers || throw(ArgumentError("incorrect $vout"))
+            0 < vout.p || throw(ArgumentError("incorrect $vout"))
+            nsubpartitions_all[vout.worker] = vout.p
+        end             
 
         ## update partitioning        
         select_partitions!(partition_indices, nsubpartitions_all)
@@ -377,7 +385,7 @@ function coordinator_main()
         if saveiterates
             ndims = length(size(V))
             selectdim(iterates, ndims+1, epoch) .= V
-        end
+        end   
     end
 
     @info "Optimization finished; writing output to disk"
