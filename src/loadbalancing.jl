@@ -201,28 +201,36 @@ function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Re
         end
 
         # new = balance_contribution(ps, min_processed_fraction; θs, ds_comm, cms_comp, cvs_comp, nwait)
-        t = @elapsed begin
-            result = optimize(sim, qs; θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit)        
-        end
-        new_qs = result.minimizer
-        @info "load-balancer finished in $t seconds"
+        try
+            t = @elapsed begin
+                result = optimize(sim, qs; θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit)        
+            end
+            new_qs = result.minimizer
+            @info "load-balancer finished in $t seconds"
 
-        # push any changes into the output channel
-        for i in 1:nworkers
-            p = round(Int, 1/new_qs[i])
-            if p != ps[i]
-                ps[i] = p
-                vout = @NamedTuple{worker::Int,p::Int}((i, p))
-                try
-                    push!(chout, vout)
-                catch e
-                    if e isa InvalidStateException
-                        @info "error pushing value into output channel" e
-                        break
-                    else
-                        rethrow()
+            # push any changes into the output channel
+            for i in 1:nworkers
+                p = round(Int, 1/new_qs[i])
+                if p != ps[i]
+                    ps[i] = p
+                    vout = @NamedTuple{worker::Int,p::Int}((i, p))
+                    try
+                        push!(chout, vout)
+                    catch e
+                        if e isa InvalidStateException
+                            @info "error pushing value into output channel" e
+                            break
+                        else
+                            rethrow()
+                        end
                     end
                 end
+            end
+        catch e
+            if e isa ArgumentError
+                @error "load-balancer failed" e
+            else
+                rethrow()
             end
         end
     end
