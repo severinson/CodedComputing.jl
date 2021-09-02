@@ -103,7 +103,7 @@ end
 function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Real, nwait::Integer, nworkers::Integer, time_limit::Real=10.0)
     0 < min_processed_fraction <= 1 || throw(ArgumentError("min_processed_fraction is $min_processed_fraction"))
     0 < nworkers || throw(ArgumentError("nworkers is $nworkers"))
-    0 < nwait <= nworkers || throw(ArgumentError("nwait is $nwait"))
+    0 < nwait <= nworkers || throw(ArgumentError("nwait is $nwait, but nworkers is $nworkers"))
     @info "load_balancer task started"
 
     # fraction of dataset stored by and fraction of local data processed per iteration for each worker
