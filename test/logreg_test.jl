@@ -37,6 +37,7 @@ f = logreg_loss(v, X, b, λ)
 @test f < opt || isapprox(f, opt, rtol=1e-2)
 
 # DSAG
+vralgo = "tree"
 nworkers = 2
 nwait = 1
 niterations = 100
@@ -48,6 +49,7 @@ mpiexec(cmd -> run(```
     --inputdataset $inputdataset
     --nwait $nwait
     --variancereduced
+    --vralgo $vralgo
     --nsubpartitions $nsubpartitions
     --outputdataset $outputdataset
     --niterations $niterations
@@ -72,6 +74,7 @@ mpiexec(cmd -> run(```
     --inputdataset $inputdataset
     --nwait $nwait
     --variancereduced
+    --vralgo $vralgo    
     --nsubpartitions $nsubpartitions
     --outputdataset $outputdataset
     --niterations $niterations
@@ -103,6 +106,7 @@ mpiexec(cmd -> run(```
     --inputdataset $inputdataset
     --nwait $nwait
     --variancereduced
+    --vralgo $vralgo    
     --nsubpartitions $nsubpartitions
     --outputdataset $outputdataset
     --niterations $niterations
