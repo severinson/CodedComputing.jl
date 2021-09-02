@@ -85,12 +85,11 @@ f = logreg_loss(v, X, b, λ)
 @test f < opt || isapprox(f, opt, rtol=1e-2)    
 
 # DSAG w. sparse input data
-X = sparse(X)
 inputfile = tempname()
-# h5writecsc(inputfile, inputdataset, X)
-H5SparseMatrixCSC(inputfile, inputdataset, X)
 h5open(inputfile, "cw") do file
+    H5SparseMatrixCSC(file, inputdataset, sparse(X))
     file[labeldataset] = b
+    flush(file)
 end
 
 nworkers = 2
@@ -107,10 +106,9 @@ mpiexec(cmd -> run(```
     --nsubpartitions $nsubpartitions
     --outputdataset $outputdataset
     --niterations $niterations
-    --saveiterates
     --lambda $λ
     ```))
 vs = load_logreg_iterates(outputfile, outputdataset)
 v = vs[end]
-f = logreg_loss(v, X, b, λ)        
-@test f < opt || isapprox(f, opt, rtol=1e-2)    
+f = logreg_loss(v, X, b, λ)
+@test f < opt || isapprox(f, opt, rtol=1e-2)
