@@ -149,11 +149,38 @@ function read_localdata(i::Integer, nworkers::Integer; inputfile::String, inputd
     end
 end
 
+# function read_localdata(i::Integer, nworkers::Integer; inputfile::String, inputdataset::String, labeldataset::String, nreplicas::Integer, kwargs...)
+#     HDF5.ishdf5(inputfile) || throw(ArgumentError("$inputfile isn't an HDF5 file"))
+#     0 < nworkers || throw(DomainError(nworkers, "nworkers must be positive"))
+#     0 < nreplicas || throw(DomainError(nreplicas, "nreplicas must be positive"))
+#     0 < i <= nworkers || throw(DomainError(i, "i must be in [1, nworkers]"))
+#     mod(nworkers, nreplicas) == 0 || throw(ArgumentError("nworkers must be divisible by nreplicas"))
+#     npartitions = div(nworkers, nreplicas)
+#     partition_index = ceil(Int, i/nreplicas)
+#     _, nsamples = problem_size(inputfile, inputdataset)
+#     h5open(inputfile, "r") do fid
+#         inputdataset in keys(fid) || throw(ArgumentError("$inputdataset is not in $fid"))
+#         labeldataset in keys(fid) || throw(ArgumentError("$labeldataset is not in $fid"))
+        
+#         # determine the indices of the samples to be stored locally
+#         Is = partition(nsamples, npartitions, partition_index)
+
+#         # load those samples into memory
+#         labels = fid[labeldataset][Is]
+#         if H5Sparse.h5isvalidcsc(fid, inputdataset)
+#             return sparse(H5SparseMatrixCSC(fid, inputdataset, :, Is))::SparseMatrixCSC, labels
+#         else
+#             return fid[inputdataset][:, Is]::Matrix, labels
+#         end
+#     end
+# end
+
 function worker_setup(rank::Integer, nworkers::Integer; kwargs...)
     0 < nworkers || throw(DomainError(nworkers, "nworkers must be positive"))
     features, labels, dimension, nsamples = read_localdata(rank, nworkers; kwargs...)
     localdata = (features, labels)
-    recvbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*(dimension+1))
+    to_worker_metadata_bytes = sizeof(UInt16) * 2 * nworkers
+    recvbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*(dimension+1) + to_worker_metadata_bytes)
     sendbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*(dimension+1) + COMMON_BYTES + METADATA_BYTES)
     localdata, recvbuf, sendbuf
 end
@@ -174,9 +201,10 @@ function coordinator_setup(nworkers::Integer; inputfile::String, inputdataset::S
     end
 
     # communication buffers
-    sendbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*(dimension+1))
+    to_worker_metadata_bytes = sizeof(UInt16) * 2 * nworkers
+    sendbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*(dimension+1) + to_worker_metadata_bytes)
     recvbuf = Vector{UInt8}(undef, (sizeof(ELEMENT_TYPE)*(dimension+1) + COMMON_BYTES + METADATA_BYTES) * nworkers)
-    reinterpret(ELEMENT_TYPE, view(sendbuf, :)) .= view(V, :)
+    reinterpret(ELEMENT_TYPE, view(sendbuf, (to_worker_metadata_bytes+1):length(sendbuf))) .= view(V, :)
 
     V, recvbuf, sendbuf
 end
@@ -184,23 +212,32 @@ end
 metadata_view(buffer) = view(buffer, COMMON_BYTES+1:(COMMON_BYTES + METADATA_BYTES))
 data_view(buffer) = reinterpret(ELEMENT_TYPE, @view buffer[(COMMON_BYTES + METADATA_BYTES+1):end])
 
-function worker_task!(recvbuf, sendbuf, localdata; state=nothing, nsubpartitions::Integer, ncolumns::Integer, kwargs...)
-    sizeof(recvbuf) + COMMON_BYTES + METADATA_BYTES == sizeof(sendbuf) || throw(DimensionMismatch("recvbuf has size $(sizeof(recvbuf)), but sendbuf has size $(sizeof(sendbuf))"))
+function worker_task!(recvbuf, sendbuf, localdata; state=nothing, nsubpartitions::Integer, ncolumns::Integer, nworkers::Integer, kwargs...)
     feature_partitions, label_partitions = localdata
     length(feature_partitions) == nsubpartitions || throw(DimensionMismatch("There are $(length(feature_partitions)) feature partitions, but nsubpartitions is $nsubpartitions"))
     length(label_partitions) == nsubpartitions || throw(DimensionMismatch("There are $(length(label_partitions)) label partitions, but nsubpartitions is $nsubpartitions"))
-    
-    # select a random sub-partition
-    subpartition_index = rand(1:nsubpartitions)
+    to_worker_metadata_bytes = sizeof(UInt16) * 2 * nworkers
+
+    # get the number of sub-partitions and the index of the sub-partition to process
+    vs = reinterpret(Tuple{UInt16,UInt16}, view(recvbuf, 1:to_worker_metadata_bytes))
+    rank <= length(vs) || throw(DimensionMismatch("vs has length $(length(vs)), but rank is $rank"))
+    nsubpartitions, subpartition_index = vs[rank]
+    # 0 < nsubpartitions <= nlocalsamples || throw(DimensionMismatch("nsubpartitions is $nsubpartitions, but nlocalsamples is $nlocalsamples"))
+    0 < subpartition_index <= nsubpartitions || throw(ArgumentError("subpartition_index is $subpartition_index, but nsubpartitions is $nsubpartitions"))
+
+    @info "(rank $rank) p: $nsubpartitions, i: $subpartition_index"
+
+    # TODO: replace with colsmul-like processing
     Xw = feature_partitions[subpartition_index]
     bw = label_partitions[subpartition_index]
     dimension, nlocalsamples = size(Xw)
     1 <= nsubpartitions <= dimension || throw(DimensionMismatch("nsubpartitions is $nsubpartitions, but the dimension is $dimension"))
-    length(bw) == size(Xw, 2) || throw(DimensionMismatch("bw has dimension $(length(bw)), but Xw has dimensions $(size(Xw))"))
+    length(bw) == size(Xw, 2) || throw(DimensionMismatch("bw has dimension $(length(bw)), but Xw has dimensions $(size(Xw))"))    
 
     # format the recvbuf into a matrix we can operate on
-    v = reinterpret(ELEMENT_TYPE, recvbuf)
-    length(v) == dimension+1 || throw(DimensionMismatch("v has dimension $(length(v)), but the data dimension is $(dimension+1)"))    
+    recvdata = view(recvbuf, (to_worker_metadata_bytes+1):length(recvbuf))
+    length(reinterpret(ELEMENT_TYPE, recvdata)) == dimension+1 || throw(DimensionMismatch("recvdata has length $(length(reinterpret(ELEMENT_TYPE, recvdata))), but the data dimension is $dimension"))
+    v = reinterpret(ELEMENT_TYPE, recvdata)
 
     # prepare working memory
     if isnothing(state) # first iteration
@@ -387,7 +424,7 @@ function update_iterate!(v, ∇; state=nothing, stepsize, lambda, kwargs...)
     return
 end
 
-function coordinator_task!(V, ∇, recvbufs, sendbuf, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, kwargs...)
+function coordinator_task!(V, ∇, recvbufs, sendbuf, epoch::Integer, repochs::Vector{<:Integer}; nworkers::Integer, state=nothing, kwargs...)
     isnothing(state) || length(state) == 2 || throw(ArgumentError("expected state to be nothing or a tuple of length 2, but got $state"))
     if isnothing(state)
         gradient_state = update_gradient!(∇, recvbufs, epoch, repochs; kwargs...)
@@ -397,7 +434,8 @@ function coordinator_task!(V, ∇, recvbufs, sendbuf, epoch::Integer, repochs::V
         gradient_state = update_gradient!(∇, recvbufs, epoch, repochs; state=gradient_state, kwargs...)
         iterate_state = update_iterate!(V, ∇; state=iterate_state, kwargs...)
     end
-    reinterpret(ELEMENT_TYPE, view(sendbuf, :)) .= view(V, :)
+    to_worker_metadata_bytes = sizeof(UInt16) * 2 * nworkers
+    reinterpret(ELEMENT_TYPE, view(sendbuf, (to_worker_metadata_bytes+1):length(sendbuf))) .= view(V, :)
     gradient_state, iterate_state
 end
 
