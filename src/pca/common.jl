@@ -1,3 +1,4 @@
+using Random
 using MPI, MPIAsyncPools
 using CodedComputing
 using HDF5, LinearAlgebra
@@ -74,6 +75,10 @@ function parse_commandline(isroot::Bool)
         "--loadbalance"
             help = "Enable the load-balancer"
             action = :store_true
+        "--randomseed"
+            help = "Random seed used by the coordinator"
+            arg_type = UInt
+            default = rand(UInt)
     end
 
     # optionally add implementation-specific arguments
@@ -224,6 +229,7 @@ function coordinator_main()
     partition_indices = zeros(UInt16, nworkers)
     to_worker_common_bytes = sizeof(UInt16) * 2 * nworkers
     prev_repochs = zeros(Int, nworkers)
+    Random.seed!(parsed_args[:randomseed])
     @info "Coordinator started with $(Threads.nthreads()) threads"
 
     # create the output directory if it doesn't exist, and make sure we can write to the output file
