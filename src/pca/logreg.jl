@@ -200,15 +200,6 @@ function worker_task!(recvbuf, sendbuf, localdata; state=nothing, ncolumns::Inte
     0 < nsubpartitions <= nlocalsamples || throw(DimensionMismatch("nsubpartitions is $nsubpartitions, but nlocalsamples is $nlocalsamples"))
     0 < subpartition_index <= nsubpartitions || throw(ArgumentError("subpartition_index is $subpartition_index, but nsubpartitions is $nsubpartitions"))
 
-    @info "(rank $rank) p: $nsubpartitions, i: $subpartition_index"
-
-    # indices of the local samples to process in this iteration
-    cols = partition(nlocalsamples, nsubpartitions, subpartition_index)
-
-    # TODO: replace with colsmul-like processing
-    Xw = features[:, cols]
-    bw = labels[cols]
-
     # format the recvbuf into a matrix we can operate on
     recvdata = view(recvbuf, (to_worker_metadata_bytes+1):length(recvbuf))
     length(reinterpret(ELEMENT_TYPE, recvdata)) == dimension+1 || throw(DimensionMismatch("recvdata has length $(length(reinterpret(ELEMENT_TYPE, recvdata))), but the data dimension is $dimension"))
@@ -216,23 +207,24 @@ function worker_task!(recvbuf, sendbuf, localdata; state=nothing, ncolumns::Inte
 
     # prepare working memory
     if isnothing(state) # first iteration
-        max_samples = ncolumns # max number of samples processed per iteration
-        w = Vector{eltype(v)}(undef, max_samples) # temp. storage
+        w = Vector{eltype(v)}(undef, nlocalsamples) # temp. storage
     else # subsequent iterations
         w::Vector{eltype(v)} = state
     end
 
-    # compute gradient
-    wv = view(w, 1:length(cols))
-    mul!(wv', view(v, 2:length(v))', Xw)
-    wv .+= v[1] # implicit intercept
-    wv .*= bw
-    wv .= exp.(wv)
-    wv .+= 1
-    wv .= bw ./ wv
-    wv .*= -1
-    v[1] = sum(wv) # intercept derivative
-    mul!(view(v, 2:length(v), :), Xw, wv) # derivative w. respect to each feature
+    # indices of the local samples to process in this iteration
+    cols = partition(nlocalsamples, nsubpartitions, subpartition_index)
+
+    # gradient computation
+    tcolsmul!(w, features, view(v, 2:length(v)), cols)
+    @views w[cols] .+= v[1] # implicit intercept
+    @views w[cols] .*= labels[cols]
+    @views w[cols] .= exp.(w[cols])
+    @views w[cols] .+= 1
+    @views w[cols] .= labels[cols] ./ w[cols]
+    @views w[cols] .*= -1
+    @views v[1] = sum(w[cols]) # intercept derivative
+    colsmul!(view(v, 2:length(v)), features, w, cols)
     v ./= ncolumns # normalize by the total number of samples
 
     # populate the send buffer
