@@ -73,6 +73,6 @@ function tcolsmul!(C::AbstractMatrix, A::AbstractMatrix, B::AbstractMatrix, cols
 end
 
 function tcolsmul!(c::AbstractVector, A::AbstractMatrix, b::AbstractVector, args...)
-    colsmul!(reshape(c, length(c), 1), A, reshape(b, length(b), 1), args...)
+    tcolsmul!(reshape(c, length(c), 1), A, reshape(b, length(b), 1), args...)
     c
 end
