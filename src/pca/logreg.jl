@@ -4,6 +4,8 @@ const METADATA_BYTES = 8
 const ELEMENT_TYPE = Float32
 const CANARY_VALUE = UInt16(2^16 - 1)
 
+include("gradients.jl")
+
 function update_argsettings!(s::ArgParseSettings)
     @add_arg_table s begin
         "--lambda"
@@ -234,134 +236,6 @@ function worker_task!(recvbuf, sendbuf, localdata; state=nothing, ncolumns::Inte
     metadata[4] = subpartition_index
     data_view(sendbuf) .= v
     w
-end
-
-function update_gradient_sgd!(∇, recvbufs, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, nreplicas, nsubpartitions, kwargs...)
-    length(recvbufs) == length(repochs) || throw(DimensionMismatch("recvbufs has dimension $(length(recvbufs)), but repochs has dimension $(length(repochs))"))
-    0 < nreplicas || throw(DomainError(nreplicas, "nreplicas must be positive"))
-    epoch <= 1 || !isnothing(state) || error("expected state to be initiated for epoch > 1")
-    nworkers = length(recvbufs)
-    mod(nworkers, nreplicas) == 0 || throw(ArgumentError("nworkers must be divisible by nreplicas"))
-    npartitions = div(nworkers, nreplicas) * nsubpartitions
-
-    # record the epoch at which each partition was last updated
-    if isnothing(state)
-        uepochs = zeros(Int, npartitions)        
-    else
-        uepochs = state
-    end
-
-    # add at most 1 replica of each partition to the overall gradient
-    # the partitions are arranged sequentially, so if there are 2 partitions and 3 replicas, then
-    # Vs is of length 6, and its elements correspond to partitions [1, 1, 1, 2, 2, 2]
-    ∇ .= 0
-    nresults = 0
-    for worker_index in 1:nworkers
-
-        # skip workers that we've never received anything from
-        if repochs[worker_index] == 0
-            continue
-        end
-
-        worker_rank, nsubpartitions, subpartition_index = metadata_from_recvbuf(recvbufs[worker_index])
-        if worker_rank != worker_index
-            @error "unexpected rank for the $(worker_index)-th worker in epoch $epoch: $worker_rank"
-            continue
-        end
-        if !(0 < subpartition_index <= nsubpartitions)
-            @error "received incorrect sub-partition index from the $(worker_index)-th worker in epoch $epoch: $subpartition_index "
-            continue
-        end
-        replica_index = ceil(Int, worker_index/nreplicas)
-        partition_index = (replica_index-1)*nsubpartitions + subpartition_index
-
-        # don't do anything if we didn't receive from this worker this epoch,
-        # or if we've already updated that partition this epoch
-        if repochs[worker_index] < epoch || uepochs[partition_index] == epoch
-            continue
-        end
-
-        # add the sub-gradient computed by this worker
-        uepochs[partition_index] = epoch
-        Vw = reshape(data_view(recvbufs[worker_index]), size(∇)...)
-        ∇ .+= Vw
-        nresults += 1
-    end
-
-    # scale the (stochastic) gradient to make it unbiased estimate of the true gradient
-    ∇ .*= npartitions / nresults
-    uepochs
-end
-
-function update_gradient_vr!(∇, recvbufs, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, nostale::Bool, nreplicas::Integer, nsubpartitions::Integer, kwargs...)
-    length(recvbufs) == length(repochs) || throw(DimensionMismatch("recvbufs has dimension $(length(recvbufs)), but repochs has dimension $(length(repochs))"))
-    0 < nreplicas || throw(DomainError(nreplicas, "nreplicas must be positive"))
-    epoch <= 1 || !isnothing(state) || error("expected state to be initiated for epoch > 1")
-    nworkers = length(recvbufs)
-    mod(nworkers, nreplicas) == 0 || throw(ArgumentError("nworkers must be divisible by nreplicas"))
-    npartitions = div(nworkers, nreplicas) * nsubpartitions
-
-    # record the epoch at which each partition was last updated
-    # store the previously computed partial gradients
-    if isnothing(state)
-        uepochs = zeros(Int, npartitions)
-        worker_from_partition = zeros(Int, npartitions)
-        sg = StochasticGradient(eltype(∇), npartitions, size(∇))
-    else
-        uepochs, worker_from_partition, sg = state
-        worker_from_partition .= 0
-    end    
-
-    # iterate over the received partial gradients to record which of them are newer than what we currently have
-    for worker_index in 1:nworkers
-
-        # skip workers that we've never received anything from
-        if repochs[worker_index] == 0
-            continue
-        end
-        
-        worker_rank, nsubpartitions, subpartition_index = metadata_from_recvbuf(recvbufs[worker_index])
-        if worker_rank != worker_index
-            @error "unexpected rank for the $(worker_index)-th worker in epoch $epoch: $worker_rank"
-            continue
-        end
-        if !(0 < subpartition_index <= nsubpartitions)
-            @error "received incorrect sub-partition index from the $(worker_index)-th worker in epoch $epoch: $subpartition_index "
-            continue
-        end
-        replica_index = ceil(Int, worker_index/nreplicas)
-        partition_index = (replica_index-1)*nsubpartitions + subpartition_index
-
-        # discard stale gradients if the nostale option is set
-        if nostale && repochs[worker_index] != epoch
-            continue
-        end
-
-        # skip updates that contain no new information
-        if repochs[worker_index] <= uepochs[partition_index]
-            continue
-        end
-
-        # record which worker has updates for which partition and how new it is
-        worker_from_partition[partition_index] = worker_index
-        uepochs[partition_index] = repochs[worker_index]        
-    end
-
-    # update the gradient with the received sub-gradients
-    partition_indices = [i for i in 1:npartitions if !iszero(worker_from_partition[i])]
-    worker_indices = [worker_from_partition[i] for i in partition_indices]
-    ∇s = [reshape(data_view(recvbufs[worker_index]), size(∇)...) for worker_index in worker_indices]
-    update!(sg, zip(partition_indices, ∇s))
-
-    # scale the gradient by the number of initialized sub-gradients
-    f = initialized_fraction(sg)
-    if isone(f)
-        ∇ .= sg
-    else
-        ∇ .= sg ./ f
-    end
-
-    uepochs, worker_from_partition, sg
 end
 
 update_gradient!(args...; variancereduced::Bool, kwargs...) = variancereduced ? update_gradient_vr!(args...; kwargs...) : update_gradient_sgd!(args...; kwargs...)
