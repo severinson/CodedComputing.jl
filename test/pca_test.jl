@@ -174,6 +174,7 @@ end
     nworkers = 2
     niterations = 100
     inputdataset = "X"
+    inputdataset_sparse = "S"
     outputdataset = "V"
     nsamples, dimension = 20, 10
     ncomponents = div(dimension, 2)
@@ -183,6 +184,7 @@ end
     inputfile = tempname()
     h5open(inputfile, "w") do file
         file[inputdataset] = X
+        H5SparseMatrixCSC(file, inputdataset_sparse, sparse(X))
     end
     V = pca(X, ncomponents)    
     ev = explained_variance(X, V)    
@@ -280,9 +282,24 @@ end
         --nwait $(nworkers-1)        
         --nsubpartitions $nsubpartitions
         --variancereduced
-        --saveiterates        
+        --saveiterates
         ```))
     test_pca_iterates(;X, niterations, ncomponents, ev, outputfile, outputdataset)
+
+    ### same as previous, but for a sparse input matrix
+    outputfile = tempname()    
+    mpiexec(cmd -> run(```
+        $cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile
+        --inputdataset $inputdataset_sparse
+        --ncomponents $ncomponents
+        --niterations $niterations 
+        --stepsize $stepsize        
+        --nwait $(nworkers-1)        
+        --nsubpartitions $nsubpartitions
+        --variancereduced
+        --saveiterates
+        ```))
+    test_pca_iterates(;X, niterations, ncomponents, ev, outputfile, outputdataset)    
 
     # with replication
     nworkers = 4
