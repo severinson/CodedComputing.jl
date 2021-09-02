@@ -163,11 +163,10 @@ function update_gradient_vrt!(∇, recvbufs, epoch::Integer, repochs::Vector{<:I
     # record the epoch at which each partition was last updated
     # store the previously computed partial gradients
     if isnothing(state)
-        uepochs = Dict{Int,Int}()
         ∇i = zero(∇)
         tg = TreeGradient(zero(∇), ncolumns)
     else
-        uepochs::Dict{Int,Int}, ∇i::typeof(∇), tg::TreeGradient{typeof(∇)} = state
+        ∇i::typeof(∇), tg::TreeGradient{typeof(∇)} = state
     end
 
     # iterate over the received partial gradients to record which of them are newer than what we currently have
@@ -196,21 +195,14 @@ function update_gradient_vrt!(∇, recvbufs, epoch::Integer, repochs::Vector{<:I
             @error "received incorrect sub-partition index from the $(worker_index)-th worker in epoch $epoch: $subpartition_index "
             continue
         end
-        replica_index = ceil(Int, worker_index/nreplicas)
-        partition_index = (replica_index-1)*nsubpartitions + subpartition_index
 
         # discard stale gradients if the nostale option is set
         if nostale && repochs[worker_index] != epoch
             continue
         end
 
-        # skip partitions with no new information
-        if haskey(uepochs, partition_index) && repochs[worker_index] <= uepochs[partition_index]
-            continue
-        end
-        uepochs[partition_index] = repochs[worker_index]
-
         # compute which samples make up this partition
+        replica_index = ceil(Int, worker_index/nreplicas)
         worker_samples = partition(ncolumns, div(nworkers, nreplicas), replica_index)
         worker_nsamples = length(worker_samples)
         subpartition_samples = first(worker_samples) .+ partition(worker_nsamples, nsubpartitions, subpartition_index) .- 1
@@ -228,5 +220,5 @@ function update_gradient_vrt!(∇, recvbufs, epoch::Integer, repochs::Vector{<:I
         ∇ .= tg.∇ ./ fraction_processed
     end
 
-    uepochs, ∇i, tg
+    ∇i, tg
 end
