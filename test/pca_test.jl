@@ -299,7 +299,7 @@ end
         --variancereduced
         --saveiterates
         ```))
-    test_pca_iterates(;X, niterations, ncomponents, ev, outputfile, outputdataset)    
+    test_pca_iterates(;X, niterations, ncomponents, ev, outputfile, outputdataset)
 
     # with replication
     nworkers = 4
@@ -320,5 +320,5 @@ end
         --variancereduced
         --saveiterates        
         ```))
-    test_pca_iterates(;X, niterations, ncomponents, ev, outputfile, outputdataset)    
+    test_pca_iterates(;X, niterations, ncomponents, ev, outputfile, outputdataset)
 end
