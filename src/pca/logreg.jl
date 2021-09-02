@@ -123,61 +123,36 @@ function partition_samples(v::Vector, nsubpartitions::Integer)
     [view(v, dividers[i]:(dividers[i+1]-1)) for i in 1:nsubpartitions]    
 end
 
-function read_localdata(i::Integer, nworkers::Integer; inputfile::String, inputdataset::String, labeldataset::String, nreplicas::Integer, nsubpartitions::Integer, kwargs...)
+function read_localdata(i::Integer, nworkers::Integer; inputfile::String, inputdataset::String, labeldataset::String, nreplicas::Integer, kwargs...)
     HDF5.ishdf5(inputfile) || throw(ArgumentError("$inputfile isn't an HDF5 file"))
     0 < nworkers || throw(DomainError(nworkers, "nworkers must be positive"))
     0 < nreplicas || throw(DomainError(nreplicas, "nreplicas must be positive"))
-    0 < i <= nworkers || throw(DomainError(i, "i must be in [1, nworkers]"))    
+    0 < i <= nworkers || throw(DomainError(i, "i must be in [1, nworkers]"))
     mod(nworkers, nreplicas) == 0 || throw(ArgumentError("nworkers must be divisible by nreplicas"))
     npartitions = div(nworkers, nreplicas)
     partition_index = ceil(Int, i/nreplicas)
-    dimension, nsamples = problem_size(inputfile, inputdataset)    
+    _, nsamples = problem_size(inputfile, inputdataset)
     h5open(inputfile, "r") do fid
         inputdataset in keys(fid) || throw(ArgumentError("$inputdataset is not in $fid"))
-        size(fid[labeldataset]) == (nsamples,) || throw(DimensionMismatch("Labels has dimensions $(size(fid[labeldataset])), but there are $nsamples samples"))
-        # read nreplicas/nworkers samples
-        il = floor(Int, (partition_index - 1)/npartitions*nsamples + 1)
-        iu = floor(Int, partition_index/npartitions*nsamples)        
-        labels = partition_samples(fid[labeldataset][il:iu], nsubpartitions)
-        if H5Sparse.h5isvalidcsc(fid, inputdataset) # sparse data
-            X_sparse = H5SparseMatrixCSC(fid, inputdataset, :, il:iu)
-            return partition_samples(X_sparse, nsubpartitions), labels, dimension, nsamples
-        else # dense data
-            X_dense = fid[inputdataset][:, il:iu]
-            return partition_samples(X_dense, nsubpartitions), labels, dimension, nsamples
+        labeldataset in keys(fid) || throw(ArgumentError("$labeldataset is not in $fid"))
+        
+        # determine the indices of the samples to be stored locally
+        Is = partition(nsamples, npartitions, partition_index)
+
+        # load those samples into memory
+        labels = fid[labeldataset][Is]
+        if H5Sparse.h5isvalidcsc(fid, inputdataset)
+            return sparse(H5SparseMatrixCSC(fid, inputdataset, :, Is))::SparseMatrixCSC, labels
+        else
+            return fid[inputdataset][:, Is]::Matrix, labels
         end
     end
 end
 
-# function read_localdata(i::Integer, nworkers::Integer; inputfile::String, inputdataset::String, labeldataset::String, nreplicas::Integer, kwargs...)
-#     HDF5.ishdf5(inputfile) || throw(ArgumentError("$inputfile isn't an HDF5 file"))
-#     0 < nworkers || throw(DomainError(nworkers, "nworkers must be positive"))
-#     0 < nreplicas || throw(DomainError(nreplicas, "nreplicas must be positive"))
-#     0 < i <= nworkers || throw(DomainError(i, "i must be in [1, nworkers]"))
-#     mod(nworkers, nreplicas) == 0 || throw(ArgumentError("nworkers must be divisible by nreplicas"))
-#     npartitions = div(nworkers, nreplicas)
-#     partition_index = ceil(Int, i/nreplicas)
-#     _, nsamples = problem_size(inputfile, inputdataset)
-#     h5open(inputfile, "r") do fid
-#         inputdataset in keys(fid) || throw(ArgumentError("$inputdataset is not in $fid"))
-#         labeldataset in keys(fid) || throw(ArgumentError("$labeldataset is not in $fid"))
-        
-#         # determine the indices of the samples to be stored locally
-#         Is = partition(nsamples, npartitions, partition_index)
-
-#         # load those samples into memory
-#         labels = fid[labeldataset][Is]
-#         if H5Sparse.h5isvalidcsc(fid, inputdataset)
-#             return sparse(H5SparseMatrixCSC(fid, inputdataset, :, Is))::SparseMatrixCSC, labels
-#         else
-#             return fid[inputdataset][:, Is]::Matrix, labels
-#         end
-#     end
-# end
-
 function worker_setup(rank::Integer, nworkers::Integer; kwargs...)
     0 < nworkers || throw(DomainError(nworkers, "nworkers must be positive"))
-    features, labels, dimension, nsamples = read_localdata(rank, nworkers; kwargs...)
+    features, labels = read_localdata(rank, nworkers; kwargs...)
+    dimension = size(features, 1)
     localdata = (features, labels)
     to_worker_metadata_bytes = sizeof(UInt16) * 2 * nworkers
     recvbuf = Vector{UInt8}(undef, sizeof(ELEMENT_TYPE)*(dimension+1) + to_worker_metadata_bytes)
@@ -212,27 +187,27 @@ end
 metadata_view(buffer) = view(buffer, COMMON_BYTES+1:(COMMON_BYTES + METADATA_BYTES))
 data_view(buffer) = reinterpret(ELEMENT_TYPE, @view buffer[(COMMON_BYTES + METADATA_BYTES+1):end])
 
-function worker_task!(recvbuf, sendbuf, localdata; state=nothing, nsubpartitions::Integer, ncolumns::Integer, nworkers::Integer, kwargs...)
-    feature_partitions, label_partitions = localdata
-    length(feature_partitions) == nsubpartitions || throw(DimensionMismatch("There are $(length(feature_partitions)) feature partitions, but nsubpartitions is $nsubpartitions"))
-    length(label_partitions) == nsubpartitions || throw(DimensionMismatch("There are $(length(label_partitions)) label partitions, but nsubpartitions is $nsubpartitions"))
+function worker_task!(recvbuf, sendbuf, localdata; state=nothing, ncolumns::Integer, nworkers::Integer, kwargs...)
     to_worker_metadata_bytes = sizeof(UInt16) * 2 * nworkers
+    features, labels = localdata
+    size(features, 2) == length(labels) || throw(DimensionMismatch("features has dimensions $(size(features)), but labels has dimension $(size(labels))"))
+    dimension, nlocalsamples = size(features)
 
     # get the number of sub-partitions and the index of the sub-partition to process
     vs = reinterpret(Tuple{UInt16,UInt16}, view(recvbuf, 1:to_worker_metadata_bytes))
     rank <= length(vs) || throw(DimensionMismatch("vs has length $(length(vs)), but rank is $rank"))
     nsubpartitions, subpartition_index = vs[rank]
-    # 0 < nsubpartitions <= nlocalsamples || throw(DimensionMismatch("nsubpartitions is $nsubpartitions, but nlocalsamples is $nlocalsamples"))
+    0 < nsubpartitions <= nlocalsamples || throw(DimensionMismatch("nsubpartitions is $nsubpartitions, but nlocalsamples is $nlocalsamples"))
     0 < subpartition_index <= nsubpartitions || throw(ArgumentError("subpartition_index is $subpartition_index, but nsubpartitions is $nsubpartitions"))
 
     @info "(rank $rank) p: $nsubpartitions, i: $subpartition_index"
 
+    # indices of the local samples to process in this iteration
+    cols = partition(nlocalsamples, nsubpartitions, subpartition_index)
+
     # TODO: replace with colsmul-like processing
-    Xw = feature_partitions[subpartition_index]
-    bw = label_partitions[subpartition_index]
-    dimension, nlocalsamples = size(Xw)
-    1 <= nsubpartitions <= dimension || throw(DimensionMismatch("nsubpartitions is $nsubpartitions, but the dimension is $dimension"))
-    length(bw) == size(Xw, 2) || throw(DimensionMismatch("bw has dimension $(length(bw)), but Xw has dimensions $(size(Xw))"))    
+    Xw = features[:, cols]
+    bw = labels[cols]
 
     # format the recvbuf into a matrix we can operate on
     recvdata = view(recvbuf, (to_worker_metadata_bytes+1):length(recvbuf))
@@ -241,14 +216,14 @@ function worker_task!(recvbuf, sendbuf, localdata; state=nothing, nsubpartitions
 
     # prepare working memory
     if isnothing(state) # first iteration
-        max_samples = maximum((x)->length(x), label_partitions) # max number of samples processed per iteration
+        max_samples = ncolumns # max number of samples processed per iteration
         w = Vector{eltype(v)}(undef, max_samples) # temp. storage
     else # subsequent iterations
         w::Vector{eltype(v)} = state
     end
 
     # compute gradient
-    wv = view(w, 1:nlocalsamples)
+    wv = view(w, 1:length(cols))
     mul!(wv', view(v, 2:length(v))', Xw)
     wv .+= v[1] # implicit intercept
     wv .*= bw
