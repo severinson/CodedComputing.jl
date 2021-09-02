@@ -27,6 +27,11 @@ function update_argsettings!(s::ArgParseSettings)
         "--variancereduced"
             help = "Compute a variance-reduced gradient in each iteration"
             action = :store_true
+        "--vralgo"
+            help = "Specifies which variance-reduced optimizer to use (tree or table)"
+            arg_type = String
+            default = "tree"
+            range_tester = (x) -> x in ["tree", "table"]
         "--nostale"
             help = "If set, do not store stale gradients (to conform with SAG)"
             action = :store_true
@@ -441,7 +446,19 @@ function update_gradient_vrt!(∇, recvbufs, epoch::Integer, repochs::Vector{<:I
     uepochs, ∇i, tg
 end
 
-update_gradient!(args...; variancereduced::Bool, kwargs...) = variancereduced ? update_gradient_vr!(args...; kwargs...) : update_gradient_sgd!(args...; kwargs...)
+function update_gradient!(args...; variancereduced::Bool, vralgo::String, kwargs...)
+    if variancereduced
+        if vralgo == "table"
+            return update_gradient_vr!(args...; kwargs...)
+        elseif vralgo == "tree"
+            return update_gradient_vrt!(args...; kwargs...)
+        else
+            throw(ArgumentError("unexpected vralgo $vralgo"))
+        end
+    else
+        return update_gradient_sgd!(args...; kwargs...)
+    end
+end
 
 function update_iterate!(V, ∇; state=nothing, stepsize, kwargs...)
     size(V) == size(∇) || throw(DimensionMismatch("V has dimensions $(size(V)), but ∇ has dimensions $(size(∇))"))
