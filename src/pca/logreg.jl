@@ -1,6 +1,6 @@
 using ArgParse, Random, SparseArrays, HDF5, H5Sparse, SAG
 
-const METADATA_BYTES = 6
+const METADATA_BYTES = 8
 const ELEMENT_TYPE = Float32
 const CANARY_VALUE = UInt16(2^16 - 1)
 
@@ -259,12 +259,13 @@ function worker_task!(recvbuf, sendbuf, localdata; state=nothing, nsubpartitions
     v[1] = sum(wv) # intercept derivative
     mul!(view(v, 2:length(v), :), Xw, wv) # derivative w. respect to each feature
     v ./= ncolumns # normalize by the total number of samples
-    
+
     # populate the send buffer
     metadata = reinterpret(UInt16, metadata_view(sendbuf))
     metadata[1] = CANARY_VALUE
     metadata[2] = rank
-    metadata[3] = subpartition_index
+    metadata[3] = nsubpartitions
+    metadata[4] = subpartition_index
     data_view(sendbuf) .= v
     w
 end
@@ -296,16 +297,7 @@ function update_gradient_sgd!(∇, recvbufs, epoch::Integer, repochs::Vector{<:I
             continue
         end
 
-        metadata = reinterpret(UInt16, metadata_view(recvbufs[worker_index]))
-        if length(metadata) != 3
-            @error "received incorrectly formatted metadata from the $(worker_index)-th worker in epoch $epoch: $metadata"
-            continue
-        end
-        canary, worker_rank, subpartition_index = metadata
-        if  canary != CANARY_VALUE
-            @error "recieved incorrect canary value from the $(worker_index)-th worker in epoch $epoch: $canary"
-            continue
-        end
+        worker_rank, nsubpartitions, subpartition_index = metadata_from_recvbuf(recvbufs[worker_index])
         if worker_rank != worker_index
             @error "unexpected rank for the $(worker_index)-th worker in epoch $epoch: $worker_rank"
             continue
@@ -361,17 +353,8 @@ function update_gradient_vr!(∇, recvbufs, epoch::Integer, repochs::Vector{<:In
         if repochs[worker_index] == 0
             continue
         end
-
-        metadata = reinterpret(UInt16, metadata_view(recvbufs[worker_index]))
-        if length(metadata) != 3
-            @error "received incorrectly formatted metadata from the $(worker_index)-th worker in epoch $epoch: $metadata"
-            continue
-        end
-        canary, worker_rank, subpartition_index = metadata
-        if  canary != CANARY_VALUE
-            @error "recieved incorrect canary value from the $(worker_index)-th worker in epoch $epoch: $canary"
-            continue
-        end
+        
+        worker_rank, nsubpartitions, subpartition_index = metadata_from_recvbuf(recvbufs[worker_index])
         if worker_rank != worker_index
             @error "unexpected rank for the $(worker_index)-th worker in epoch $epoch: $worker_rank"
             continue
