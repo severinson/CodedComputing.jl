@@ -363,6 +363,84 @@ function update_gradient_vr!(∇, recvbufs, epoch::Integer, repochs::Vector{<:In
     uepochs, worker_from_partition, sg
 end
 
+function update_gradient_vrt!(∇, recvbufs, epoch::Integer, repochs::Vector{<:Integer}; state=nothing, nostale::Bool, nreplicas::Integer, ncolumns::Integer, kwargs...)
+    length(recvbufs) == length(repochs) || throw(DimensionMismatch("recvbufs has dimension $(length(recvbufs)), but repochs has dimension $(length(repochs))"))
+    0 < nreplicas || throw(DomainError(nreplicas, "nreplicas must be positive"))
+    epoch <= 1 || !isnothing(state) || error("expected state to be initiated for epoch > 1")
+    nworkers = length(recvbufs)
+    mod(nworkers, nreplicas) == 0 || throw(ArgumentError("nworkers must be divisible by nreplicas"))
+    
+    # record the epoch at which each partition was last updated
+    # store the previously computed partial gradients
+    if isnothing(state)
+        uepochs = Dict{Int,Int}()
+        ∇i = zero(∇)
+        tg = TreeGradient(zero(∇), ncolumns)
+    else
+        uepochs::Dict{Int,Int}, ∇i::typeof(∇), tg::TreeGradient{typeof(∇)} = state
+    end
+
+    # iterate over the received partial gradients to record which of them are newer than what we currently have
+    for worker_index in 1:nworkers
+
+        # skip workers that we've never received anything from
+        if repochs[worker_index] == 0
+            continue
+        end
+
+        metadata = reinterpret(UInt16, metadata_view(recvbufs[worker_index]))
+        if length(metadata) != 4
+            @error "received incorrectly formatted metadata from the $(worker_index)-th worker in epoch $epoch: $metadata"
+            continue
+        end
+        canary, worker_rank, nsubpartitions, subpartition_index = metadata
+        if  canary != CANARY_VALUE
+            @error "recieved incorrect canary value from the $(worker_index)-th worker in epoch $epoch: $canary"
+            continue
+        end
+        if worker_rank != worker_index
+            @error "unexpected rank for the $(worker_index)-th worker in epoch $epoch: $worker_rank"
+            continue
+        end
+        if !(0 < subpartition_index <= nsubpartitions)
+            @error "received incorrect sub-partition index from the $(worker_index)-th worker in epoch $epoch: $subpartition_index "
+            continue
+        end
+        replica_index = ceil(Int, worker_index/nreplicas)
+        partition_index = (replica_index-1)*nsubpartitions + subpartition_index
+
+        # discard stale gradients if the nostale option is set
+        if nostale && repochs[worker_index] != epoch
+            continue
+        end
+
+        # skip partitions with no new information
+        if haskey(uepochs, partition_index) && repochs[worker_index] <= uepochs[partition_index]
+            continue
+        end
+        uepochs[partition_index] = repochs[worker_index]
+
+        # compute which samples make up this partition
+        worker_samples = partition(ncolumns, div(nworkers, nreplicas), replica_index)
+        worker_nsamples = length(worker_samples)
+        subpartition_samples = first(worker_samples) .+ partition(worker_nsamples, nsubpartitions, subpartition_index) .- 1
+
+        # insert the new gradient
+        ∇i .= reshape(data_view(recvbufs[worker_index]), size(∇)...)
+        insert!(tg, first(subpartition_samples), last(subpartition_samples), ∇i)
+    end
+
+    # scale the gradient by the number of initialized sub-gradients
+    fraction_processed = tg.ninit / tg.n
+    if isapprox(fraction_processed, 1)
+        ∇ .= tg.∇
+    else
+        ∇ .= tg.∇ ./ fraction_processed
+    end
+
+    uepochs, ∇i, tg
+end
+
 update_gradient!(args...; variancereduced::Bool, kwargs...) = variancereduced ? update_gradient_vr!(args...; kwargs...) : update_gradient_sgd!(args...; kwargs...)
 
 function update_iterate!(V, ∇; state=nothing, stepsize, kwargs...)
