@@ -165,13 +165,12 @@ function coordinator_setup(nworkers::Integer; inputfile::String, inputdataset::S
     dimension, nsamples = problem_size(inputfile, inputdataset)
 
     # initial iterate
-    if isnothing(iteratedataset)
-        V = zeros(dimension+1)
-    else # given as an argument and loaded from disk
+    V = zeros(dimension+1)
+    if !isnothing(iteratedataset) # given as an argument and loaded from disk
         h5open(inputfile) do fid
             iteratedataset in keys(fid) || throw(ArgumentError("iterate dataset $iteratedataset not found"))
             size(fid[iteratedataset]) == (dimension+1,) || throw(DimensionMismatch("Expected iterate to have dimensions $((dimension+1,)), but it has dimensions $(size(fid[iteratedataset]))"))
-            V = fid[iteratedataset][:]
+            V .= fid[iteratedataset][:]
         end
     end
 
