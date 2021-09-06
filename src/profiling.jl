@@ -160,6 +160,15 @@ function latency_profiler(chin::Channel{ProfilerInput}, chout::Channel{ProfilerO
         for i in 1:nworkers
             vout = process_worker(i)
             if isnan(vout.θ) || isnan(vout.q) || isnan(vout.comp_mc) || isnan(vout.comp_vc) || isnan(vout.comm_mc) || isnan(vout.comm_vc)
+                @info "profiler dropped NaN-sample: $vout"
+                continue
+            end
+            if vout.comp_mc < 0 || vout.comp_vc < 0 || vout.comm_mc < 0 || vout.comm_vc < 0
+                @info "profiler dropped sample with negative latency: $vout"
+                continue
+            end
+            if isapprox(vout.comp_mc, 0) || isapprox(vout.comp_vc, 0) || isapprox(vout.comm_mc, 0) || isapprox(vout.comm_vc, 0)
+                @info "profiler dropped zero-sample: $vout"
                 continue
             end
             try
