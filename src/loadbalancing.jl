@@ -17,6 +17,13 @@ function optimize(sim::EventDrivenSimulator, qs0; θs, comp_mcs, comp_vcs, comm_
     length(comm_mcs) == nworkers || throw(DimensionMismatch("comm_mcs has dimension $(length(comm_mcs)), but nworkers is $nworkers"))
     length(comm_vcs) == nworkers || throw(DimensionMismatch("comm_vcs has dimension $(length(comm_vcs)), but nworkers is $nworkers"))    
 
+    # setup communication latency distributions
+    for i in 1:nworkers
+        m = comm_mcs[i]
+        v = comm_vcs[i]
+        sim.comm_distributions[i] = distribution_from_mean_variance(Gamma, m, v)
+    end
+
     # simulation helper function
     ls = zeros(nworkers)
     function simulate(qs)
@@ -26,9 +33,6 @@ function optimize(sim::EventDrivenSimulator, qs0; θs, comp_mcs, comp_vcs, comm_
             m = comp_mcs[i] * θs[i] * qs[i]
             v = comp_vcs[i] * θs[i] * qs[i]
             sim.comp_distributions[i] = distribution_from_mean_variance(Gamma, m, v)
-            m = comm_mcs[i]
-            v = comm_vcs[i]
-            sim.comm_distributions[i] = distribution_from_mean_variance(Gamma, m, v)
         end
     
         # run nsamples simulations, each consisting of niterations steps
@@ -74,7 +78,8 @@ function optimize(sim::EventDrivenSimulator, qs0; θs, comp_mcs, comp_vcs, comm_
     # evolutionary algorithm setup
     selection = Evolutionary.tournament(tournamentSize)
     crossover = Evolutionary.LX()
-    lower, upper = zeros(nworkers), ones(nworkers)
+    lower = max.(0.0, qs0 .* 0.9)
+    upper = min.(1.0, qs0 .* 1.1)
     mutation = Evolutionary.domainrange((lower .- upper) ./ 10) # as recommended in the BGA paper
 
     # wraps a mutation, but ensures that the inverse of each element is integer
@@ -89,15 +94,20 @@ function optimize(sim::EventDrivenSimulator, qs0; θs, comp_mcs, comp_vcs, comm_
             else
                 p = ceil(p)
             end
+            p = max(p, 1.0)
             qs[i] = 1 / p
         end
         qs
     end
 
+    # for reference, compute objective function value for the initial solution
+    f0 = f(qs0)
+    f0 = iszero(fworst) ? NaN : f0
+
     # optimization algorithm
     opt = Evolutionary.GA(;populationSize, mutationRate=1.0, selection, crossover, mutation=integer_mutation)
     options = Evolutionary.Options(;time_limit, Evolutionary.default_options(opt)...)
-    Evolutionary.optimize(f, lower, upper, qs0, opt, options)
+    Evolutionary.optimize(f, lower, upper, qs0, opt, options), f0
 end
 
 function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Real, nwait::Integer, nworkers::Integer, time_limit::Real=10.0)
@@ -203,10 +213,16 @@ function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Re
         # new = balance_contribution(ps, min_processed_fraction; θs, ds_comm, cms_comp, cvs_comp, nwait)
         try
             t = @elapsed begin
-                result = optimize(sim, qs; θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit)        
+                result, f0 = optimize(sim, qs; θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit)        
             end
             new_qs = result.minimizer
             @info "load-balancer finished in $t seconds"
+
+            # compare the initial and new solutions, and continue if the change isn't large enough
+            if !isnan(f0) && minimum(result) > f0 * 0.9
+                @info "load-balancer result of $(minimum(result)) not sufficiently better than $f0; continuing"
+                continue
+            end
 
             # push any changes into the output channel
             for i in 1:nworkers
