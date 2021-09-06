@@ -165,13 +165,23 @@ end
 
 """
 
+Select the next partition to process for the `i`-th worker.
+"""
+function select_partitions!(partition_indices::AbstractVector{<:Integer}, nsubpartitions_all::AbstractVector{<:Integer}, i::Integer)
+    0 < i <= length(partition_indices) || throw(DimensionMismatch("i is $i, but partition_indices has dimension $(length(partition_indices))"))
+    0 < i <= length(nsubpartitions_all) || throw(DimensionMismatch("i is $i, but nsubpartitions_all has dimension $(length(nsubpartitions_all))"))
+    0 < nsubpartitions_all[i] || throw(ArgumentError("Invalid number of partitions for worker $i: $nsubpartitions_all"))
+    partition_indices[i] = mod(partition_indices[i], nsubpartitions_all[i]) + 1
+end
+
+"""
+
 For each worker, choose the sub-partition it should process.
 """
 function select_partitions!(partition_indices::AbstractVector{<:Integer}, nsubpartitions_all::AbstractVector{<:Integer})
     length(partition_indices) == length(nsubpartitions_all) || throw(DimensionMismatch("partition_indices has dimension $(length(partition_indices)), but nsubpartitions_all has dimension $(size(nsubpartitions_all))"))    
     for i in 1:length(partition_indices)
-        0 < nsubpartitions_all[i] || throw(ArgumentError("Invalid number of partitions for worker $i: $nsubpartitions_all"))
-        partition_indices[i] = rand(1:nsubpartitions_all[i])
+        select_partitions!(partition_indices, nsubpartitions_all, i)
     end
     partition_indices
 end
@@ -296,15 +306,15 @@ function coordinator_main()
         wait(loadbalancer_task)
     end
 
-    ## update partitioning
-    select_partitions!(partition_indices, nsubpartitions_all)
+    ## write number of sub-partitions and which sub-partition to process into the buffer sent to the workers
+    select_partitions!(partition_indices, nsubpartitions_all)    
     write_partitions!(sendbuf; partition_indices, nsubpartitions_all)
 
     ## worker task
     ts_compute[epoch] = @elapsed begin
         repochs = asyncmap!(pool, sendbuf, recvbuf, isendbuf, irecvbuf, comm, nwait=f, epoch=epoch, tag=data_tag)
     end
-    responded[:, epoch] .= repochs    
+    responded[:, epoch] .= repochs
 
     ## record latency
     latency[:, epoch] .= pool.latency
@@ -342,9 +352,9 @@ function coordinator_main()
     # remaining iterations
     for epoch in 2:niterations
 
-        gradient_state, iterate_state = state
-        ∇i, tg = gradient_state
-        @info "epoch $epoch, tg.ninit / tg.n: $(tg.ninit / tg.n)"
+        # gradient_state, iterate_state = state
+        # ∇i, tg = gradient_state
+        # @info "epoch $epoch, tg.ninit / tg.n: $(tg.ninit / tg.n)"
 
         ## force an error if the profiler or load-balancer task has failed
         if istaskfailed(profiler_task)
