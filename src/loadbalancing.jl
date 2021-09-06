@@ -244,7 +244,7 @@ function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Re
             end
         catch e
             if e isa ArgumentError
-                @error "load-balancer failed" e
+                @error "load-balancer failed; trying again" e                
             else
                 rethrow()
             end
