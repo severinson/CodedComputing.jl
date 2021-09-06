@@ -261,6 +261,7 @@ function coordinator_main()
     compute_latency = zeros(nworkers, niterations)      # per-iteration computation latency of each worker
     ts_compute = zeros(niterations)                     # overall per-iteration latency
     ts_update = zeros(niterations)                      # per-iteration latency of the coordinator update
+    loadbalanced = zeros(niterations)                   # indicates which iterations the load-balancer made changes in
 
     # 2-argument fwait needed for asyncmap!
     f = (epoch, repochs) -> fwait(epoch, repochs; parsed_args...)
@@ -341,6 +342,10 @@ function coordinator_main()
     # remaining iterations
     for epoch in 2:niterations
 
+        gradient_state, iterate_state = state
+        ∇i, tg = gradient_state
+        @info "epoch $epoch, tg.ninit / tg.n: $(tg.ninit / tg.n)"
+
         ## force an error if the profiler or load-balancer task has failed
         if istaskfailed(profiler_task)
             wait(profiler_task)
@@ -358,6 +363,7 @@ function coordinator_main()
             @info "epoch $epoch, worker $(vout.worker) nsubpartitions $(nsubpartitions_all[vout.worker]) => $(vout.p)"
             nsubpartitions_all[vout.worker] = vout.p
             # end
+            loadbalanced[epoch] = true
         end             
 
         ## update partitioning        
@@ -431,6 +437,7 @@ function coordinator_main()
         fid["benchmark/responded"] = responded
         fid["benchmark/latency"] = latency
         fid["benchmark/compute_latency"] = compute_latency
+        fid["benchmark/loadbalanced"] = loadbalanced
     end
     @info "Output written to disk; exiting"
 
