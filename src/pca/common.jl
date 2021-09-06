@@ -265,19 +265,19 @@ function coordinator_main()
     # 2-argument fwait needed for asyncmap!
     f = (epoch, repochs) -> fwait(epoch, repochs; parsed_args...)
 
-    # setup the latency profiler
-    profiler_chin, profiler_chout = CodedComputing.setup_profiler_channels()
-    windowsize = Second(1)
-    profiler_task = Threads.@spawn CodedComputing.latency_profiler(profiler_chin, profiler_chout; nworkers, windowsize)
-
-    # setup the load-balancer
-    _, loadbalancer_chout = CodedComputing.setup_loadbalancer_channels()
-    min_processed_fraction = nwait / nworkers / parsed_args[:nsubpartitions]
-    loadbalancer_task = Threads.@spawn CodedComputing.load_balancer(profiler_chout, loadbalancer_chout; min_processed_fraction, nwait, nworkers, time_limit=1.0)
-
     # manually call the GC now, and optionally turn off GC, to avoid pauses later during execution
     GC.gc()
-    GC.enable(parsed_args[:enablegc])
+    GC.enable(parsed_args[:enablegc])    
+
+    # setup the latency profiler
+    profiler_chin, profiler_chout = CodedComputing.setup_profiler_channels()
+    profiler_task = Threads.@spawn CodedComputing.latency_profiler(profiler_chin, profiler_chout; nworkers, windowsize=Second(60))
+
+    # setup the load-balancer
+    loadbalancer_nwait = ceil(Int, nworkers/2)
+    min_processed_fraction = loadbalancer_nwait / nworkers / parsed_args[:nsubpartitions]
+    _, loadbalancer_chout = CodedComputing.setup_loadbalancer_channels()
+    loadbalancer_task = Threads.@spawn CodedComputing.load_balancer(profiler_chout, loadbalancer_chout; min_processed_fraction, nwait=loadbalancer_nwait, nworkers, time_limit=10.0)
 
     # ensure all workers have finished compiling before starting the computation
     # (this is only necessary when benchmarking)
@@ -355,7 +355,7 @@ function coordinator_main()
             0 < vout.worker <= nworkers || throw(ArgumentError("incorrect $vout"))
             0 < vout.p || throw(ArgumentError("incorrect $vout"))
             # if nsubpartitions_all[vout.worker] != vout.p
-            @info "worker $(vout.worker) nsubpartitions $(nsubpartitions_all[vout.worker]) => $(vout.p)"
+            @info "epoch $epoch, worker $(vout.worker) nsubpartitions $(nsubpartitions_all[vout.worker]) => $(vout.p)"
             nsubpartitions_all[vout.worker] = vout.p
             # end
         end             
