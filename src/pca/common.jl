@@ -197,7 +197,7 @@ function write_partitions!(sendbuf::AbstractVector{UInt8}; partition_indices::Ab
     s <= length(sendbuf) || throw(DimensionMismatch("sendbuf is of length $(length(sendbuf)), but nworkers is $nworkers"))
     vs = reinterpret(Tuple{UInt16,UInt16}, view(sendbuf, 1:s))
     for i in 1:nworkers
-        vs[i] = (nsubpartitions_all[i], partition_indices[i])
+        vs[i] = (nsubpartitions_all[i], 0) # sub-partition_index is chosen by the workers
     end
     sendbuf
 end

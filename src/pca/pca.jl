@@ -180,25 +180,27 @@ function worker_task!(recvbuf, sendbuf, localdata; state=nothing, ncomponents::I
     to_worker_metadata_bytes = sizeof(UInt16) * 2 * nworkers
     dimension, nlocalsamples = size(localdata)
 
+    # prepare working memory
+    if isnothing(state) # first iteration
+        subpartition_index = 0
+        max_samples = nlocalsamples # max number of samples processed per iteration
+        W = Matrix{ELEMENT_TYPE}(undef, max_samples, ncomponents)
+    else # subsequent iterations
+        subpartition_index::Int, W::Matrix{ELEMENT_TYPE} = state
+    end
+
     # get the number of sub-partitions and the index of the sub-partition to process
     vs = reinterpret(Tuple{UInt16,UInt16}, view(recvbuf, 1:to_worker_metadata_bytes))
     rank <= length(vs) || throw(DimensionMismatch("vs has length $(length(vs)), but rank is $rank"))
-    nsubpartitions, subpartition_index = vs[rank]
+    nsubpartitions, _ = vs[rank]
+    subpartition_index = mod(subpartition_index, nsubpartitions) + 1
     0 < nsubpartitions <= nlocalsamples || throw(DimensionMismatch("nsubpartitions is $nsubpartitions, but nlocalsamples is $nlocalsamples"))
-    0 < subpartition_index <= nsubpartitions || throw(ArgumentError("subpartition_index is $subpartition_index, but nsubpartitions is $nsubpartitions"))
+    0 < subpartition_index <= nsubpartitions || throw(ArgumentError("subpartition_index is $subpartition_index, but nsubpartitions is $nsubpartitions"))        
 
     # format the recvbuf into a matrix we can operate on
     recvdata = view(recvbuf, (to_worker_metadata_bytes+1):length(recvbuf))
     length(reinterpret(ELEMENT_TYPE, recvdata)) == dimension*ncomponents || throw(DimensionMismatch("recvdata has length $(length(reinterpret(ELEMENT_TYPE, recvdata))), but the data dimension is $dimension and ncomponents is $ncomponents"))
-    V = reshape(reinterpret(ELEMENT_TYPE, recvdata), dimension, ncomponents)
-
-    # prepare working memory
-    if isnothing(state) # first iteration
-        max_samples = nlocalsamples # max number of samples processed per iteration
-        W = Matrix{eltype(V)}(undef, max_samples, ncomponents)
-    else # subsequent iterations
-        W::Matrix{eltype(V)} = state
-    end
+    V = reshape(reinterpret(ELEMENT_TYPE, recvdata), dimension, ncomponents)    
 
     # indices of the local samples to process in this iteration
     cols = partition(nlocalsamples, nsubpartitions, subpartition_index)
@@ -215,7 +217,7 @@ function worker_task!(recvbuf, sendbuf, localdata; state=nothing, ncomponents::I
     metadata[3] = nsubpartitions
     metadata[4] = subpartition_index
     data_view(sendbuf) .= view(V, :)
-    W
+    subpartition_index, W
 end
 
 function update_gradient!(args...; variancereduced::Bool, vralgo::String, kwargs...)
