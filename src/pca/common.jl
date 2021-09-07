@@ -142,18 +142,12 @@ function worker_loop(localdata, recvbuf, sendbuf; nslow::Integer, slowprob::Real
 
         # the nslow first workers are artificially slowed down
         if rank <= nslow
-            m = t
-            v = t / 10
-            d = CodedComputing.distribution_from_mean_variance(Gamma, m, v)
-            sleep(rand(d))
+            sleep(t)
         end
 
         # workers are artificially slowed down with prob. slowprob.
         if !iszero(slowprob) && rand() < slowprob
-            m = t
-            v = t / 10
-            d = CodedComputing.distribution_from_mean_variance(Gamma, m, v)
-            sleep(rand(d))
+            sleep(t)
         end
 
         # send response to coordinator
