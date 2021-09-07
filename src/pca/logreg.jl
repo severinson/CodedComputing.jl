@@ -202,17 +202,24 @@ function worker_task!(recvbuf, sendbuf, localdata; state=nothing, ncolumns::Inte
 
     # prepare working memory
     if isnothing(state) # first iteration
-        subpartition_index = 0
+        nsubpartitions_prev = 0
+        subpartition_index = 1
         w = Vector{ELEMENT_TYPE}(undef, nlocalsamples) # temp. storage
     else # subsequent iterations
-        subpartition_index::Int, w::Vector{ELEMENT_TYPE} = state
+        nsubpartitions_prev::Int, subpartition_index::Int, w::Vector{ELEMENT_TYPE} = state
     end
 
-    # get the number of sub-partitions and the index of the sub-partition to process
+    # get the number of sub-partitions from the coordinator
     vs = reinterpret(Tuple{UInt16,UInt16}, view(recvbuf, 1:to_worker_metadata_bytes))
     rank <= length(vs) || throw(DimensionMismatch("vs has length $(length(vs)), but rank is $rank"))
     nsubpartitions, _ = vs[rank]
-    subpartition_index = mod(subpartition_index, nsubpartitions) + 1
+    
+    # increment the sub-partition index
+    if !iszero(nsubpartitions_prev)
+        subpartition_index = mod(subpartition_index, nsubpartitions_prev) + 1
+        subpartition_index = align_partitions(nlocalsamples, nsubpartitions_prev, nsubpartitions, subpartition_index)
+    end
+    nsubpartitions_prev = nsubpartitions
     0 < nsubpartitions <= nlocalsamples || throw(DimensionMismatch("nsubpartitions is $nsubpartitions, but nlocalsamples is $nlocalsamples"))
     0 < subpartition_index <= nsubpartitions || throw(ArgumentError("subpartition_index is $subpartition_index, but nsubpartitions is $nsubpartitions"))
 
@@ -243,7 +250,7 @@ function worker_task!(recvbuf, sendbuf, localdata; state=nothing, ncolumns::Inte
     metadata[3] = nsubpartitions
     metadata[4] = subpartition_index
     data_view(sendbuf) .= v
-    subpartition_index, w
+    nsubpartitions_prev, subpartition_index, w
 end
 
 function update_gradient!(args...; variancereduced::Bool, vralgo::String, kwargs...)
