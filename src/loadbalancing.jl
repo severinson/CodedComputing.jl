@@ -8,7 +8,7 @@ function setup_loadbalancer_channels(;chin_size=Inf, chout_size=Inf)
     chin, chout
 end
 
-function optimize(sim::EventDrivenSimulator, qs0; θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction::Real, populationSize::Integer=100, tournamentSize::Integer=10, mutationRate::Real=1.0, time_limit::Real=10.0, simulation_niterations::Integer=100, simulation_nsamples::Integer=10)
+function optimize(sim::EventDrivenSimulator, qs0; θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction::Real, populationSize::Integer=100, tournamentSize::Integer=32, mutationRate::Real=0.5, time_limit::Real=10.0, simulation_niterations::Integer=100, simulation_nsamples::Integer=10)
     0 < min_processed_fraction <= 1 || throw(ArgumentError("min_processed_fraction is $min_processed_fraction"))
     nworkers = length(qs0)
     length(θs) == nworkers || throw(DimensionMismatch("θs has dimension $(length(θs)), but nworkers is $nworkers"))
@@ -78,8 +78,8 @@ function optimize(sim::EventDrivenSimulator, qs0; θs, comp_mcs, comp_vcs, comm_
     # evolutionary algorithm setup
     selection = Evolutionary.tournament(tournamentSize)
     crossover = Evolutionary.LX()
-    lower = max.(0.0, qs0 .* 0.8)
-    upper = min.(1.0, qs0 .* 1.2)
+    lower = max.(0.0, qs0 .* 0.5)
+    upper = min.(1.0, qs0 .* 2.0)
     mutation = Evolutionary.domainrange((lower .- upper) ./ 10) # as recommended in the BGA paper
 
     # wraps a mutation, but ensures that the inverse of each element is integer
@@ -210,10 +210,16 @@ function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Re
             continue
         end
 
+        # initialization
+        if count(isnan, ps) > 0
+            ps .= 1 ./ qs
+        end
+
         # new = balance_contribution(ps, min_processed_fraction; θs, ds_comm, cms_comp, cvs_comp, nwait)
         try
+            # @info "running load-balancer w. ps: $ps, θs: $θs, comp_mcs: $comp_mcs, comp_vcs: $comp_vcs"
             t = @elapsed begin
-                result, f0 = optimize(sim, qs; θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit)        
+                result, f0 = optimize(sim, 1.0./ps; θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit)
             end
             new_qs = result.minimizer
             @info "load-balancer finished in $t seconds"
