@@ -4,6 +4,7 @@ using CodedComputing
 using HDF5, LinearAlgebra
 using ArgParse
 using Dates
+using Distributions
 
 MPI.Init()
 const comm = MPI.COMM_WORLD
@@ -79,6 +80,10 @@ function parse_commandline(isroot::Bool)
             help = "Random seed used by the coordinator"
             arg_type = UInt
             default = rand(UInt)
+        "--nslow"
+            help = "Number of workers that are slowed down artificially"
+            arg_type = Int
+            default = 0            
     end
 
     # optionally add implementation-specific arguments
@@ -105,7 +110,7 @@ end
 
 Main loop run by each worker.
 """
-function worker_loop(localdata, recvbuf, sendbuf; kwargs...)
+function worker_loop(localdata, recvbuf, sendbuf; nslow::Integer, kwargs...)
     
     # control channel, to tell the workers when to exit
     crreq = MPI.Irecv!(zeros(1), root, control_tag, comm)
@@ -128,6 +133,16 @@ function worker_loop(localdata, recvbuf, sendbuf; kwargs...)
             break
         end
         t = @elapsed state = worker_task!(recvbuf, sendbuf, localdata; state=state, kwargs...)
+
+        # the nslow first workers are artificially slowed down
+        if rank <= nslow
+            m = t
+            v = t / 10
+            d = CodedComputing.distribution_from_mean_variance(Gamma, m, v)
+            sleep(rand(d))
+        end
+
+        # send response to coordinator
         reinterpret(Float64, view(sendbuf, 1:COMMON_BYTES))[1] = t # send the recorded compute latency to the coordinator
         MPI.Isend(sendbuf, root, data_tag, comm)
     end
