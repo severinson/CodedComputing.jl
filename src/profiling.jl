@@ -33,7 +33,7 @@ end
 Latency profiling sub-system. Receives latency observations on `chin`, computes the mean and 
 variance over a moving time window of length `windowsize`, and sends the results on `chout`.
 """
-function latency_profiler(chin::Channel{ProfilerInput}, chout::Channel{ProfilerOutput}; nworkers::Integer, qlower::Real=0.1, qupper::Real=0.9, buffersize::Integer=1000, windowsize::Dates.AbstractTime=Second(60))
+function latency_profiler(chin::Channel{ProfilerInput}, chout::Channel{ProfilerOutput}; nworkers::Integer, qlower::Real=0.1, qupper::Real=0.9, buffersize::Integer=1000, minsamples::Integer=10, windowsize::Dates.AbstractTime=Second(60))
     0 < nworkers || throw(ArgumentError("nworkers is $nworkers"))
     0 <= qlower <= qupper <= 1.0 || throw(ArgumentError("qlower is $qlower and qupper is $qupper"))
     @info "latency_profiler task started"
@@ -103,7 +103,7 @@ function latency_profiler(chin::Channel{ProfilerInput}, chout::Channel{ProfilerO
 
         # compute mean and variance over the values between qlower and qupper
         vs = view(buffer, il:iu)
-        if length(vs) == 0
+        if length(vs) < minsamples
             return NaN, NaN
         end
         m = mean(vs)
@@ -151,10 +151,10 @@ function latency_profiler(chin::Channel{ProfilerInput}, chout::Channel{ProfilerO
             end
         end
 
-        # to avoid overwhelming the consumer, only push new output if the channel is empty
-        if isready(chout)
-            continue
-        end
+        # # to avoid overwhelming the consumer, only push new output if the channel is empty
+        # if isready(chout)
+        #     continue
+        # end
 
         # compute updated statistics for all workers
         for i in 1:nworkers
