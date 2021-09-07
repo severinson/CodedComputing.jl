@@ -78,8 +78,8 @@ function optimize(sim::EventDrivenSimulator, qs0; θs, comp_mcs, comp_vcs, comm_
     # evolutionary algorithm setup
     selection = Evolutionary.tournament(tournamentSize)
     crossover = Evolutionary.LX()
-    lower = max.(0.0, qs0 .* 0.9)
-    upper = min.(1.0, qs0 .* 1.1)
+    lower = max.(0.0, qs0 .* 0.8)
+    upper = min.(1.0, qs0 .* 1.2)
     mutation = Evolutionary.domainrange((lower .- upper) ./ 10) # as recommended in the BGA paper
 
     # wraps a mutation, but ensures that the inverse of each element is integer
