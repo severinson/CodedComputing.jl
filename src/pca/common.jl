@@ -81,9 +81,15 @@ function parse_commandline(isroot::Bool)
             arg_type = UInt
             default = rand(UInt)
         "--nslow"
-            help = "Number of workers that are slowed down artificially"
+            help = "Number of workers that are slowed down artificially in each iteration"
             arg_type = Int
-            default = 0            
+            default = 0          
+            range_tester = (x) -> 0 <= x
+        "--slowprob"
+            help = "Each worker is artificially slowed down with this probability (works in addition to --nslow)"
+            arg_type = Float64
+            default = 0.0
+            range_tester = (x) -> 0 <= x <= 1
     end
 
     # optionally add implementation-specific arguments
@@ -110,7 +116,7 @@ end
 
 Main loop run by each worker.
 """
-function worker_loop(localdata, recvbuf, sendbuf; nslow::Integer, kwargs...)
+function worker_loop(localdata, recvbuf, sendbuf; nslow::Integer, slowprob::Real, kwargs...)
     
     # control channel, to tell the workers when to exit
     crreq = MPI.Irecv!(zeros(1), root, control_tag, comm)
@@ -136,6 +142,14 @@ function worker_loop(localdata, recvbuf, sendbuf; nslow::Integer, kwargs...)
 
         # the nslow first workers are artificially slowed down
         if rank <= nslow
+            m = t
+            v = t / 10
+            d = CodedComputing.distribution_from_mean_variance(Gamma, m, v)
+            sleep(rand(d))
+        end
+
+        # workers are artificially slowed down with prob. slowprob.
+        if !iszero(slowprob) && rand() < slowprob
             m = t
             v = t / 10
             d = CodedComputing.distribution_from_mean_variance(Gamma, m, v)
