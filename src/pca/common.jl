@@ -138,16 +138,18 @@ function worker_loop(localdata, recvbuf, sendbuf; nslow::Integer, slowprob::Real
         if index == 1 # exit message on control channel
             break
         end
-        t = @elapsed state = worker_task!(recvbuf, sendbuf, localdata; state=state, kwargs...)
+        t = @elapsed begin
+            t0 = @elapsed state = worker_task!(recvbuf, sendbuf, localdata; state=state, kwargs...)
 
-        # the nslow first workers are artificially slowed down
-        if rank <= nslow
-            sleep(t)
-        end
+            # the nslow first workers are artificially slowed down
+            if rank <= nslow
+                sleep(t0)
+            end
 
-        # workers are artificially slowed down with prob. slowprob.
-        if !iszero(slowprob) && rand() < slowprob
-            sleep(t)
+            # workers are artificially slowed down with prob. slowprob.
+            if !iszero(slowprob) && rand() < slowprob
+                sleep(t0)
+            end
         end
 
         # send response to coordinator
