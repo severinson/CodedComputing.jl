@@ -151,10 +151,10 @@ function latency_profiler(chin::Channel{ProfilerInput}, chout::Channel{ProfilerO
             end
         end
 
-        # # to avoid overwhelming the consumer, only push new output if the channel is empty
-        # if isready(chout)
-        #     continue
-        # end
+        # remove any values already in the output channel before putting new ones in
+        while isready(chout)
+            take!(chout)
+        end
 
         # compute updated statistics for all workers
         for i in 1:nworkers
