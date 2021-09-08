@@ -28,6 +28,11 @@ function setup_profiler_channels(;chin_size=Inf, chout_size=Inf)
     chin, chout
 end
 
+function StatsBase.var(f::Function, itr)
+    g = (x) -> f(x)^2
+    mean(g, itr) - mean(f, itr)^2
+end
+
 """
 
 Latency profiling sub-system. Receives latency observations on `chin`, computes the mean and 
@@ -68,25 +73,19 @@ function latency_profiler(chin::Channel{ProfilerInput}, chout::Channel{ProfilerO
     end
 
     # compute the mean and variance over all values in the window between the qlower and qupper quantiles
-    buffer = zeros(buffersize)
+    buffer = Vector{ProfilerInput}(undef, buffersize)
+    # buffer = zeros(buffersize)
     function window_mean_var(w::MovingTimeWindow, key::Symbol)
 
         # populate the buffer
         i = 0
         n = 0
         for (_, t) in OnlineStats.value(w)
-            v = getfield(t, key)
-
-            # compute delay should be normalized
-            if key == :comp_delay
-                v /= (getfield(t, :θ) * getfield(t, :q))
-            end            
-
-            if isnan(v)
+            if isnan(getfield(t, key))
                 continue
             end
-            buffer[i+1] = v
-            i = mod(i + 1, buffersize)
+            i = mod(i, buffersize) + 1            
+            buffer[i] = t
             n += 1
         end
         n = min(n, buffersize)
@@ -97,7 +96,7 @@ function latency_profiler(chin::Channel{ProfilerInput}, chout::Channel{ProfilerO
         end
 
         # compute quantile indices
-        sort!(view(buffer, 1:n))
+        sort!(view(buffer, 1:n), by=(x)->getfield(x, key))
         il = max(1, ceil(Int, n*qlower))
         iu = min(buffersize, floor(Int, n*qupper))
 
@@ -106,8 +105,16 @@ function latency_profiler(chin::Channel{ProfilerInput}, chout::Channel{ProfilerO
         if length(vs) < minsamples
             return NaN, NaN
         end
-        m = mean(vs)
-        v = var(vs, mean=m, corrected=true)
+
+        # compute delay should be normalized
+        # (this variance computation isn't entirely correct)
+        if key == :comp_delay
+            m = mean((x)->getfield(x, key) / (getfield(x, :θ) * getfield(x, :q)), vs)
+            v = var((x)->getfield(x, key) / sqrt(getfield(x, :θ) * getfield(x, :q)), vs)
+        else
+            m = mean((x)->getfield(x, key), vs)
+            v = var((x)->getfield(x, key), vs)
+        end
         m, v
     end
 
