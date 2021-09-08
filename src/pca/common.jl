@@ -313,7 +313,7 @@ function coordinator_main()
     loadbalancer_nwait = ceil(Int, nworkers/2)
     min_processed_fraction = loadbalancer_nwait / nworkers / parsed_args[:nsubpartitions]
     _, loadbalancer_chout = CodedComputing.setup_loadbalancer_channels()
-    loadbalancer_task = Threads.@spawn CodedComputing.load_balancer(profiler_chout, loadbalancer_chout; min_processed_fraction, nwait=loadbalancer_nwait, nworkers, time_limit=10.0)
+    loadbalancer_task = Threads.@spawn CodedComputing.load_balancer(profiler_chout, loadbalancer_chout; min_processed_fraction, nwait=loadbalancer_nwait, nworkers)
 
     # ensure all workers have finished compiling before starting the computation
     # (this is only necessary when benchmarking)
