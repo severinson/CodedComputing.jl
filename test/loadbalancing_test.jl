@@ -88,7 +88,7 @@ end
     sim = EventDrivenSimulator(;nwait=sim_nwait, nworkers, comm_distributions, comp_distributions)
     min_processed_fraction = sim_nwait / nworkers / nsubpartitions
 
-    ps, loss = CodedComputing.optimize2!(ps, sim; θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit=5)
+    ps, loss = CodedComputing.optimize!(ps, sim; θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit=5)
     slows = ps[1:nslow]
     slows_mean = mean(slows)
     fasts = ps[nslow+1:end]
