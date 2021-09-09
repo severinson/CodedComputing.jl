@@ -1,6 +1,6 @@
 # Code for load-balancing optimization
 
-using Random, Distributions, Evolutionary
+using Random, Distributions
 
 function setup_loadbalancer_channels(;chin_size=Inf, chout_size=Inf)
     chin = Channel{ProfilerOutput}(chin_size)
