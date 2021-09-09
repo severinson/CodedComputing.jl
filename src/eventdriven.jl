@@ -67,7 +67,7 @@ end
 
 function DataStructures.enqueue!(sim::EventDrivenSimulator, i::Integer)
     comp, comm = rand(sim.comp_distributions[i]), rand(sim.comm_distributions[i])
-    0 <= comp && 0 <= comm || throw(ArgumentError("delay must be positive, but is $((comp, comm))"))
+    (0 <= comp && 0 <= comm) || throw(ArgumentError("delay must be positive, but is $((comp, comm))"))
     delay = comp + comm
     enqueue!(sim.pq, i, sim.time + delay)
     sim.isidle[i] = false # worker becomes busy
