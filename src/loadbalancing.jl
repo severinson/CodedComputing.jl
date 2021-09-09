@@ -71,7 +71,8 @@ function optimize!(ps::AbstractVector, sim::EventDrivenSimulator; ∇s=zeros(len
     
     # run for up to time_limit seconds
     t0 = time_ns()
-    t = t0    
+    t = t0
+    loss0 = NaN
     while (t - t0) / 1e9 < time_limit && t0 <= t
 
         # scale the workload uniformly to meet the min_processed_fraction requirement
@@ -79,6 +80,9 @@ function optimize!(ps::AbstractVector, sim::EventDrivenSimulator; ∇s=zeros(len
         s = sum(contribs)
         ps ./= min_processed_fraction / s
         contribs .*= min_processed_fraction / s
+        if isnan(loss0)
+            loss0 = var(contribs)
+        end
 
         # estimate gradients with respect to each element
         for i in 1:nworkers
@@ -111,7 +115,7 @@ function optimize!(ps::AbstractVector, sim::EventDrivenSimulator; ∇s=zeros(len
     contribs .*= min_processed_fraction / s
     loss = var(contribs)
 
-    ps, loss
+    ps, loss, loss0
 end
 
 function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Real, nwait::Integer, nworkers::Integer, time_limit::Real=1.0)
@@ -134,9 +138,6 @@ function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Re
     ls = zeros(nworkers)
     contribs = zeros(nworkers)
     ∇s = zeros(nworkers)
-
-    # previous best objective function value
-    f0 = Inf
 
     # reusable simulator
     comp_distributions = Vector{Gamma}(undef, nworkers)
@@ -225,16 +226,15 @@ function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Re
         try
             # @info "running load-balancer w. ps: $ps, θs: $θs, comp_mcs: $comp_mcs, comp_vcs: $comp_vcs"
             t = @elapsed begin
-                ps, f = optimize!(ps, sim; ∇s, ls, contribs, θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit)
+                ps, loss, loss0 = optimize!(ps, sim; ∇s, ls, contribs, θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit)
             end
 
             # compare the initial and new solutions, and continue if the change isn't large enough
-            if f0 < f
-                @info "load-balancer finished in $t seconds, but produced no improvement; continuing"
+            if loss > loss0 * 0.99
+                @info "load-balancer finished in $t seconds, but didn't result in a sufficiently better solution; continuing"
                 continue
             end
-            @info "load-balancer finished in $t seconds, and resulted in a $(f0/f) fraction improvement"
-            f0 = f
+            @info "load-balancer finished in $t seconds, and resulted in a $(loss0/loss) fraction improvement"
 
             # push any changes into the output channel
             for i in 1:nworkers
