@@ -218,7 +218,7 @@ function optimize(sim::EventDrivenSimulator, qs0; θs, comp_mcs, comp_vcs, comm_
     Evolutionary.optimize(f, lower, upper, qs0, opt, options), f0
 end
 
-function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Real, nwait::Integer, nworkers::Integer, time_limit::Real=10.0)
+function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Real, nwait::Integer, nworkers::Integer, time_limit::Real=1.0)
     0 < min_processed_fraction <= 1 || throw(ArgumentError("min_processed_fraction is $min_processed_fraction"))
     0 < nworkers || throw(ArgumentError("nworkers is $nworkers"))
     0 < nwait <= nworkers || throw(ArgumentError("nwait is $nwait, but nworkers is $nworkers"))
@@ -226,7 +226,6 @@ function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Re
 
     # fraction of dataset stored by and fraction of local data processed per iteration for each worker
     θs = fill(NaN, nworkers)
-    qs = fill(NaN, nworkers)
     ps = fill(NaN, nworkers)
 
     # mean and variance coefficients for each worker
@@ -234,6 +233,14 @@ function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Re
     comp_vcs = fill(NaN, nworkers)
     comm_mcs = fill(NaN, nworkers)
     comm_vcs = fill(NaN, nworkers)
+
+    # buffers used by the optimizer
+    ls = zeros(nworkers)
+    contribs = zeros(nworkers)
+    ∇s = zeros(nworkers)
+
+    # previous best objective function value
+    f0 = Inf
 
     # reusable simulator
     comp_distributions = Vector{Gamma}(undef, nworkers)
@@ -250,7 +257,7 @@ function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Re
         0 <= v.comm_mc || throw(ArgumentError("comm_mc is $comm_mc"))
         0 <= v.comm_vc || throw(ArgumentError("comm_vc is $comm_vc"))
         isnan(v.θ) || (θs[v.worker] = v.θ)
-        isnan(v.q) || (qs[v.worker] = v.q)
+        isnan(v.q) || (ps[v.worker] = 1 / v.q)
         isnan(v.comp_mc) || (comp_mcs[v.worker] = v.comp_mc)
         isnan(v.comp_vc) || (comp_vcs[v.worker] = v.comp_vc)
         isnan(v.comm_mc) || (comm_mcs[v.worker] = v.comm_mc)
@@ -279,7 +286,7 @@ function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Re
             all_populated = all_populated && iszero(count(isnan, θs))
         end
         if all_populated
-            all_populated = all_populated && iszero(count(isnan, qs))
+            all_populated = all_populated && iszero(count(isnan, ps))
         end
         all_populated
     end
@@ -318,41 +325,33 @@ function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Re
             continue
         end
 
-        # initialization
-        if count(isnan, ps) > 0
-            ps .= 1 ./ qs
-        end
-
         # new = balance_contribution(ps, min_processed_fraction; θs, ds_comm, cms_comp, cvs_comp, nwait)
         try
             # @info "running load-balancer w. ps: $ps, θs: $θs, comp_mcs: $comp_mcs, comp_vcs: $comp_vcs"
             t = @elapsed begin
-                result, f0 = optimize(sim, 1.0./ps; θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit)
+                ps, f = optimize2!(ps, sim; ∇s, ls, contribs, θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit)
             end
-            new_qs = result.minimizer
-            @info "load-balancer finished in $t seconds"
 
             # compare the initial and new solutions, and continue if the change isn't large enough
-            if !isnan(f0) && minimum(result) > f0 * 0.9
-                @info "load-balancer result of $(minimum(result)) not sufficiently better than $f0; continuing"
+            if f0 < f
+                @info "load-balancer finished in $t seconds, but produced no improvement; continuing"
                 continue
             end
+            @info "load-balancer finished in $t seconds, and resulted in a $(f0/f) fraction improvement"
+            f0 = f
 
             # push any changes into the output channel
             for i in 1:nworkers
-                p = round(Int, 1/new_qs[i])
-                if p != ps[i]
-                    ps[i] = p
-                    vout = @NamedTuple{worker::Int,p::Int}((i, p))
-                    try
-                        push!(chout, vout)
-                    catch e
-                        if e isa InvalidStateException
-                            @info "error pushing value into output channel" e
-                            break
-                        else
-                            rethrow()
-                        end
+                p = max(1, round(Int, ps[i]))
+                vout = @NamedTuple{worker::Int,p::Int}((i, p))
+                try
+                    push!(chout, vout)
+                catch e
+                    if e isa InvalidStateException
+                        @info "error pushing value into output channel" e
+                        break
+                    else
+                        rethrow()
                     end
                 end
             end
