@@ -8,7 +8,7 @@ function setup_loadbalancer_channels(;chin_size=Inf, chout_size=Inf)
     chin, chout
 end
 
-function optimize2!(ps::AbstractVector, sim::EventDrivenSimulator; ∇s=zeros(length(ps)), ls=zeros(length(ps)), contribs=zeros(length(ps)), θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction::Real, time_limit::Real=1.0, simulation_niterations::Integer=100, simulation_nsamples::Integer=10)
+function optimize!(ps::AbstractVector, sim::EventDrivenSimulator; ∇s=zeros(length(ps)), ls=zeros(length(ps)), contribs=zeros(length(ps)), θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction::Real, time_limit::Real=1.0, simulation_niterations::Integer=100, simulation_nsamples::Integer=10)
     0 < min_processed_fraction <= 1 || throw(ArgumentError("min_processed_fraction is $min_processed_fraction"))
     nworkers = length(ps)
     length(θs) == nworkers || throw(DimensionMismatch("θs has dimension $(length(θs)), but nworkers is $nworkers"))
@@ -112,110 +112,6 @@ function optimize2!(ps::AbstractVector, sim::EventDrivenSimulator; ∇s=zeros(le
     loss = var(contribs)
 
     ps, loss
-end
-
-function optimize(sim::EventDrivenSimulator, qs0; θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction::Real, populationSize::Integer=100, tournamentSize::Integer=32, mutationRate::Real=1.0, time_limit::Real=10.0, simulation_niterations::Integer=100, simulation_nsamples::Integer=10)
-    0 < min_processed_fraction <= 1 || throw(ArgumentError("min_processed_fraction is $min_processed_fraction"))
-    nworkers = length(qs0)
-    length(θs) == nworkers || throw(DimensionMismatch("θs has dimension $(length(θs)), but nworkers is $nworkers"))
-    length(comp_mcs) == nworkers || throw(DimensionMismatch("comp_mcs has dimension $(length(comp_mcs)), but nworkers is $nworkers"))
-    length(comp_vcs) == nworkers || throw(DimensionMismatch("comp_vcs has dimension $(length(comp_vcs)), but nworkers is $nworkers"))
-    length(comm_mcs) == nworkers || throw(DimensionMismatch("comm_mcs has dimension $(length(comm_mcs)), but nworkers is $nworkers"))
-    length(comm_vcs) == nworkers || throw(DimensionMismatch("comm_vcs has dimension $(length(comm_vcs)), but nworkers is $nworkers"))    
-
-    # setup communication latency distributions
-    for i in 1:nworkers
-        m = comm_mcs[i]
-        v = comm_vcs[i]
-        sim.comm_distributions[i] = distribution_from_mean_variance(Gamma, m, v)
-    end
-
-    # simulation helper function
-    ls = zeros(nworkers)
-    function simulate(qs)
-
-        # @info "evaluating $(1 ./ qs)"
-
-        # setup compute latency distributions
-        for i in 1:nworkers
-            m = comp_mcs[i] * θs[i] * qs[i]
-            v = comp_vcs[i] * θs[i] * qs[i]
-            sim.comp_distributions[i] = distribution_from_mean_variance(Gamma, m, v)
-        end
-    
-        # run nsamples simulations, each consisting of niterations steps
-        ls .= 0
-        for _ in 1:simulation_nsamples
-            sim = EventDrivenSimulator(sim)
-            step!(sim, simulation_niterations)
-            ls .+= sim.nfresh ./ simulation_niterations
-        end
-        ls ./= simulation_nsamples
-    end
-
-    # constraint
-    # (the total expected conbtribution must be above some threshold)    
-    function g(qs, ls)
-        rv = 0.0
-        for i in 1:nworkers
-            rv += ls[i] * θs[i] * qs[i]
-        end
-        rv - min_processed_fraction
-    end
-
-    # objective function
-    # (the variance of the contribution between workers)
-    lk = ReentrantLock() # objective function isn't thread-safe
-    fworst = 0.0 # worst objective function value observed so far
-    function f(qs)
-        rv = 0.0
-        lock(lk) do
-            ls = simulate(qs)
-            c = g(qs, ls)
-            if c < 0
-                rv = fworst + abs(c)
-            else
-                ls .*= θs .* qs
-                rv = var(ls)
-                fworst = max(fworst, rv)
-            end
-        end
-        rv
-    end    
-
-    # evolutionary algorithm setup
-    selection = Evolutionary.tournament(tournamentSize)
-    crossover = Evolutionary.LX()
-    lower = max.(0.0, qs0 .* 0.5)
-    upper = min.(1.0, qs0 .* 2.0)
-    mutation = Evolutionary.domainrange((lower .- upper) ./ 10) # as recommended in the BGA paper
-
-    # wraps a mutation, but ensures that the inverse of each element is integer
-    function integer_mutation(qs)
-        if isone(mutationRate) || rand() < mutationRate
-            mutation(qs)
-        end
-        for i in 1:length(qs)
-            p = 1 / qs[i]            
-            if rand() < 0.5
-                p = floor(p)
-            else
-                p = ceil(p)
-            end
-            p = max(p, 1.0)
-            qs[i] = 1 / p
-        end
-        qs
-    end
-
-    # for reference, compute objective function value for the initial solution
-    f0 = f(qs0)
-    f0 = iszero(fworst) ? NaN : f0
-
-    # optimization algorithm
-    opt = Evolutionary.GA(;populationSize, mutationRate=1.0, selection, crossover, mutation=integer_mutation)
-    options = Evolutionary.Options(;time_limit, Evolutionary.default_options(opt)...)
-    Evolutionary.optimize(f, lower, upper, qs0, opt, options), f0
 end
 
 function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Real, nwait::Integer, nworkers::Integer, time_limit::Real=1.0)
@@ -329,7 +225,7 @@ function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Re
         try
             # @info "running load-balancer w. ps: $ps, θs: $θs, comp_mcs: $comp_mcs, comp_vcs: $comp_vcs"
             t = @elapsed begin
-                ps, f = optimize2!(ps, sim; ∇s, ls, contribs, θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit)
+                ps, f = optimize!(ps, sim; ∇s, ls, contribs, θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit)
             end
 
             # compare the initial and new solutions, and continue if the change isn't large enough
