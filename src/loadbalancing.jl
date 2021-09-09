@@ -54,21 +54,29 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
         # forward difference
         ps[i] = pi0 + δ
         ls = simulate(ps)
+        while isapprox(ls[i], 0)
+            δ *= 2
+            ps[i] = pi0 + δ
+            ls = simulate(ps)            
+        end
         forward = ls[i] * θs[i] / ps[i]
 
         # backward difference
         ps[i] = pi0 - δ
+        ps[i] = max(sqrt(eps(Float64)), ps[i])
         ls = simulate(ps)
         backward = ls[i] * θs[i] / ps[i]
 
         # symmetric difference
+        h = pi0 + δ - ps[i]
         ps[i] = pi0
-        (forward - backward) / 2δ
+        (forward - backward) / h
     end
 
     # parameters
     μ = min_processed_fraction / nworkers
     α = 0.1    
+    β = 0.1
 
     # loss for previous solution for reference
     contribs .= simulate(ps_prev) .* θs ./ ps_prev
@@ -78,7 +86,16 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
     # run for up to time_limit seconds
     t0 = time_ns()
     t = t0
+    loss = NaN
     while (t - t0) / 1e9 < time_limit && t0 <= t
+
+        # improve the worker with the smallest contribution
+        i = argmin(contribs)
+        ∇ = finite_diff(ps, i)
+        x = (μ - contribs[i]) / ∇ * β + ps[i]
+        x = min(x, (1+α)*ps[i])
+        x = max(x, (1-α)*ps[i])
+        ps[i] = x
 
         # scale the workload uniformly to meet the min_processed_fraction requirement
         contribs .= simulate(ps) .* θs ./ ps
@@ -86,37 +103,10 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
         ps ./= min_processed_fraction / s
         contribs .*= min_processed_fraction / s
 
-        # estimate gradients with respect to each element
-        for i in 1:nworkers
-            ∇s[i] = finite_diff(ps, i)
-        end
-
-        # make one pass over the workers, updating the number of partitions
-        for i in 1:nworkers
-            if isapprox(contribs[i], 0) || isapprox(∇s[i], 0)
-                # the contribution or gradient is zero when the worker never participates, 
-                # so we need to increase the number of partitions                            
-                x = (1+α)*ps[i]
-            else
-                # solve for x in contribs[i] + (x - ps[i]) * ∇s[i] - μ = 0
-                # (Newton's method)
-                x = (μ - contribs[i]) / ∇s[i] + ps[i]
-                x = min(x, (1+α)*ps[i])
-                x = max(x, (1-α)*ps[i])
-                x = max(x, 1.0)
-            end
-            ps[i] = x
-        end
         t = time_ns()
     end
 
-    # scale the workload uniformly to meet the min_processed_fraction requirement
-    contribs .= simulate(ps) .* θs ./ ps
-    s = sum(contribs)
-    ps ./= min_processed_fraction / s
-    contribs .*= min_processed_fraction / s
     loss = maximum(contribs) / minimum(contribs)
-
     ps, loss, loss0
 end
 
