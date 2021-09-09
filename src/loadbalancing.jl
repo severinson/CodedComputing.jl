@@ -8,10 +8,11 @@ function setup_loadbalancer_channels(;chin_size=Inf, chout_size=Inf)
     chin, chout
 end
 
-function optimize!(ps::AbstractVector, sim::EventDrivenSimulator; ∇s=zeros(length(ps)), ls=zeros(length(ps)), contribs=zeros(length(ps)), θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction::Real, time_limit::Real=1.0, simulation_niterations::Integer=100, simulation_nsamples::Integer=10)
+function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDrivenSimulator; ∇s=zeros(length(ps)), ls=zeros(length(ps)), contribs=zeros(length(ps)), θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction::Real, time_limit::Real=1.0, simulation_niterations::Integer=100, simulation_nsamples::Integer=10)
     0 < min_processed_fraction <= 1 || throw(ArgumentError("min_processed_fraction is $min_processed_fraction"))
     nworkers = length(ps)
-    length(θs) == nworkers || throw(DimensionMismatch("θs has dimension $(length(θs)), but nworkers is $nworkers"))
+    length(ps_prev) == nworkers || throw(DimensionMismatch("ps_prev has dimension $(length(ps_prev)), but nworkers is $nworkers"))    
+    length(θs) == nworkers || throw(DimensionMismatch("θs has dimension $(length(θs)), but nworkers is $nworkers"))    
     length(comp_mcs) == nworkers || throw(DimensionMismatch("comp_mcs has dimension $(length(comp_mcs)), but nworkers is $nworkers"))
     length(comp_vcs) == nworkers || throw(DimensionMismatch("comp_vcs has dimension $(length(comp_vcs)), but nworkers is $nworkers"))
     length(comm_mcs) == nworkers || throw(DimensionMismatch("comm_mcs has dimension $(length(comm_mcs)), but nworkers is $nworkers"))
@@ -65,6 +66,11 @@ function optimize!(ps::AbstractVector, sim::EventDrivenSimulator; ∇s=zeros(len
         (forward - backward) / 2δ
     end
 
+    # loss for previous solution for reference
+    contribs .= simulate(ps_prev) .* θs ./ ps_prev
+    contribs .*= min_processed_fraction / sum(contribs)
+    loss0 = var(contribs)
+
     # parameters
     μ = min_processed_fraction / nworkers
     α = 0.1
@@ -72,7 +78,6 @@ function optimize!(ps::AbstractVector, sim::EventDrivenSimulator; ∇s=zeros(len
     # run for up to time_limit seconds
     t0 = time_ns()
     t = t0
-    loss0 = NaN
     while (t - t0) / 1e9 < time_limit && t0 <= t
 
         # scale the workload uniformly to meet the min_processed_fraction requirement
@@ -80,9 +85,6 @@ function optimize!(ps::AbstractVector, sim::EventDrivenSimulator; ∇s=zeros(len
         s = sum(contribs)
         ps ./= min_processed_fraction / s
         contribs .*= min_processed_fraction / s
-        if isnan(loss0)
-            loss0 = var(contribs)
-        end
 
         # estimate gradients with respect to each element
         for i in 1:nworkers
@@ -118,15 +120,21 @@ function optimize!(ps::AbstractVector, sim::EventDrivenSimulator; ∇s=zeros(len
     ps, loss, loss0
 end
 
-function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Real, nwait::Integer, nworkers::Integer, time_limit::Real=1.0)
+function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Real, nwait::Integer, nworkers::Integer, nsubpartitions::Union{Integer,<:AbstractVector}, time_limit::Real=1.0)
     0 < min_processed_fraction <= 1 || throw(ArgumentError("min_processed_fraction is $min_processed_fraction"))
     0 < nworkers || throw(ArgumentError("nworkers is $nworkers"))
     0 < nwait <= nworkers || throw(ArgumentError("nwait is $nwait, but nworkers is $nworkers"))
+    if typeof(nsubpartitions) <: Integer
+        0 < nsubpartitions || throw(ArgumentError("nsubpartitions must be positive, but is $nsubpartitions"))
+    else
+        length(nsubpartitions) == nworkers || throw(DimensionMismatch("nsubpartitions has dimension $(length(nsubpartitions)), but nworkers is $nworkers"))
+    end
     @info "load_balancer task started"
 
     # fraction of dataset stored by and fraction of local data processed per iteration for each worker
-    θs = fill(NaN, nworkers)
-    ps = fill(NaN, nworkers)
+    θs = fill(1/nworkers, nworkers)
+    ps = typeof(nsubpartitions) <: Integer ? fill(float(nsubpartitions), nworkers) : float.(nsubpartitions)
+    ps_prev = copy(ps)
 
     # mean and variance coefficients for each worker
     comp_mcs = fill(NaN, nworkers)
@@ -149,12 +157,13 @@ function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Re
         0 < v.worker <= nworkers || throw(ArgumentError("v.worker is $(v.worker), but nworkers is $nworkers"))
         0 <= v.θ <= 1 || throw(ArgumentError("θ is $θ"))
         0 <= v.q <= 1 || throw(ArgumentError("q is $q"))
-        0 <= v.comp_mc || throw(ArgumentError("comp_mc is $comp_mc"))        
-        0 <= v.comp_vc || throw(ArgumentError("comp_vc is $comp_vc"))        
+        0 <= v.comp_mc || throw(ArgumentError("comp_mc is $comp_mc"))
+        0 <= v.comp_vc || throw(ArgumentError("comp_vc is $comp_vc"))
         0 <= v.comm_mc || throw(ArgumentError("comm_mc is $comm_mc"))
         0 <= v.comm_vc || throw(ArgumentError("comm_vc is $comm_vc"))
-        isnan(v.θ) || (θs[v.worker] = v.θ)
-        isnan(v.q) || (ps[v.worker] = 1 / v.q)
+        # Taken to be 1/nworkers and as an argument, respectively
+        # isnan(v.θ) || (θs[v.worker] = v.θ)
+        # isnan(v.q) || (ps[v.worker] = 1 / v.q)
         isnan(v.comp_mc) || (comp_mcs[v.worker] = v.comp_mc)
         isnan(v.comp_vc) || (comp_vcs[v.worker] = v.comp_vc)
         isnan(v.comm_mc) || (comm_mcs[v.worker] = v.comm_mc)
@@ -226,7 +235,7 @@ function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Re
         try
             # @info "running load-balancer w. ps: $ps, θs: $θs, comp_mcs: $comp_mcs, comp_vcs: $comp_vcs"
             t = @elapsed begin
-                ps, loss, loss0 = optimize!(ps, sim; ∇s, ls, contribs, θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit)
+                ps, loss, loss0 = optimize!(ps, ps_prev, sim; ∇s, ls, contribs, θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit)
             end
 
             # compare the initial and new solutions, and continue if the change isn't large enough
@@ -235,6 +244,7 @@ function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Re
                 continue
             end
             @info "load-balancer finished in $t seconds, and resulted in a $(loss0/loss) fraction improvement"
+            ps_prev .= ps
 
             # push any changes into the output channel
             for i in 1:nworkers

@@ -9,6 +9,7 @@ using Distributions
     time_limit = 1.0 # must be floating-point
     θs = [0.3, 0.7]
     qs = 1 ./ [2, 3]
+    ps = round.(Int, 1 ./ qs)
 
     # put some random values into the load-balancer input
     Random.seed!(123)
@@ -21,7 +22,7 @@ using Distributions
     push!(chin, v2)
 
     # start the load-balancer
-    task = Threads.@spawn CodedComputing.load_balancer(chin, chout; min_processed_fraction, nwait, nworkers, time_limit)
+    task = Threads.@spawn CodedComputing.load_balancer(chin, chout; min_processed_fraction, nwait, nsubpartitions=ps, nworkers, time_limit)
 
     # wait for up to 10 seconds for the input to be consumed
     t0 = time_ns()
@@ -88,7 +89,7 @@ end
     sim = EventDrivenSimulator(;nwait=sim_nwait, nworkers, comm_distributions, comp_distributions)
     min_processed_fraction = sim_nwait / nworkers / nsubpartitions
 
-    ps, loss = CodedComputing.optimize!(ps, sim; θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit=5)
+    ps, loss, loss0 = CodedComputing.optimize!(ps, ps, sim; θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit=5)
     slows = ps[1:nslow]
     slows_mean = mean(slows)
     fasts = ps[nslow+1:end]
