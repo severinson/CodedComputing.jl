@@ -66,14 +66,14 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
         (forward - backward) / 2δ
     end
 
+    # parameters
+    μ = min_processed_fraction / nworkers
+    α = 0.1    
+
     # loss for previous solution for reference
     contribs .= simulate(ps_prev) .* θs ./ ps_prev
     contribs .*= min_processed_fraction / sum(contribs)
-    loss0 = var(contribs)
-
-    # parameters
-    μ = min_processed_fraction / nworkers
-    α = 0.1
+    loss0 = maximum(contribs) / minimum(contribs)
     
     # run for up to time_limit seconds
     t0 = time_ns()
@@ -115,7 +115,7 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
     s = sum(contribs)
     ps ./= min_processed_fraction / s
     contribs .*= min_processed_fraction / s
-    loss = var(contribs)
+    loss = maximum(contribs) / minimum(contribs)
 
     ps, loss, loss0
 end
