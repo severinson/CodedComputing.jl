@@ -240,10 +240,10 @@ function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Re
 
             # compare the initial and new solutions, and continue if the change isn't large enough
             if loss > loss0 * 0.99
-                @info "load-balancer finished in $t seconds, but didn't result in a sufficiently better solution; continuing"
+                @info "load-balancer finished in $t seconds with loss $loss and loss0 $loss0; continuing"
                 continue
             end
-            @info "load-balancer finished in $t seconds, and resulted in a $(loss0/loss) fraction improvement"
+            @info "load-balancer finished in $t seconds loss $loss and loss0 $loss0, a $(loss0/loss) fraction improvement"
             ps_prev .= ps
 
             # push any changes into the output channel
