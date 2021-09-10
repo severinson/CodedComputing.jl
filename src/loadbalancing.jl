@@ -288,7 +288,7 @@ function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Re
             end
 
             # compare the initial and new solutions, and continue if the change isn't large enough
-            if isnan(loss) || isinf(loss) || loss > loss0 * 0.9
+            if isnan(loss) || isinf(loss) || loss0 / loss < 10
                 @info "load-balancer finished in $t seconds with loss $loss and loss0 $loss0; continuing"
                 continue
             end
