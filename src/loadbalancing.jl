@@ -46,7 +46,7 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
     end
 
     # estimate the gradient of the i-th element
-    function finite_diff(ps::AbstractVector, i::Integer, δ::Real=min(ps[i]-sqrt(eps(Float64)), ps[i]/10))
+    function finite_diff(ps::AbstractVector, i::Integer, δ::Real=min(ps[i]-sqrt(eps(Float64)), ps[i]/10); maxiter::Integer=5)
         0 < δ < ps[i] || throw(ArgumentError("δ is $δ, ps[i] is $(ps[i])"))
         0 < i <= length(ps) || throw(ArgumentError("i is $i"))
         pi0 = ps[i]
@@ -54,10 +54,16 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
         # forward difference
         ps[i] = pi0 + δ
         ls = simulate(ps)
+        j = 0
         while isapprox(ls[i], 0)
+            j += 1
+            if j == maxiter
+                ps[i] = pi0
+                return 0.0
+            end
             δ *= 2
             ps[i] = pi0 + δ
-            ls = simulate(ps)            
+            ls = simulate(ps)
         end
         forward = ls[i] * θs[i] / ps[i]
 
@@ -82,6 +88,12 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
     contribs .= simulate(ps_prev) .* θs ./ ps_prev
     contribs .*= min_processed_fraction / sum(contribs)
     loss0 = maximum(contribs) / minimum(contribs)
+
+    # initialization
+    contribs .= simulate(ps) .* θs ./ ps
+    s = sum(contribs)
+    ps ./= min_processed_fraction / s
+    contribs .*= min_processed_fraction / s  
     
     # run for up to time_limit seconds
     t0 = time_ns()
@@ -89,13 +101,15 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
     loss = NaN
     while (t - t0) / 1e9 < time_limit && t0 <= t
 
-        # improve the worker with the smallest contribution
+        # increase contribution of worker with smallest contribution
         i = argmin(contribs)
         ∇ = finite_diff(ps, i)
-        x = (μ - contribs[i]) / ∇ * β + ps[i]
-        x = min(x, (1+α)*ps[i])
-        x = max(x, (1-α)*ps[i])
-        ps[i] = x
+        if !isapprox(∇, 0)
+            x = (μ - contribs[i]) / ∇ * β + ps[i]
+            x = min(x, (1+α)*ps[i])
+            x = max(x, (1-α)*ps[i])
+            ps[i] = x
+        end
 
         # scale the workload uniformly to meet the min_processed_fraction requirement
         contribs .= simulate(ps) .* θs ./ ps
