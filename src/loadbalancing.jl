@@ -13,44 +13,34 @@ end
 For each random variable, return a lower bound on the log of the probability of a sample drawn 
 from this variable being smaller than all other variables.
 """
-function less_than_lower_bounds!(rv, dzs, dys)
+function less_than_lower_bound!(rv, dzs, dys)
     length(rv) == length(dzs) || throw(DimensionMismatch("rv has dimension $(length(rv)), but dzs has dimension $(length(dzs))"))
     length(rv) == length(dys) || throw(DimensionMismatch("rv has dimension $(length(rv)), but dys has dimension $(length(dys))"))
     n = length(rv)
-    rv .= 0
     
     # compute the midpoint of the means
     cz = mean(mean, dzs)
     cy = mean(mean, dys)    
 
-    # for each i, prob. of zi <= cz and all others >= cz
-    pz = 0.0
+    # for each i, prob. of (zi <= cz and all others >= cz) and (yi <= cy and all others >= cy)
+    pz, py = 0.0, 0.0
     for i in 1:n
         pz += logccdf(dzs[i], cz)
+        py += logccdf(dys[i], cy)        
     end
     for i in 1:n
-        v = logccdf(dzs[i], cz)
-        pz -= v
-        rv[i] += pz + logcdf(dzs[i], cz)
-        pz += v
+        vz = logccdf(dzs[i], cz)
+        vy = logccdf(dys[i], cy)        
+        pz -= vz
+        py -= vy
+        rv[i] = max(rv[i], pz + logcdf(dzs[i], cz) + py + logcdf(dys[i], cy))
+        pz += vz
+        py += vy
     end
-
-    # for each i, prob. of yi <= cy and all others >= cy
-    py = 0.0
-    for i in 1:n
-        py += logccdf(dys[i], cy)
-    end
-    for i in 1:n
-        v = logccdf(dys[i], cy)
-        py -= v
-        rv[i] += py + logcdf(dys[i], cy)
-        py += v
-    end
-
     rv
 end
 
-less_than_lower_bounds(dzs, dys) = less_than_lower_bounds!(zeros(length(dzs)), dzs, dys)
+less_than_lower_bound(dzs, dys) = less_than_lower_bound!(fill(-Inf, length(dzs)), dzs, dys)
 
 function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDrivenSimulator; ∇s=zeros(length(ps)), ls=zeros(length(ps)), contribs=zeros(length(ps)), θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction::Real, time_limit::Real=1.0, simulation_niterations::Integer=100, simulation_nsamples::Integer=10)
     0 < min_processed_fraction <= 1 || throw(ArgumentError("min_processed_fraction is $min_processed_fraction"))
@@ -89,7 +79,7 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
         end
         ls ./= simulation_nsamples
         ls .= log.(ls)
-        ls .= max.(ls, less_than_lower_bounds(sim.comp_distributions, sim.comm_distributions))
+        less_than_lower_bound!(ls, sim.comp_distributions, sim.comm_distributions)
         ls
     end
 
