@@ -1,5 +1,116 @@
 using Distributions
 
+@testset "optimizer (comp. higher than comm.)" begin
+    nworkers = 10
+    nwait = nworkers
+    nslow = 3    
+    nsubpartitions = 160.0
+    θs = fill(1/nworkers, nworkers)
+    ps = fill(nsubpartitions, nworkers)
+
+    # per-worker compute latency
+    comp_ms = fill(1.0, nworkers)
+    comp_ms[1:nslow] .*= 2    
+    comp_vs = comp_ms ./ 100
+    comp_mcs = comp_ms ./ (θs ./ ps)
+    comp_vcs = comp_vs ./ (θs ./ ps)
+
+    # per-worker communication latency
+    comm_mcs = fill(1e-2, nworkers)
+    comm_vcs = comm_mcs ./ 100
+    
+    sim_nwait = floor(Int, nworkers/2)
+    comp_distributions = Vector{Gamma}(undef, nworkers)
+    comm_distributions = Vector{Gamma}(undef, nworkers)    
+    sim = EventDrivenSimulator(;nwait=sim_nwait, nworkers, comm_distributions, comp_distributions)
+    min_processed_fraction = sim_nwait / nworkers / nsubpartitions
+
+    ps, loss, loss0 = CodedComputing.optimize!(ps, ps, sim; θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit=2)
+    @test loss < Inf    
+
+    # check that the slow workers have about twice as many partitions
+    slows = ps[1:nslow]
+    slows_mean = mean(slows)
+    fasts = ps[nslow+1:end]
+    fasts_mean = mean(fasts)
+    @test 2 / mean(slows) ≈ 1 / mean(fasts) rtol=0.1
+
+    # check that all slow and all fast workers were given approx. the same number of partitions as each other
+    for v in slows
+        @test v ≈ slows_mean rtol=0.1
+    end
+    for v in fasts
+        @test v ≈ fasts_mean rtol=0.1
+    end
+
+    # check that the avg. latency is uniform (within some margin)
+    ms = comp_mcs ./ ps .+ comm_mcs
+    μ = mean(ms)
+    for i in 1:nworkers
+        @test ms[i] ≈ μ rtol=0.1
+    end    
+end
+
+@testset "optimizer (comp. much higher than comm.)" begin
+    nworkers = 9
+    nwait = nworkers
+    nsubpartitions = 160.0
+    θs = fill(1/nworkers, nworkers)
+    ps = fill(nsubpartitions, nworkers)
+
+    # values recorded on eX3 with low variance and very low comm. latency relative to comp.
+    comp_mcs = [255.07814185599995, 235.33940168554452, 253.72451957702958, 116.82766857029705, 116.75048824871284, 116.63288112475249, 126.99890071128709, 126.4382596942574, 117.12455760475244]
+    comp_vcs = [0.0027557071631392205, 0.003592251480945663, 0.002281988669487589, 0.0007248118462346298, 0.0005408877863892769, 0.0005133790987450482, 0.0005865578758950107, 0.0006378358097673953, 0.0005586345559702721]    
+    comm_mcs = [3.373097029702779e-5, 3.189267326732839e-5, 3.427457425742762e-5, 3.50826633663372e-5, 3.664775247524789e-5, 3.760737623762412e-5, 3.5680287128712425e-5, 3.737996039603971e-5, 3.6443900990098125e-5]
+    comm_vcs = [1.4755830783262175e-12, 1.5582646160146614e-12, 1.3494372741908877e-12, 2.0233815302431064e-12, 2.7092806020993726e-12, 2.554836195077552e-12, 1.7668490363708934e-12, 1.5867281370452314e-12, 1.8507092575245513e-12]    
+    
+    sim_nwait = floor(Int, nworkers/2)
+    comp_distributions = Vector{Gamma}(undef, nworkers)
+    comm_distributions = Vector{Gamma}(undef, nworkers)
+    sim = EventDrivenSimulator(;nwait=sim_nwait, nworkers, comm_distributions, comp_distributions)
+    min_processed_fraction = sim_nwait / nworkers / nsubpartitions
+
+    ps, loss, loss0 = CodedComputing.optimize!(ps, ps, sim; θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit=2)
+    @test loss < Inf
+
+    # check that the avg. latency is uniform (within some margin)    
+    ms = comp_mcs ./ ps .+ comm_mcs
+    μ = mean(ms)
+    for i in 1:nworkers
+        @test ms[i] ≈ μ rtol=0.1
+    end
+end
+
+@testset "optimizer (comp. same as comm.)" begin
+    nworkers = 9
+    nwait = nworkers
+    nsubpartitions = 160.0
+    θs = fill(1/nworkers, nworkers)
+    ps = fill(nsubpartitions, nworkers)
+
+    # values recorded on eX3 with low variance and very low comm. latency relative to comp.
+    comp_mcs = [255.07814185599995, 235.33940168554452, 253.72451957702958, 116.82766857029705, 116.75048824871284, 116.63288112475249, 126.99890071128709, 126.4382596942574, 117.12455760475244]
+    comp_vcs = [0.0027557071631392205, 0.003592251480945663, 0.002281988669487589, 0.0007248118462346298, 0.0005408877863892769, 0.0005133790987450482, 0.0005865578758950107, 0.0006378358097673953, 0.0005586345559702721]    
+    comm_mcs = copy(comp_mcs)
+    comm_vcs = copy(comp_vcs)
+    
+    sim_nwait = floor(Int, nworkers/2)
+    comp_distributions = Vector{Gamma}(undef, nworkers)
+    comm_distributions = Vector{Gamma}(undef, nworkers)
+    sim = EventDrivenSimulator(;nwait=sim_nwait, nworkers, comm_distributions, comp_distributions)
+    min_processed_fraction = sim_nwait / nworkers / nsubpartitions
+
+    ps, loss, loss0 = CodedComputing.optimize!(ps, ps, sim; θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit=2)
+    @test loss < Inf
+
+    # check that the avg. latency is uniform (within some margin)    
+    ms = comp_mcs ./ ps .+ comm_mcs
+    μ = mean(ms)
+    for i in 1:nworkers
+        @test ms[i] ≈ μ rtol=0.5
+    end
+end
+
 @testset "smoke-test" begin
     chin, chout = CodedComputing.setup_loadbalancer_channels()
 
@@ -62,117 +173,4 @@ using Distributions
     close(chin)
     close(chout)
     wait(task)
-end
-
-@testset "optimizer (comp. higher than comm.)" begin
-    nworkers = 10
-    nwait = nworkers
-    nslow = 3    
-    nsubpartitions = 160.0
-    θs = fill(1/nworkers, nworkers)
-    ps = fill(nsubpartitions, nworkers)
-
-    # per-worker compute latency
-    comp_ms = fill(1.0, nworkers)
-    comp_ms[1:nslow] .*= 2    
-    comp_vs = comp_ms ./ 100
-    comp_mcs = comp_ms ./ (θs ./ ps)
-    comp_vcs = comp_vs ./ (θs ./ ps)
-
-    # per-worker communication latency
-    comm_mcs = fill(1e-2, nworkers)
-    comm_vcs = comm_mcs ./ 100
-    
-    sim_nwait = floor(Int, nworkers/2)
-    comp_distributions = Vector{Gamma}(undef, nworkers)
-    comm_distributions = Vector{Gamma}(undef, nworkers)    
-    sim = EventDrivenSimulator(;nwait=sim_nwait, nworkers, comm_distributions, comp_distributions)
-    min_processed_fraction = sim_nwait / nworkers / nsubpartitions
-
-    ps, loss, loss0 = CodedComputing.optimize!(ps, ps, sim; θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit=2)
-    @test loss < Inf    
-
-    # check that the slow workers have about twice as many partitions
-    slows = ps[1:nslow]
-    slows_mean = mean(slows)
-    fasts = ps[nslow+1:end]
-    fasts_mean = mean(fasts)
-    @test 2 / mean(slows) ≈ 1 / mean(fasts) rtol=0.1
-
-    # check that all slow and all fast workers were given approx. the same number of partitions as each other
-    for v in slows
-        @test v ≈ slows_mean rtol=0.1
-    end
-    for v in fasts
-        @test v ≈ fasts_mean rtol=0.1
-    end
-
-    # check that the avg. latency is uniform (within some margin)
-    ms = comp_mcs ./ ps .+ comm_mcs
-    μ = mean(ms)
-    for i in 1:nworkers
-        @test ms[i] ≈ μ rtol=0.1
-    end    
-end
-
-@testset "optimizer (comp. much higher than comm.)" begin
-    nworkers = 9
-    nwait = nworkers
-    nslow = 3    
-    nsubpartitions = 160.0
-    θs = fill(1/nworkers, nworkers)
-    ps = fill(nsubpartitions, nworkers)
-
-    # values recorded on eX3 with low variance and very low comm. latency relative to comp.
-    comp_mcs = [255.07814185599995, 235.33940168554452, 253.72451957702958, 116.82766857029705, 116.75048824871284, 116.63288112475249, 126.99890071128709, 126.4382596942574, 117.12455760475244]
-    comp_vcs = [0.0027557071631392205, 0.003592251480945663, 0.002281988669487589, 0.0007248118462346298, 0.0005408877863892769, 0.0005133790987450482, 0.0005865578758950107, 0.0006378358097673953, 0.0005586345559702721]    
-    comm_mcs = [3.373097029702779e-5, 3.189267326732839e-5, 3.427457425742762e-5, 3.50826633663372e-5, 3.664775247524789e-5, 3.760737623762412e-5, 3.5680287128712425e-5, 3.737996039603971e-5, 3.6443900990098125e-5]
-    comm_vcs = [1.4755830783262175e-12, 1.5582646160146614e-12, 1.3494372741908877e-12, 2.0233815302431064e-12, 2.7092806020993726e-12, 2.554836195077552e-12, 1.7668490363708934e-12, 1.5867281370452314e-12, 1.8507092575245513e-12]    
-    
-    sim_nwait = floor(Int, nworkers/2)
-    comp_distributions = Vector{Gamma}(undef, nworkers)
-    comm_distributions = Vector{Gamma}(undef, nworkers)
-    sim = EventDrivenSimulator(;nwait=sim_nwait, nworkers, comm_distributions, comp_distributions)
-    min_processed_fraction = sim_nwait / nworkers / nsubpartitions
-
-    ps, loss, loss0 = CodedComputing.optimize!(ps, ps, sim; θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit=2)
-    @test loss < Inf
-
-    # check that the avg. latency is uniform (within some margin)    
-    ms = comp_mcs ./ ps .+ comm_mcs
-    μ = mean(ms)
-    for i in 1:nworkers
-        @test ms[i] ≈ μ rtol=0.1
-    end
-end
-
-@testset "optimizer (comp. same as comm.)" begin
-    nworkers = 9
-    nwait = nworkers
-    nslow = 3    
-    nsubpartitions = 160.0
-    θs = fill(1/nworkers, nworkers)
-    ps = fill(nsubpartitions, nworkers)
-
-    # values recorded on eX3 with low variance and very low comm. latency relative to comp.
-    comp_mcs = [255.07814185599995, 235.33940168554452, 253.72451957702958, 116.82766857029705, 116.75048824871284, 116.63288112475249, 126.99890071128709, 126.4382596942574, 117.12455760475244]
-    comp_vcs = [0.0027557071631392205, 0.003592251480945663, 0.002281988669487589, 0.0007248118462346298, 0.0005408877863892769, 0.0005133790987450482, 0.0005865578758950107, 0.0006378358097673953, 0.0005586345559702721]    
-    comm_mcs = copy(comp_mcs)
-    comm_vcs = copy(comp_vcs)
-    
-    sim_nwait = floor(Int, nworkers/2)
-    comp_distributions = Vector{Gamma}(undef, nworkers)
-    comm_distributions = Vector{Gamma}(undef, nworkers)
-    sim = EventDrivenSimulator(;nwait=sim_nwait, nworkers, comm_distributions, comp_distributions)
-    min_processed_fraction = sim_nwait / nworkers / nsubpartitions
-
-    ps, loss, loss0 = CodedComputing.optimize!(ps, ps, sim; θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit=2)
-    @test loss < Inf
-
-    # check that the avg. latency is uniform (within some margin)    
-    ms = comp_mcs ./ ps .+ comm_mcs
-    μ = mean(ms)
-    for i in 1:nworkers
-        @test ms[i] ≈ μ rtol=0.1
-    end
 end
