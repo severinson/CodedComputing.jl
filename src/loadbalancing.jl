@@ -8,6 +8,50 @@ function setup_loadbalancer_channels(;chin_size=Inf, chout_size=Inf)
     chin, chout
 end
 
+"""
+
+For each random variable, return a lower bound on the log of the probability of a sample drawn 
+from this variable being smaller than all other variables.
+"""
+function less_than_lower_bounds!(rv, dzs, dys)
+    length(rv) == length(dzs) || throw(DimensionMismatch("rv has dimension $(length(rv)), but dzs has dimension $(length(dzs))"))
+    length(rv) == length(dys) || throw(DimensionMismatch("rv has dimension $(length(rv)), but dys has dimension $(length(dys))"))
+    n = length(rv)
+    rv .= 0
+    
+    # compute the midpoint of the means
+    cz = mean(mean, dzs)
+    cy = mean(mean, dys)    
+
+    # for each i, prob. of zi <= cz and all others >= cz
+    pz = 0.0
+    for i in 1:n
+        pz += logccdf(dzs[i], cz)
+    end
+    for i in 1:n
+        v = logccdf(dzs[i], cz)
+        pz -= v
+        rv[i] += pz + logcdf(dzs[i], cz)
+        pz += v
+    end
+
+    # for each i, prob. of yi <= cy and all others >= cy
+    py = 0.0
+    for i in 1:n
+        py += logccdf(dys[i], cy)
+    end
+    for i in 1:n
+        v = logccdf(dys[i], cy)
+        py -= v
+        rv[i] += py + logcdf(dys[i], cy)
+        py += v
+    end
+
+    rv
+end
+
+less_than_lower_bounds(dzs, dys) = less_than_lower_bounds!(zeros(length(dzs)), dzs, dys)
+
 function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDrivenSimulator; ∇s=zeros(length(ps)), ls=zeros(length(ps)), contribs=zeros(length(ps)), θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction::Real, time_limit::Real=1.0, simulation_niterations::Integer=100, simulation_nsamples::Integer=10)
     0 < min_processed_fraction <= 1 || throw(ArgumentError("min_processed_fraction is $min_processed_fraction"))
     nworkers = length(ps)
@@ -26,6 +70,7 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
     end
 
     # helper function to run simulations
+    # (computes probabilities in the log domain)
     function simulate(ps)
 
         # setup compute latency distributions
@@ -43,6 +88,9 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
             ls .+= sim.nfresh ./ simulation_niterations
         end
         ls ./= simulation_nsamples
+        ls .= log.(ls)
+        ls .= max.(ls, less_than_lower_bounds(sim.comp_distributions, sim.comm_distributions))
+        ls
     end
 
     # estimate the gradient of the i-th element
@@ -55,7 +103,7 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
         ps[i] = pi0 + δ
         ls = simulate(ps)
         j = 0
-        while isapprox(ls[i], 0)
+        while isapprox(exp(ls[i]), 0)
             j += 1
             if j == maxiter
                 ps[i] = pi0
@@ -65,13 +113,13 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
             ps[i] = pi0 + δ
             ls = simulate(ps)
         end
-        forward = ls[i] * θs[i] / ps[i]
+        forward = exp(ls[i]) * θs[i] / ps[i]
 
         # backward difference
         ps[i] = pi0 - δ
         ps[i] = max(sqrt(eps(Float64)), ps[i])
         ls = simulate(ps)
-        backward = ls[i] * θs[i] / ps[i]
+        backward = exp(ls[i]) * θs[i] / ps[i]
 
         # symmetric difference
         h = pi0 + δ - ps[i]
@@ -85,42 +133,44 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
     β = 0.1
 
     # loss for previous solution for reference
-    contribs .= simulate(ps_prev) .* θs ./ ps_prev
-    contribs .*= min_processed_fraction / sum(contribs)
-    loss0 = maximum(contribs) / minimum(contribs)
+    contribs .= simulate(ps_prev) .+ log.(θs) .- log.(ps_prev)
+    loss0 = maximum(contribs) - minimum(contribs)
 
     # initialization
-    contribs .= simulate(ps) .* θs ./ ps
-    s = sum(contribs)
+    ls = simulate(ps)
+    contribs .= ls .+ log.(θs) .- log.(ps)
+    s = sum(exp, contribs)
     ps ./= min_processed_fraction / s
-    contribs .*= min_processed_fraction / s  
+    contribs .= ls .+ log.(θs) .- log.(ps)
     
     # run for up to time_limit seconds
     t0 = time_ns()
     t = t0
-    loss = NaN
     while (t - t0) / 1e9 < time_limit && t0 <= t
 
         # increase contribution of worker with smallest contribution
         i = argmin(contribs)
         ∇ = finite_diff(ps, i)
-        if !isapprox(∇, 0)
-            x = (μ - contribs[i]) / ∇ * β + ps[i]
+        if isapprox(∇, 0)
+            ps[i] *= 1+α
+        else            
+            x = (μ - exp(contribs[i])) / ∇ * β + ps[i]
             x = min(x, (1+α)*ps[i])
             x = max(x, (1-α)*ps[i])
             ps[i] = x
         end
 
-        # scale the workload uniformly to meet the min_processed_fraction requirement
-        contribs .= simulate(ps) .* θs ./ ps
-        s = sum(contribs)
+        # scale the workload uniformly to meet the min_processed_fraction requirement        
+        ls = simulate(ps_prev)
+        contribs .= ls .+ log.(θs) .- log.(ps)
+        s = sum(exp, contribs)
         ps ./= min_processed_fraction / s
-        contribs .*= min_processed_fraction / s
+        contribs .= ls .+ log.(θs) .- log.(ps)
 
         t = time_ns()
     end
 
-    loss = maximum(contribs) / minimum(contribs)
+    loss = maximum(contribs) - minimum(contribs)
     ps, loss, loss0
 end
 
