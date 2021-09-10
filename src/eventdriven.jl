@@ -11,15 +11,15 @@ end
 mutable struct EventDrivenSimulator{Td1<:Sampleable{Univariate},Td2<:Sampleable{Univariate}}
     epoch::Int
     time::Float64
-    nwait::Integer
-    nworkers::Integer
+    nwait::Int
+    nworkers::Int
     isidle::Vector{Bool}
     sepoch::Vector{Int}
     nfresh::Vector{Int}
     nstale::Vector{Int}
     comp_distributions::Vector{Td1}
     comm_distributions::Vector{Td2}
-    pq::PriorityQueue{Int,Float64,Base.Order.ForwardOrdering}
+    pq::BinaryMinHeap{Tuple{Float64, Int}} # (time the worker becomes available at, worker index)
 end
 
 """
@@ -35,7 +35,7 @@ function EventDrivenSimulator(;nwait::Integer, nworkers::Integer, comm_distribut
         zeros(Int, nworkers),
         comp_distributions,
         comm_distributions,
-        PriorityQueue{Int,Float64}(),
+        sizehint!(BinaryMinHeap{Tuple{Float64,Int}}(), nworkers),
     )
 end
 
@@ -51,8 +51,8 @@ function EventDrivenSimulator(sim::EventDrivenSimulator; nwait::Integer=sim.nwai
     sim.nfresh .= 0
     sim.nstale .= 0
     while length(sim.pq) > 0
-        dequeue!(sim.pq)
-    end    
+        pop!(sim.pq)
+    end
     EventDrivenSimulator(
         0, 0.0, nwait, nworkers,
         sim.isidle,
@@ -69,7 +69,7 @@ function DataStructures.enqueue!(sim::EventDrivenSimulator, i::Integer)
     comp, comm = rand(sim.comp_distributions[i]), rand(sim.comm_distributions[i])
     (0 <= comp && 0 <= comm) || throw(ArgumentError("delay must be positive, but is $((comp, comm))"))
     delay = comp + comm
-    enqueue!(sim.pq, i, sim.time + delay)
+    push!(sim.pq, (sim.time+delay, i))
     sim.isidle[i] = false # worker becomes busy
     sim.sepoch[i] = sim.epoch # register the epoch in which the task was assigned
     return
@@ -94,7 +94,7 @@ function step!(sim)
     # wait until nwait workers have finished
     nfresh = 0
     while nfresh < sim.nwait
-        i, t = dequeue_pair!(sim.pq)
+        t, i = pop!(sim.pq)
         sim.time = t
         sim.isidle[i] = true
         if sim.sepoch[i] == sim.epoch # result is fresh
@@ -105,7 +105,6 @@ function step!(sim)
             enqueue!(sim, i) # late workers are assigned a new task
         end
     end
-
     sim
 end
 
