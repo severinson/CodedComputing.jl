@@ -127,11 +127,12 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
     loss0 = maximum(contribs) - minimum(contribs)
 
     # initialization
+    # scale the workload uniformly to meet the min_processed_fraction requirement
+    contribs .= θs ./ ps
+    ps ./= (sim.nworkers / sim.nwait) * min_processed_fraction / sum(contribs)
+
+    # compute per-worker contributions
     ls = simulate(ps)
-    contribs .= ls .+ log.(θs) .- log.(ps)
-    # s = sum(exp, contribs)
-    # ps ./= min_processed_fraction / s
-    ps ./= (sim.nworkers / sim.nwait) * min_processed_fraction / (sum(θs ./ ps))
     contribs .= ls .+ log.(θs) .- log.(ps)
 
     # run for up to time_limit seconds
@@ -153,12 +154,12 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
             ps[i] = x
         end
 
-        # scale the workload uniformly to meet the min_processed_fraction requirement        
-        ls = simulate(ps_prev)
-        contribs .= ls .+ log.(θs) .- log.(ps)
-        # s = sum(exp, contribs)
-        # ps ./= min_processed_fraction / s
-        ps ./= (sim.nworkers / sim.nwait) * min_processed_fraction / (sum(θs ./ ps))
+        # scale the workload uniformly to meet the min_processed_fraction requirement
+        contribs .= θs ./ ps
+        ps ./= (sim.nworkers / sim.nwait) * min_processed_fraction / sum(contribs)
+
+        # compute per-worker contributions
+        ls = simulate(ps)
         contribs .= ls .+ log.(θs) .- log.(ps)
 
         t = time_ns()
