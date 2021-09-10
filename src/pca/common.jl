@@ -310,7 +310,7 @@ function coordinator_main()
 
     # setup the latency profiler
     profiler_chin, profiler_chout = CodedComputing.setup_profiler_channels()
-    profiler_task = Threads.@spawn CodedComputing.latency_profiler(profiler_chin, profiler_chout; nworkers, windowsize=Second(60))
+    profiler_task = Threads.@spawn CodedComputing.latency_profiler(profiler_chin, profiler_chout; nworkers, windowsize=Second(10))
 
     # setup the load-balancer
     loadbalancer_nwait = ceil(Int, nworkers/2)
