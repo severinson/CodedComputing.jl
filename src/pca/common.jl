@@ -138,19 +138,22 @@ function worker_loop(localdata, recvbuf, sendbuf; nslow::Integer, slowprob::Real
         if index == 1 # exit message on control channel
             break
         end
+        t0 = 0.0
         t = @elapsed begin
             t0 = @elapsed state = worker_task!(recvbuf, sendbuf, localdata; state=state, kwargs...)
 
             # the nslow first workers are artificially slowed down
+            # (counted as comp. delay)
             if rank <= nslow
                 sleep(t0)
             end
-
-            # workers are artificially slowed down with prob. slowprob.
-            if !iszero(slowprob) && rand() < slowprob
-                sleep(t0)
-            end
         end
+
+        # workers are artificially slowed down with prob. slowprob.
+        # (counted as comm. delay)
+        if !iszero(slowprob) && rand() < slowprob
+            sleep(t0)
+        end        
 
         # send response to coordinator
         reinterpret(Float64, view(sendbuf, 1:COMMON_BYTES))[1] = t # send the recorded compute latency to the coordinator
