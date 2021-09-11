@@ -204,7 +204,7 @@ function worker_task!(recvbuf, sendbuf, localdata; state=nothing, ncolumns::Inte
     if isnothing(state) # first iteration
         nsubpartitions_prev = 0
         subpartition_index = 1
-        w = Vector{ELEMENT_TYPE}(undef, nlocalsamples) # temp. storage
+        w = zeros(ELEMENT_TYPE, nlocalsamples) # temp. storage
     else # subsequent iterations
         nsubpartitions_prev::Int, subpartition_index::Int, w::Vector{ELEMENT_TYPE} = state
     end
