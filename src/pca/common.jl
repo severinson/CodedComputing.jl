@@ -117,6 +117,8 @@ end
 Main loop run by each worker.
 """
 function worker_loop(localdata, recvbuf, sendbuf; nslow::Integer, slowprob::Real, kwargs...)
+
+    @info "Worker $rank is running on $(gethostname())"
     
     # control channel, to tell the workers when to exit
     crreq = MPI.Irecv!(zeros(1), root, control_tag, comm)
@@ -268,7 +270,7 @@ function coordinator_main()
     to_worker_common_bytes = sizeof(UInt16) * 2 * nworkers
     prev_repochs = zeros(Int, nworkers)
     Random.seed!(parsed_args[:randomseed])
-    @info "Coordinator started with $(Threads.nthreads()) threads"
+    @info "Coordinator is running with $(Threads.nthreads()) threads on $(gethostname())"
 
     # create the output directory if it doesn't exist, and make sure we can write to the output file
     mkpath(dirname(parsed_args[:outputfile]))
@@ -306,7 +308,7 @@ function coordinator_main()
 
     # manually call the GC now, and optionally turn off GC, to avoid pauses later during execution
     GC.gc()
-    GC.enable(parsed_args[:enablegc])    
+    GC.enable(parsed_args[:enablegc])
 
     # setup the latency profiler
     profiler_chin, profiler_chout = CodedComputing.setup_profiler_channels()
