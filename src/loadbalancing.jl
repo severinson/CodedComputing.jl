@@ -42,6 +42,67 @@ end
 
 less_than_lower_bound(dzs, dys) = less_than_lower_bound!(fill(-Inf, length(dzs)), dzs, dys)
 
+"""
+
+Setup the simulator and simulate the fraction of iterations each worker participates in.
+"""
+function simulate!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
+    nworkers = length(ls)
+
+    # setup compute latency distributions
+    for i in 1:nworkers
+        m = comp_mcs[i] * θs[i] / ps[i]
+        v = comp_vcs[i] * θs[i] / ps[i]
+        sim.comp_distributions[i] = CodedComputing.distribution_from_mean_variance(Gamma, m, v)
+    end
+
+    # run nsamples simulations, each consisting of niterations steps
+    ls .= 0
+    for _ in 1:simulation_nsamples
+        empty!(sim)
+        step!(sim, simulation_niterations)
+        ls .+= sim.nfresh ./ simulation_niterations
+    end
+    ls ./= simulation_nsamples
+    ls .= log.(ls)
+    less_than_lower_bound!(ls, sim.comp_distributions, sim.comm_distributions)
+    ls
+end
+
+# estimate the gradient of the i-th element
+function finite_diff(ps::AbstractVector, i::Integer, δ::Real=min(ps[i]-sqrt(eps(Float64)), ps[i]/10); maxiter::Integer=5, ls, sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
+    0 < δ < ps[i] || throw(ArgumentError("δ is $δ, ps[i] is $(ps[i])"))
+    0 < i <= length(ps) || throw(ArgumentError("i is $i"))
+    pi0 = ps[i]
+
+    # forward difference
+    ps[i] = pi0 + δ
+    ls = simulate!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
+    j = 0
+    while isapprox(exp(ls[i]), 0)
+        j += 1
+        if j == maxiter
+            ps[i] = pi0
+            return 0.0
+        end
+        δ *= 2
+        ps[i] = pi0 + δ
+        ls = simulate!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
+    end
+    forward = exp(ls[i]) * θs[i] / ps[i]
+
+    # backward difference
+    ps[i] = pi0 - δ
+    ps[i] = max(sqrt(eps(Float64)), ps[i])
+    ls = simulate!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
+    backward = exp(ls[i]) * θs[i] / ps[i]
+
+    # symmetric difference
+    h = pi0 + δ - ps[i]
+    ps[i] = pi0
+    (forward - backward) / h
+end
+
 function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDrivenSimulator; ∇s=zeros(length(ps)), ls=zeros(length(ps)), contribs=zeros(length(ps)), θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction::Real, time_limit::Real=1.0, simulation_niterations::Integer=100, simulation_nsamples::Integer=10)
     0 < min_processed_fraction <= 1 || throw(ArgumentError("min_processed_fraction is $min_processed_fraction"))
     nworkers = length(ps)
@@ -59,71 +120,14 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
         sim.comm_distributions[i] = CodedComputing.distribution_from_mean_variance(Gamma, m, v)
     end
 
-    # helper function to run simulations
-    # (computes probabilities in the log domain)
-    function simulate(ps)
-
-        # setup compute latency distributions
-        for i in 1:nworkers
-            m = comp_mcs[i] * θs[i] / ps[i]
-            v = comp_vcs[i] * θs[i] / ps[i]
-            sim.comp_distributions[i] = CodedComputing.distribution_from_mean_variance(Gamma, m, v)
-        end
-    
-        # run nsamples simulations, each consisting of niterations steps
-        ls .= 0
-        for _ in 1:simulation_nsamples
-            sim = EventDrivenSimulator(sim)
-            step!(sim, simulation_niterations)
-            ls .+= sim.nfresh ./ simulation_niterations
-        end
-        ls ./= simulation_nsamples
-        ls .= log.(ls)
-        less_than_lower_bound!(ls, sim.comp_distributions, sim.comm_distributions)
-        ls
-    end
-
-    # estimate the gradient of the i-th element
-    function finite_diff(ps::AbstractVector, i::Integer, δ::Real=min(ps[i]-sqrt(eps(Float64)), ps[i]/10); maxiter::Integer=5)
-        0 < δ < ps[i] || throw(ArgumentError("δ is $δ, ps[i] is $(ps[i])"))
-        0 < i <= length(ps) || throw(ArgumentError("i is $i"))
-        pi0 = ps[i]
-
-        # forward difference
-        ps[i] = pi0 + δ
-        ls = simulate(ps)
-        j = 0
-        while isapprox(exp(ls[i]), 0)
-            j += 1
-            if j == maxiter
-                ps[i] = pi0
-                return 0.0
-            end
-            δ *= 2
-            ps[i] = pi0 + δ
-            ls = simulate(ps)
-        end
-        forward = exp(ls[i]) * θs[i] / ps[i]
-
-        # backward difference
-        ps[i] = pi0 - δ
-        ps[i] = max(sqrt(eps(Float64)), ps[i])
-        ls = simulate(ps)
-        backward = exp(ls[i]) * θs[i] / ps[i]
-
-        # symmetric difference
-        h = pi0 + δ - ps[i]
-        ps[i] = pi0
-        (forward - backward) / h
-    end
-
     # parameters
     μ = min_processed_fraction / nworkers
     α = 0.1    
     β = 0.1
 
     # loss for previous solution for reference
-    contribs .= simulate(ps_prev) .+ log.(θs) .- log.(ps_prev)
+    ls = simulate!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
+    contribs .= ls .+ log.(θs) .- log.(ps_prev)
     loss0 = maximum(contribs) - minimum(contribs)
 
     # initialization
@@ -132,7 +136,7 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
     ps ./= (sim.nworkers / sim.nwait) * min_processed_fraction / sum(contribs)
 
     # compute per-worker contributions
-    ls = simulate(ps)
+    ls = simulate!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
     contribs .= ls .+ log.(θs) .- log.(ps)
 
     # run for up to time_limit seconds
@@ -142,7 +146,7 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
 
         # increase contribution of worker with smallest contribution
         i = argmin(contribs)
-        ∇ = finite_diff(ps, i)
+        ∇ = finite_diff(ps, i; ls, sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
         if isapprox(∇, 0)
             ps[i] *= 1+α
             j = argmax(contribs)
@@ -159,7 +163,7 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
         ps ./= (sim.nworkers / sim.nwait) * min_processed_fraction / sum(contribs)
 
         # compute per-worker contributions
-        ls = simulate(ps)
+        ls = simulate!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
         contribs .= ls .+ log.(θs) .- log.(ps)
 
         t = time_ns()
