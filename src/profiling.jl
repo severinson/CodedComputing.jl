@@ -57,7 +57,7 @@ function comp_quantile_view(w::CircularBuffer{ProfilerInput}, buffer::Vector{Pro
     for i in 1:n
         buffer[i] = w[i]
     end
-    @views sort!(buffer[1:n], by=(x)->getfield(x, :comp_delay))
+    @views sort!(buffer[1:n], by=(x)->getfield(x, :comp_delay), alg=QuickSort)
     il = max(1, ceil(Int, n*qlower))
     iu = min(length(buffer), floor(Int, n*qupper))
     view(buffer, il:iu)
@@ -73,7 +73,7 @@ function comm_quantile_view(w::CircularBuffer{ProfilerInput}, buffer::Vector{Pro
     for i in 1:n
         buffer[i] = w[i]
     end
-    @views sort!(buffer[1:n], by=(x)->getfield(x, :comm_delay))
+    @views sort!(buffer[1:n], by=(x)->getfield(x, :comm_delay), alg=QuickSort)
     il = max(1, ceil(Int, n*qlower))
     iu = min(length(buffer), floor(Int, n*qupper))
     view(buffer, il:iu)
@@ -127,7 +127,7 @@ function latency_profiler(chin::Channel{ProfilerInput}, chout::Channel{ProfilerO
 
         # consume all values currently in the channel
         try
-            vin = take!(chin)
+            vin::ProfilerInput = take!(chin)
             if !isnan(vin.comp_delay) && !isnan(vin.comm_delay)
                 pushfirst!(ws[vin.worker], vin)
             end
@@ -141,7 +141,7 @@ function latency_profiler(chin::Channel{ProfilerInput}, chout::Channel{ProfilerO
         end            
         while isready(chin)
             try
-                vin = take!(chin)
+                vin::ProfilerInput = take!(chin)
                 if !isnan(vin.comp_delay) && !isnan(vin.comm_delay)
                     pushfirst!(ws[vin.worker], vin)
                 end
@@ -159,7 +159,7 @@ function latency_profiler(chin::Channel{ProfilerInput}, chout::Channel{ProfilerO
         for i in 1:nworkers
             filter!(ws[i]; windowsize)
         end
-
+        
         # remove any values already in the output channel before putting new ones in
         while isready(chout)
             take!(chout)
