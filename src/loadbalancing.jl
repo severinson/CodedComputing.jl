@@ -284,7 +284,6 @@ function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Re
             continue
         end
 
-        # new = balance_contribution(ps, min_processed_fraction; θs, ds_comm, cms_comp, cvs_comp, nwait)
         try
             # @info "running load-balancer w. ps: $ps, θs: $θs, comp_mcs: $comp_mcs, comp_vcs: $comp_vcs"
             t = @elapsed begin
