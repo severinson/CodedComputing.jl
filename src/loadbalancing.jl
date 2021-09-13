@@ -182,7 +182,7 @@ function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Re
     else
         length(nsubpartitions) == nworkers || throw(DimensionMismatch("nsubpartitions has dimension $(length(nsubpartitions)), but nworkers is $nworkers"))
     end
-    @info "load_balancer task started"
+    @info "load_balancer task started on thread $(Threads.threadid())"
 
     # fraction of dataset stored by and fraction of local data processed per iteration for each worker
     θs = fill(1/nworkers, nworkers)

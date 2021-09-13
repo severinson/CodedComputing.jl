@@ -271,6 +271,7 @@ function coordinator_main()
     prev_repochs = zeros(Int, nworkers)
     Random.seed!(parsed_args[:randomseed])
     @info "Coordinator is running with $(Threads.nthreads()) threads on $(gethostname())"
+    @info "Main task is running on thread $(Threads.threadid())"
 
     # create the output directory if it doesn't exist, and make sure we can write to the output file
     mkpath(dirname(parsed_args[:outputfile]))
