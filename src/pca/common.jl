@@ -70,6 +70,11 @@ function parse_commandline(isroot::Bool)
         "--saveiterates"
             help = "Save all intermediate iterates to the output file"
             action = :store_true
+        "--nsavediterates"
+            help = "Maximum number of iterates to save to disk"
+            default = 20
+            arg_type = Int            
+            range_tester = (x) -> 0 < x
         "--enablegc"
             help = "Enable garbage collection while running the computation (defaults to disabled)"
             action = :store_true
@@ -289,9 +294,15 @@ function coordinator_main()
     # views into recvbuf corresponding to each worker
     recvbufs = [view(recvbuf, partition(length(recvbuf), nworkers, i)) for i in 1:nworkers]
 
-    # optionally store all intermediate iterates
+    # number of iterates to save
+    nsavediterates::Int = parsed_args[:nsavediterates]
+    savediterateindices = unique(round.(Int, exp.(range(log(1), log(niterations), length=nsavediterates))))
+    nsavediterates = length(savediterateindices)
+    savediterateindex = 1
+
+    # optionally store intermediate iterates
     if saveiterates
-        iterates = zeros(size(V)..., niterations)
+        iterates = zeros(size(V)..., nsavediterates)
     else
         iterates = zeros(size(V)..., 0)
     end
@@ -375,9 +386,10 @@ function coordinator_main()
     end
 
     ## optinally record the iterate
-    if saveiterates
+    if saveiterates && epoch == savediterateindices[savediterateindex]
         ndims = length(size(V))
-        selectdim(iterates, ndims+1, epoch) .= V
+        selectdim(iterates, ndims+1, savediterateindex) .= V
+        savediterateindex += 1
     end
 
     # remaining iterations
@@ -446,10 +458,11 @@ function coordinator_main()
         end
 
         ## optinally record the iterate
-        if saveiterates
+        if saveiterates && epoch == savediterateindices[savediterateindex]
             ndims = length(size(V))
-            selectdim(iterates, ndims+1, epoch) .= V
-        end   
+            selectdim(iterates, ndims+1, savediterateindex) .= V
+            savediterateindex += 1
+        end        
     end
 
     @info "Optimization finished; writing output to disk"
@@ -471,6 +484,7 @@ function coordinator_main()
         # optionally save all iterates
         if saveiterates
             fid["iterates"] = iterates
+            fid["savediterateindices"] = savediterateindices
         end
 
         # write benchmark data
