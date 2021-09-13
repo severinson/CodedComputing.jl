@@ -21,3 +21,10 @@ step!(sim)
 @test 10 <= sim.time <= 12
 @test sim.isidle == [true, true, false]
 @test sim.nfresh == [1, 1, 0]
+
+empty!(sim)
+step!(sim)
+@test sim.epoch == 1
+@test 10 <= sim.time <= 12
+@test sim.isidle == [true, true, false]
+@test sim.nfresh == [1, 1, 0]

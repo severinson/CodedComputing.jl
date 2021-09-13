@@ -65,6 +65,23 @@ function EventDrivenSimulator(sim::EventDrivenSimulator; nwait::Integer=sim.nwai
     )
 end
 
+"""
+
+Empty a simulator, resetting it to its initial state.
+"""
+function Base.empty!(sim::EventDrivenSimulator)
+    sim.epoch = 0
+    sim.time = 0.0
+    sim.isidle .= true
+    sim.sepoch .= 0
+    sim.nfresh .= 0
+    sim.nstale .= 0
+    while length(sim.pq) > 0
+        pop!(sim.pq)
+    end
+    sim
+end
+
 function DataStructures.enqueue!(sim::EventDrivenSimulator, i::Integer)
     comp, comm = rand(sim.comp_distributions[i]), rand(sim.comm_distributions[i])
     (0 <= comp && 0 <= comm) || throw(ArgumentError("delay must be positive, but is $((comp, comm))"))
