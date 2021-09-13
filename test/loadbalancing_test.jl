@@ -152,7 +152,7 @@ end
     push!(chin, v2)
 
     # start the load-balancer
-    task = Threads.@spawn CodedComputing.load_balancer(chin, chout; min_processed_fraction, nwait, nsubpartitions=ps, nworkers, time_limit)
+    task = Threads.@spawn CodedComputing.load_balancer(chin, chout; min_processed_fraction, nwait, nsubpartitions=ps, nworkers, time_limit, min_improvement=1)
 
     # wait for up to 10 seconds for the input to be consumed
     t0 = time_ns()

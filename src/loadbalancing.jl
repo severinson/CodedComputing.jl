@@ -173,7 +173,7 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
     ps, loss, loss0
 end
 
-function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Real, nwait::Integer, nworkers::Integer, nsubpartitions::Union{Integer,<:AbstractVector}, time_limit::Real=1.0)
+function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Real, nwait::Integer, nworkers::Integer, nsubpartitions::Union{Integer,<:AbstractVector}, time_limit::Real=1.0, min_improvement::Real=10)
     0 < min_processed_fraction <= 1 || throw(ArgumentError("min_processed_fraction is $min_processed_fraction"))
     0 < nworkers || throw(ArgumentError("nworkers is $nworkers"))
     0 < nwait <= nworkers || throw(ArgumentError("nwait is $nwait, but nworkers is $nworkers"))
@@ -205,49 +205,27 @@ function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Re
     comm_distributions = Vector{Gamma}(undef, nworkers)
     sim = EventDrivenSimulator(;nwait, nworkers, comp_distributions, comm_distributions)
 
-    # process an output received from the profiler
-    function process_sample(v::ProfilerOutput)
-        0 < v.worker <= nworkers || throw(ArgumentError("v.worker is $(v.worker), but nworkers is $nworkers"))
-        0 <= v.θ <= 1 || throw(ArgumentError("θ is $θ"))
-        0 <= v.q <= 1 || throw(ArgumentError("q is $q"))
-        0 <= v.comp_mc || throw(ArgumentError("comp_mc is $comp_mc"))
-        0 <= v.comp_vc || throw(ArgumentError("comp_vc is $comp_vc"))
-        0 <= v.comm_mc || throw(ArgumentError("comm_mc is $comm_mc"))
-        0 <= v.comm_vc || throw(ArgumentError("comm_vc is $comm_vc"))
-        # Taken to be 1/nworkers and as an argument, respectively
-        # isnan(v.θ) || (θs[v.worker] = v.θ)
-        # isnan(v.q) || (ps[v.worker] = 1 / v.q)
-        isnan(v.comp_mc) || (comp_mcs[v.worker] = v.comp_mc)
-        isnan(v.comp_vc) || (comp_vcs[v.worker] = v.comp_vc)
-        isnan(v.comm_mc) || (comm_mcs[v.worker] = v.comm_mc)
-        isnan(v.comm_vc) || (comm_vcs[v.worker] = v.comm_vc)        
-        return
-    end
-
     # helper to check if there is any missing latency data
     # (in which case we shouldn't run the load-balancer)
-    all_populated = false    
+    all_populated = false
     function check_populated()
-        if all_populated
-            return all_populated
-        end        
-        all_populated = iszero(count(isnan, comp_mcs))
-        if all_populated
-            all_populated = all_populated && iszero(count(isnan, comp_vcs))
+        rv = iszero(count(isnan, comp_mcs))
+        if rv
+            rv = rv && iszero(count(isnan, comp_vcs))
         end
-        if all_populated
-            all_populated = all_populated && iszero(count(isnan, comm_mcs))
+        if rv
+            rv = rv && iszero(count(isnan, comm_mcs))
         end
-        if all_populated
-            all_populated = all_populated && iszero(count(isnan, comm_vcs))
+        if rv
+            rv = rv && iszero(count(isnan, comm_vcs))
         end
-        if all_populated
-            all_populated = all_populated && iszero(count(isnan, θs))
+        if rv
+            rv = rv && iszero(count(isnan, θs))
         end
-        if all_populated
-            all_populated = all_populated && iszero(count(isnan, ps))
+        if rv
+            rv = rv && iszero(count(isnan, ps))
         end
-        all_populated
+        rv
     end
 
     # consume incoming ProfilerOutput samples and run the optimizer
@@ -256,7 +234,10 @@ function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Re
         # consume all values currently in the channel
         try
             vin = take!(chin)
-            process_sample(vin)
+            isnan(vin.comp_mc) || (comp_mcs[vin.worker] = vin.comp_mc)
+            isnan(vin.comp_vc) || (comp_vcs[vin.worker] = vin.comp_vc)
+            isnan(vin.comm_mc) || (comm_mcs[vin.worker] = vin.comm_mc)
+            isnan(vin.comm_vc) || (comm_vcs[vin.worker] = vin.comm_vc)
         catch e
             if e isa InvalidStateException
                 @info "error taking value from input channel" e          
@@ -268,7 +249,10 @@ function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Re
         while isready(chin)
             try
                 vin = take!(chin)
-                process_sample(vin)
+                isnan(vin.comp_mc) || (comp_mcs[vin.worker] = vin.comp_mc)
+                isnan(vin.comp_vc) || (comp_vcs[vin.worker] = vin.comp_vc)
+                isnan(vin.comm_mc) || (comm_mcs[vin.worker] = vin.comm_mc)
+                isnan(vin.comm_vc) || (comm_vcs[vin.worker] = vin.comm_vc)                
             catch e
                 if e isa InvalidStateException
                     @info "error taking value from input channel" e          
@@ -280,7 +264,10 @@ function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Re
         end     
     
         # verify that we have complete latency information for all workers
-        if !check_populated()
+        if !all_populated
+            all_populated = check_populated()
+        end
+        if !all_populated
             continue
         end
 
@@ -291,7 +278,7 @@ function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Re
             end
 
             # compare the initial and new solutions, and continue if the change isn't large enough
-            if isnan(loss) || isinf(loss) || loss0 / loss < 10
+            if isnan(loss) || isinf(loss) || loss0 / loss < min_improvement
                 @info "load-balancer finished in $t seconds with loss $loss and loss0 $loss0; continuing"
                 continue
             end
