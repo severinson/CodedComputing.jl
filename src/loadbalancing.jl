@@ -261,7 +261,7 @@ function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Re
                     rethrow()
                 end
             end
-        end     
+        end
     
         # verify that we have complete latency information for all workers
         if !all_populated
@@ -273,16 +273,16 @@ function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Re
 
         try
             # @info "running load-balancer w. ps: $ps, θs: $θs, comp_mcs: $comp_mcs, comp_vcs: $comp_vcs"
-            t = @elapsed begin
+            t = @timed begin
                 ps, loss, loss0 = optimize!(ps, ps_prev, sim; ∇s, ls, contribs, θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit)
             end
 
             # compare the initial and new solutions, and continue if the change isn't large enough
             if isnan(loss) || isinf(loss) || loss0 / loss < min_improvement
-                @info "load-balancer finished in $t seconds with loss $loss and loss0 $loss0; continuing"
+                @info "load-balancer allocated $(t.bytes / 1e6) MB, and finished in $(t.time) seconds with loss $loss and loss0 $loss0; continuing"
                 continue
             end
-            @info "load-balancer finished in $t seconds loss $loss and loss0 $loss0, a $(loss0/loss) fraction improvement"
+            @info "load-balancer allocated $(t.bytes / 1e6) MB, and finished in $(t.time) seconds with loss $loss and loss0 $loss0, a $(loss0/loss) fraction improvement"
             ps_prev .= ps
 
             # push any changes into the output channel
