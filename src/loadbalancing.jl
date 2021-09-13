@@ -201,8 +201,8 @@ function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Re
     ∇s = zeros(nworkers)
 
     # reusable simulator
-    comp_distributions = Vector{Gamma}(undef, nworkers)
-    comm_distributions = Vector{Gamma}(undef, nworkers)
+    comp_distributions = [Gamma() for _ in 1:nworkers]
+    comm_distributions = [Gamma() for _ in 1:nworkers]
     sim = EventDrivenSimulator(;nwait, nworkers, comp_distributions, comm_distributions)
 
     # helper to check if there is any missing latency data
