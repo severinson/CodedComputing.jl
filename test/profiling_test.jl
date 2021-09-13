@@ -17,8 +17,6 @@ for i in 1:length(timestamps)
     v = CodedComputing.ProfilerInput(1, θs[1], qs[1], timestamps[i], comps[i], comms[i])
     push!(chin, v)
 end
-comps = comps[end-1:end]
-comms = comms[end-1:end]
 comp_mean = mean(comps) / (θs[1] * qs[1])
 # comp_var = var(comps, corrected=false) / (θs[1] * qs[1]) # correct variance
 comp_var = var(comps ./ sqrt(θs[1] * qs[1]), corrected=false) # almost correct; good enough for now
@@ -33,7 +31,6 @@ for i in 1:length(timestamps)
     v = CodedComputing.ProfilerInput(2, θs[2], qs[2], timestamps[i], comps[i], comms[i])    
     push!(chin, v)
 end
-# comps ./= θs[2] * qs[2]
 comps = comps[end-10:end]
 comms = comms[end-10:end]
 comp_mean = mean(comps) / (θs[2] * qs[2])
@@ -68,7 +65,6 @@ wait(task)
 v = take!(chout)
 @test v.worker == 1 || v.worker == 2
 correct = v.worker == 1 ? correct1 : correct2
-println("v: $v, correct: $correct")
 for name in fieldnames(CodedComputing.ProfilerOutput)
     @test getfield(correct, name) ≈ getfield(v, name)
 end

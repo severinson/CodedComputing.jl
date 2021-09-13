@@ -1,5 +1,5 @@
 # Code used for latency profiling
-using StatsBase, Statistics, OnlineStats, Dates
+using StatsBase, Statistics, Dates
 
 struct ProfilerInput
     worker::Int
@@ -35,6 +35,81 @@ end
 
 """
 
+Remove all values at the end of the window older than windowsize, and return the number of 
+elements removed.
+"""
+function Base.filter!(w::CircularBuffer{ProfilerInput}; windowsize)
+    rv = 0
+    while length(w) > 0 && (w[1].timestamp - w[end].timestamp) > windowsize
+        pop!(w)
+        rv += 1
+    end
+    rv
+end
+
+"""
+
+Return a view into the elements of w in beween the qlower and qupper quantiles.
+"""
+function comp_quantile_view(w::CircularBuffer{ProfilerInput}, buffer::Vector{ProfilerInput}, qlower::Real, qupper::Real)
+    0 <= qlower <= qupper <= 1.0 || throw(ArgumentError("qlower is $qlower and qupper is $qupper"))
+    n = length(w)
+    for i in 1:n
+        buffer[i] = w[i]
+    end
+    @views sort!(buffer[1:n], by=(x)->getfield(x, :comp_delay))
+    il = max(1, ceil(Int, n*qlower))
+    iu = min(length(buffer), floor(Int, n*qupper))
+    view(buffer, il:iu)
+end
+
+"""
+
+Return a view into the elements of w in beween the qlower and qupper quantiles.
+"""
+function comm_quantile_view(w::CircularBuffer{ProfilerInput}, buffer::Vector{ProfilerInput}, qlower::Real, qupper::Real)
+    0 <= qlower <= qupper <= 1.0 || throw(ArgumentError("qlower is $qlower and qupper is $qupper"))
+    n = length(w)
+    for i in 1:n
+        buffer[i] = w[i]
+    end
+    @views sort!(buffer[1:n], by=(x)->getfield(x, :comm_delay))
+    il = max(1, ceil(Int, n*qlower))
+    iu = min(length(buffer), floor(Int, n*qupper))
+    view(buffer, il:iu)
+end
+
+function comp_mean_var(w::CircularBuffer{ProfilerInput}; buffer::Vector{ProfilerInput}, qlower::Real, qupper::Real, minsamples::Integer)
+    vs = comp_quantile_view(w, buffer, qlower, qupper)
+    if length(vs) < minsamples
+        return NaN, NaN
+    end    
+    m = mean((x)->getfield(x, :comp_delay) / (getfield(x, :θ) * getfield(x, :q)), vs)
+    v = var((x)->getfield(x, :comp_delay) / sqrt(getfield(x, :θ) * getfield(x, :q)), vs)    
+    m, v
+end
+
+function comm_mean_var(w::CircularBuffer{ProfilerInput}; buffer::Vector{ProfilerInput}, qlower::Real, qupper::Real, minsamples::Integer)
+    vs = comm_quantile_view(w, buffer, qlower, qupper)
+    if length(vs) < minsamples
+        return NaN, NaN
+    end
+    m = mean((x)->getfield(x, :comm_delay), vs)
+    v = var((x)->getfield(x, :comm_delay), vs)
+    m, v
+end
+
+function process_window(w::CircularBuffer{ProfilerInput}, i::Integer; buffer::Vector{ProfilerInput}, qlower::Real, qupper::Real, minsamples::Integer)::ProfilerOutput
+    length(w) > 0 || throw(ArgumentError("window must not be empty"))
+    θ = mean((x)->getfield(x, :θ), w)
+    q = mean((x)->getfield(x, :q), w)
+    comp_mc, comp_vc = comp_mean_var(w; buffer, qlower, qupper, minsamples)
+    comm_mc, comm_vc = comm_mean_var(w; buffer, qlower, qupper, minsamples)
+    ProfilerOutput(i, θ, q, comp_mc, comp_vc, comm_mc, comm_vc)
+end
+
+"""
+
 Latency profiling sub-system. Receives latency observations on `chin`, computes the mean and 
 variance over a moving time window of length `windowsize`, and sends the results on `chout`.
 """
@@ -44,90 +119,8 @@ function latency_profiler(chin::Channel{ProfilerInput}, chout::Channel{ProfilerO
     @info "latency_profiler task started"
     
     # maintain a window of latency samples for each worker
-    ws = [MovingTimeWindow(windowsize, valtype=ProfilerInput, timetype=Time) for _ in 1:nworkers]
-
-    # utility function for updating the correct window with a new latency measurement
-    function process_sample(v)
-        0 < v.worker <= nworkers || throw(ArgumentError("v.worker is $(v.worker), but nworkers is $nworkers"))
-        0 <= v.θ <= 1 || throw(ArgumentError("θ is $θ"))
-        0 <= v.q <= 1 || throw(ArgumentError("q is $q"))
-        0 <= v.comp_delay || throw(ArgumentError("comp_delay is $comp_delay"))
-        0 <= v.comm_delay || throw(ArgumentError("comm_delay is $comm_delay"))
-        if isnan(v.comp_delay) || isnan(v.comm_delay)
-            return
-        end
-        fit!(ws[v.worker], (v.timestamp, v))
-        return
-    end
-
-    # compute the mean over all values in the window
-    # function window_mean(w::MovingTimeWindow, key::Symbol)¨
-    function window_mean(w, key)
-        rv = 0.0
-        n = 0
-        for (_, t) in OnlineStats.value(w)
-            rv += getfield(t, key)
-            n += 1
-        end
-        rv / n
-    end
-
-    # compute the mean and variance over all values in the window between the qlower and qupper quantiles
+    ws = [CircularBuffer{CodedComputing.ProfilerInput}(buffersize) for _ in 1:nworkers]
     buffer = Vector{ProfilerInput}(undef, buffersize)
-    # buffer = zeros(buffersize)
-    function window_mean_var(w::MovingTimeWindow, key::Symbol)
-
-        # populate the buffer
-        i = 0
-        n = 0
-        for (_, t) in OnlineStats.value(w)
-            if isnan(getfield(t, key))
-                continue
-            end
-            i = mod(i, buffersize) + 1            
-            buffer[i] = t
-            n += 1
-        end
-        n = min(n, buffersize)
-
-        # return NaNs if there are no values
-        if n == 0
-            return NaN, NaN
-        end
-
-        # compute quantile indices
-        sort!(view(buffer, 1:n), by=(x)->getfield(x, key))
-        il = max(1, ceil(Int, n*qlower))
-        iu = min(buffersize, floor(Int, n*qupper))
-
-        # compute mean and variance over the values between qlower and qupper
-        vs = view(buffer, il:iu)
-        if length(vs) < minsamples
-            return NaN, NaN
-        end
-
-        # compute delay should be normalized
-        # (this variance computation isn't entirely correct)
-        if key == :comp_delay
-            m = mean((x)->getfield(x, key) / (getfield(x, :θ) * getfield(x, :q)), vs)
-            v = var((x)->getfield(x, key) / sqrt(getfield(x, :θ) * getfield(x, :q)), vs)
-        else
-            m = mean((x)->getfield(x, key), vs)
-            v = var((x)->getfield(x, key), vs)
-        end
-        m, v
-    end
-
-    # process all samples in the window for the i-th worker
-    function process_worker(i::Integer)
-        0 < i <= nworkers || throw(ArgumentError("i is $i"))
-        w = ws[i]
-        θ = window_mean(w, :θ)
-        q = window_mean(w, :q)
-        comp_mc, comp_vc = window_mean_var(w, :comp_delay)
-        comm_mc, comm_vc = window_mean_var(w, :comm_delay)
-        ProfilerOutput(i, θ, q, comp_mc, comp_vc, comm_mc, comm_vc)
-    end
 
     # process incoming latency samples
     while isopen(chin)
@@ -135,7 +128,9 @@ function latency_profiler(chin::Channel{ProfilerInput}, chout::Channel{ProfilerO
         # consume all values currently in the channel
         try
             vin = take!(chin)
-            process_sample(vin)
+            if !isnan(vin.comp_delay) && !isnan(vin.comm_delay)
+                pushfirst!(ws[vin.worker], vin)
+            end
         catch e
             if e isa InvalidStateException
                 @info "error taking value from input channel" e                
@@ -147,7 +142,9 @@ function latency_profiler(chin::Channel{ProfilerInput}, chout::Channel{ProfilerO
         while isready(chin)
             try
                 vin = take!(chin)
-                process_sample(vin)
+                if !isnan(vin.comp_delay) && !isnan(vin.comm_delay)
+                    pushfirst!(ws[vin.worker], vin)
+                end
             catch e
                 if e isa InvalidStateException
                     @info "error taking value from input channel" e
@@ -158,6 +155,11 @@ function latency_profiler(chin::Channel{ProfilerInput}, chout::Channel{ProfilerO
             end
         end
 
+        # filter out values older than windowsize
+        for i in 1:nworkers
+            filter!(ws[i]; windowsize)
+        end
+
         # remove any values already in the output channel before putting new ones in
         while isready(chout)
             take!(chout)
@@ -165,7 +167,10 @@ function latency_profiler(chin::Channel{ProfilerInput}, chout::Channel{ProfilerO
 
         # compute updated statistics for all workers
         for i in 1:nworkers
-            vout = process_worker(i)
+            if length(ws[i]) == 0
+                continue
+            end
+            vout = process_window(ws[i], i; buffer, qlower, qupper, minsamples)
             if isnan(vout.θ) || isnan(vout.q) || isnan(vout.comp_mc) || isnan(vout.comp_vc) || isnan(vout.comm_mc) || isnan(vout.comm_vc)
                 @info "profiler dropped NaN-sample: $vout"
                 continue
