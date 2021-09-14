@@ -96,6 +96,11 @@ function parse_commandline(isroot::Bool)
             default = 10
             arg_type = Int
             range_tester = (x) -> 0 < x
+        "--profilerminsamples"
+            help = "Minimum number of samples required for the profiler to compute mean and variance"
+            default = 10
+            arg_type = Int
+            range_tester = (x) -> 1 < x
         "--randomseed"
             help = "Random seed used by the coordinator"
             arg_type = UInt
@@ -339,7 +344,12 @@ function coordinator_main()
 
     # setup the latency profiler
     profiler_chin, profiler_chout = CodedComputing.setup_profiler_channels()
-    profiler_task = Threads.@spawn CodedComputing.latency_profiler(profiler_chin, profiler_chout; nworkers, windowsize=Second(parsed_args[:profilerwindowsize]))
+    profiler_task = Threads.@spawn CodedComputing.latency_profiler(
+        profiler_chin, profiler_chout; 
+        nworkers, 
+        windowsize=Second(parsed_args[:profilerwindowsize]),
+        minsamples=parsed_args[:profilerminsamples],
+        )
 
     # setup the load-balancer
     loadbalancer_nwait = ceil(Int, nworkers/2)
