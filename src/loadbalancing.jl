@@ -171,7 +171,7 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
     ps, loss, loss0
 end
 
-function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Real, nwait::Integer, nworkers::Integer, nsubpartitions::Union{Integer,<:AbstractVector}, time_limit::Real=1.0, min_improvement::Real=10)
+function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Real, nwait::Integer, nworkers::Integer, nsubpartitions::Union{Integer,<:AbstractVector}, time_limit::Real=1.0, min_improvement::Real=10, aggressive::Bool=false)
     0 < min_processed_fraction <= 1 || throw(ArgumentError("min_processed_fraction is $min_processed_fraction"))
     0 < nworkers || throw(ArgumentError("nworkers is $nworkers"))
     0 < nwait <= nworkers || throw(ArgumentError("nwait is $nwait, but nworkers is $nworkers"))
@@ -283,7 +283,7 @@ function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Re
         try
             # @info "running load-balancer w. ps: $ps, θs: $θs, comp_mcs: $comp_mcs, comp_vcs: $comp_vcs"
             t = @timed begin
-                ps, loss, loss0 = optimize!(ps, ps_prev, sim; ls, contribs, θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit, min_latency)
+                ps, loss, loss0 = optimize!(ps, ps_prev, sim; ls, contribs, θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit, min_latency, aggressive)
             end
 
             # compare the initial and new solutions, and continue if the change isn't large enough

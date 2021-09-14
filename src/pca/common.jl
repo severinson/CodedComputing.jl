@@ -91,6 +91,9 @@ function parse_commandline(isroot::Bool)
             default = 10.0
             arg_type = Float64
             range_tester = (x) -> 1 <= x
+        "--lbaggressive"
+            help = "Set the load-balancer in aggressive mode, in which it doesn't make workers slower"
+            action = :store_true
         "--profilerwindowsize"
             help = "Number of seconds that latency statistics are computed over"
             default = 10
@@ -361,6 +364,7 @@ function coordinator_main()
         nsubpartitions=parsed_args[:nsubpartitions], 
         nwait=loadbalancer_nwait, nworkers,
         time_limit=parsed_args[:lbtimelimit], min_improvement=parsed_args[:lbminimprovement],
+        aggressive=parsed_args[:lbaggressive],
         )
 
     # ensure all workers have finished compiling before starting the computation
