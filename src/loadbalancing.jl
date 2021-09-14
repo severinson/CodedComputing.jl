@@ -70,7 +70,7 @@ function simulate!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, si
 end
 
 # estimate the gradient of the i-th element
-function finite_diff(ps::AbstractVector, i::Integer, δ::Real=min(ps[i]-sqrt(eps(Float64)), ps[i]/10); maxiter::Integer=5, ls, sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
+function finite_diff(ps::AbstractVector, i::Integer, δ::Real=min(ps[i]-sqrt(eps(Float64)), ps[i]/10); ls, sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
     0 < δ < ps[i] || throw(ArgumentError("δ is $δ, ps[i] is $(ps[i])"))
     0 < i <= length(ps) || throw(ArgumentError("i is $i"))
     pi0 = ps[i]
@@ -78,24 +78,13 @@ function finite_diff(ps::AbstractVector, i::Integer, δ::Real=min(ps[i]-sqrt(eps
     # forward difference
     ps[i] = pi0 + δ
     ls = simulate!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
-    j = 0
-    while isapprox(exp(ls[i]), 0)
-        j += 1
-        if j == maxiter
-            ps[i] = pi0
-            return 0.0
-        end
-        δ *= 2
-        ps[i] = pi0 + δ
-        ls = simulate!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
-    end
-    forward = exp(ls[i]) * θs[i] / ps[i]
+    forward = ls[i] + log(θs[i]) - log(ps[i])
 
     # backward difference
     ps[i] = pi0 - δ
     ps[i] = max(sqrt(eps(Float64)), ps[i])
     ls = simulate!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
-    backward = exp(ls[i]) * θs[i] / ps[i]
+    backward = ls[i] + log(θs[i]) - log(ps[i])
 
     # symmetric difference
     h = pi0 + δ - ps[i]
@@ -157,26 +146,12 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
         # increase contribution of worker with smallest contribution
         i = argmin(contribs)
         ∇ = finite_diff(ps, i; ls, sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
-        if isapprox(∇, 0)            
-            ps[i] *= 1+α
-            if comm_mcs[i] <= min_latency
-                ps[i] = min(ps[i], comp_mcs[i] * θs[i] / (min_latency - comm_mcs[i]))
-            end
-            if !aggressive
-                j = argmax(contribs)
-                ps[j] *= 1-α
-                if comm_mcs[j] <= min_latency
-                    ps[j] = min(ps[j], comp_mcs[j] * θs[j] / (min_latency - comm_mcs[j]))
-                end
-            end
-        else            
-            x = (μ - exp(contribs[i])) / ∇ * β + ps[i]
-            x = min(x, (1+α)*ps[i])
-            x = max(x, (1-α)*ps[i])
-            ps[i] = x
-            if comm_mcs[i] <= min_latency
-                ps[i] = min(ps[i], comp_mcs[i] * θs[i] / (min_latency - comm_mcs[i]))
-            end            
+        x = (log(μ) - contribs[i]) / ∇ * β + ps[i]
+        x = min(x, (1+α)*ps[i])
+        x = max(x, (1-α)*ps[i])
+        ps[i] = x
+        if comm_mcs[i] <= min_latency
+            ps[i] = min(ps[i], comp_mcs[i] * θs[i] / (min_latency - comm_mcs[i]))
         end
 
         # scale the workload uniformly to meet the min_processed_fraction requirement
