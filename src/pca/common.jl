@@ -81,6 +81,16 @@ function parse_commandline(isroot::Bool)
         "--loadbalance"
             help = "Enable the load-balancer"
             action = :store_true
+        "--lbtimelimit"
+            help = "Time limit in seconds of the load-balancing optimization"
+            default = 1.0
+            arg_type = Float64
+            range_tester = (x) -> 0 < x
+        "--lbminimprovement"
+            help = "Minimum improvement required for the load-balancer to accept a new solution"
+            default = 10.0
+            arg_type = Float64
+            range_tester = (x) -> 1 <= x
         "--profilerwindowsize"
             help = "Number of seconds that latency statistics are computed over"
             default = 10
@@ -335,7 +345,13 @@ function coordinator_main()
     loadbalancer_nwait = ceil(Int, nworkers/2)
     min_processed_fraction = loadbalancer_nwait / nworkers / parsed_args[:nsubpartitions]
     _, loadbalancer_chout = CodedComputing.setup_loadbalancer_channels()
-    loadbalancer_task = Threads.@spawn CodedComputing.load_balancer(profiler_chout, loadbalancer_chout; min_processed_fraction, nsubpartitions=parsed_args[:nsubpartitions], nwait=loadbalancer_nwait, nworkers)
+    loadbalancer_task = Threads.@spawn CodedComputing.load_balancer(
+        profiler_chout, loadbalancer_chout; 
+        min_processed_fraction, 
+        nsubpartitions=parsed_args[:nsubpartitions], 
+        nwait=loadbalancer_nwait, nworkers,
+        time_limit=parsed_args[:lbtimelimit], min_improvement=parsed_args[:lbminimprovement],
+        )
 
     # ensure all workers have finished compiling before starting the computation
     # (this is only necessary when benchmarking)
