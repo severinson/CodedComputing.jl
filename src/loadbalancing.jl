@@ -92,7 +92,7 @@ function finite_diff(ps::AbstractVector, i::Integer, δ::Real=min(ps[i]-sqrt(eps
     (forward - backward) / h
 end
 
-function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDrivenSimulator; ∇s=zeros(length(ps)), ls=zeros(length(ps)), contribs=zeros(length(ps)), θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction::Real, time_limit::Real=1.0, simulation_niterations::Integer=100, simulation_nsamples::Integer=10, aggressive::Bool=false, min_latency::Float64=0.0)
+function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDrivenSimulator; ls=zeros(length(ps)), contribs=zeros(length(ps)), θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction::Real, time_limit::Real=1.0, simulation_niterations::Integer=100, simulation_nsamples::Integer=10, aggressive::Bool=false, min_latency::Float64=0.0)
     0 < min_processed_fraction <= 1 || throw(ArgumentError("min_processed_fraction is $min_processed_fraction"))
     nworkers = length(ps)
     length(ps_prev) == nworkers || throw(DimensionMismatch("ps_prev has dimension $(length(ps_prev)), but nworkers is $nworkers"))    
@@ -196,7 +196,6 @@ function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Re
     # buffers used by the optimizer
     ls = zeros(nworkers)
     contribs = zeros(nworkers)
-    ∇s = zeros(nworkers)
 
     # reusable simulator
     comp_distributions = [Gamma() for _ in 1:nworkers]
@@ -272,7 +271,7 @@ function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Re
         try
             # @info "running load-balancer w. ps: $ps, θs: $θs, comp_mcs: $comp_mcs, comp_vcs: $comp_vcs"
             t = @timed begin
-                ps, loss, loss0 = optimize!(ps, ps_prev, sim; ∇s, ls, contribs, θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit)
+                ps, loss, loss0 = optimize!(ps, ps_prev, sim; ls, contribs, θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit)
             end
 
             # compare the initial and new solutions, and continue if the change isn't large enough
