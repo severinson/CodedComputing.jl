@@ -45,7 +45,8 @@ end
     min_processed_fraction = sim_nwait / nworkers / nsubpartitions
 
     # balanced mode
-    ps, loss, loss0 = CodedComputing.optimize!(ps, ps, sim; θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit=2)
+    ps, loss, loss0 = CodedComputing.optimize!(ps, ps, sim; θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit=2.0)
+    println("ps: $ps")
     @test loss < Inf    
 
     # check that the slow workers have about twice as many partitions
@@ -65,6 +66,7 @@ end
 
     # check that the avg. latency is uniform (within some margin)
     ms = comp_mcs .* θs ./ ps .+ comm_mcs
+    println("ms: $ms")
     μ = mean(ms)
     for i in 1:nworkers
         @test ms[i] ≈ μ rtol=0.1
@@ -73,6 +75,7 @@ end
     # aggressive mode
     ps .= nsubpartitions
     ps, loss, loss0 = CodedComputing.optimize!(ps, ps, sim; θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit=2, aggressive=true, min_latency=-1.0)
+    println("ps: $ps")
     correct = zeros(nworkers)
     correct[1:nslow] .= 320.0
     correct[nslow+1:end] .= 160.0
@@ -82,6 +85,7 @@ end
 
     # check that the avg. latency is uniform (within some margin)
     ms = comp_mcs .* θs ./ ps .+ comm_mcs
+    println("ms: $ms")    
     μ = mean(ms)
     for i in 1:nworkers
         @test ms[i] ≈ μ rtol=0.1
@@ -109,10 +113,12 @@ end
 
     # balanced mode
     ps, loss, loss0 = CodedComputing.optimize!(ps, ps, sim; θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit=2)
+    println("ps: $ps")
     @test loss < Inf
 
     # check that the avg. latency is uniform (within some margin)    
     ms = comp_mcs .* θs ./ ps .+ comm_mcs
+    println("ms: $ms")
     μ = mean(ms)
     for i in 1:nworkers
         @test ms[i] ≈ μ rtol=0.1
@@ -121,8 +127,10 @@ end
     # aggressive mode
     ps .= nsubpartitions
     ps, loss, loss0 = CodedComputing.optimize!(ps, ps, sim; θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit=2, aggressive=true, min_latency=-1.0)
+    println("ps: $ps")
     @test minimum(ps) ≈ 160.0
     ms = comp_mcs .* θs ./ ps .+ comm_mcs
+    println("ms: $ms")    
     μ = mean(ms)
     for i in 1:nworkers
         @test ms[i] ≈ μ rtol=0.1
@@ -150,16 +158,26 @@ end
 
     # balanced mode
     ps, loss, loss0 = CodedComputing.optimize!(ps, ps, sim; θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit=2)
+    println("ps: $ps")
     @test loss < Inf
 
     # check that the avg. latency is uniform (within some margin)    
     ms = comp_mcs ./ ps .+ comm_mcs
+    println("ms: $ms")        
     μ = mean(ms)
     for i in 1:nworkers
         @test ms[i] ≈ μ rtol=0.5
     end
 
-    # aggressive mode doesn't work in this scenario
+    # aggressive mode
+    ps .= nsubpartitions
+    ps, loss, loss0 = CodedComputing.optimize!(ps, ps, sim; θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit=2, aggressive=true, min_latency=-1.0)
+    @test minimum(ps) ≈ 160.0
+    # ms = comp_mcs .* θs ./ ps .+ comm_mcs
+    # μ = mean(ms)
+    # for i in 1:nworkers
+    #     @test ms[i] ≈ μ rtol=0.1
+    # end    
 end
 
 @testset "smoke-test" begin
@@ -176,11 +194,11 @@ end
     # put some random values into the load-balancer input
     Random.seed!(123)
     worker = 1
-    v1 = CodedComputing.ProfilerOutput(worker, θs[worker], qs[worker], rand(), rand(), rand(), rand())
+    v1 = CodedComputing.ProfilerOutput(worker, θs[worker], qs[worker], 2.0, 2.0, 0.1, 0.1)
     push!(chin, v1)
 
     worker = 2
-    v2 = CodedComputing.ProfilerOutput(worker, θs[worker], qs[worker], rand(), rand(), rand(), rand())
+    v2 = CodedComputing.ProfilerOutput(worker, θs[worker], qs[worker], 1.0, 1.0, 0.1, 0.1)
     push!(chin, v2)
 
     # start the load-balancer
