@@ -193,6 +193,10 @@ function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Re
     comm_mcs = fill(NaN, nworkers)
     comm_vcs = fill(NaN, nworkers)
 
+    # never reduce worker latency to less than this
+    # (set automatically after receiving latency values for all workers)
+    min_latency = NaN
+
     # buffers used by the optimizer
     ls = zeros(nworkers)
     contribs = zeros(nworkers)
@@ -268,10 +272,18 @@ function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Re
             continue
         end
 
+        # set min_latency to the latency of the fastest worker
+        if isnan(min_latency)
+            min_latency = comp_mcs[1] * θs[1] / ps[1] + comm_mcs[1]
+            for i in 2:nworkers
+                min_latency = min(min_latency, comp_mcs[i] * θs[i] / ps[i] + comm_mcs[i])
+            end
+        end
+
         try
             # @info "running load-balancer w. ps: $ps, θs: $θs, comp_mcs: $comp_mcs, comp_vcs: $comp_vcs"
             t = @timed begin
-                ps, loss, loss0 = optimize!(ps, ps_prev, sim; ls, contribs, θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit)
+                ps, loss, loss0 = optimize!(ps, ps_prev, sim; ls, contribs, θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit, min_latency)
             end
 
             # compare the initial and new solutions, and continue if the change isn't large enough
