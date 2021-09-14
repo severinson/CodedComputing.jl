@@ -39,8 +39,8 @@ end
     comm_vcs = comm_mcs ./ 100
     
     sim_nwait = floor(Int, nworkers/2)
-    comp_distributions = Vector{Gamma}(undef, nworkers)
-    comm_distributions = Vector{Gamma}(undef, nworkers)    
+    comp_distributions = [Gamma() for _ in 1:nworkers]
+    comm_distributions = [Gamma() for _ in 1:nworkers]
     sim = EventDrivenSimulator(;nwait=sim_nwait, nworkers, comm_distributions, comp_distributions)
     min_processed_fraction = sim_nwait / nworkers / nsubpartitions
 
@@ -67,7 +67,7 @@ end
     μ = mean(ms)
     for i in 1:nworkers
         @test ms[i] ≈ μ rtol=0.1
-    end    
+    end
 end
 
 @testset "optimizer (comp. much higher than comm.)" begin
@@ -84,8 +84,8 @@ end
     comm_vcs = [1.4755830783262175e-12, 1.5582646160146614e-12, 1.3494372741908877e-12, 2.0233815302431064e-12, 2.7092806020993726e-12, 2.554836195077552e-12, 1.7668490363708934e-12, 1.5867281370452314e-12, 1.8507092575245513e-12]    
     
     sim_nwait = floor(Int, nworkers/2)
-    comp_distributions = Vector{Gamma}(undef, nworkers)
-    comm_distributions = Vector{Gamma}(undef, nworkers)
+    comp_distributions = [Gamma() for _ in 1:nworkers]
+    comm_distributions = [Gamma() for _ in 1:nworkers]    
     sim = EventDrivenSimulator(;nwait=sim_nwait, nworkers, comm_distributions, comp_distributions)
     min_processed_fraction = sim_nwait / nworkers / nsubpartitions
 
@@ -114,8 +114,8 @@ end
     comm_vcs = copy(comp_vcs)
     
     sim_nwait = floor(Int, nworkers/2)
-    comp_distributions = Vector{Gamma}(undef, nworkers)
-    comm_distributions = Vector{Gamma}(undef, nworkers)
+    comp_distributions = [Gamma() for _ in 1:nworkers]
+    comm_distributions = [Gamma() for _ in 1:nworkers]        
     sim = EventDrivenSimulator(;nwait=sim_nwait, nworkers, comm_distributions, comp_distributions)
     min_processed_fraction = sim_nwait / nworkers / nsubpartitions
 
