@@ -162,10 +162,12 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
             if comm_mcs[i] <= min_latency
                 ps[i] = min(ps[i], comp_mcs[i] * θs[i] / (min_latency - comm_mcs[i]))
             end
-            j = argmax(contribs)
-            ps[j] *= 1-α
-            if comm_mcs[j] <= min_latency
-                ps[j] = min(ps[j], comp_mcs[j] * θs[j] / (min_latency - comm_mcs[j]))
+            if !aggressive
+                j = argmax(contribs)
+                ps[j] *= 1-α
+                if comm_mcs[j] <= min_latency
+                    ps[j] = min(ps[j], comp_mcs[j] * θs[j] / (min_latency - comm_mcs[j]))
+                end
             end
         else            
             x = (μ - exp(contribs[i])) / ∇ * β + ps[i]
