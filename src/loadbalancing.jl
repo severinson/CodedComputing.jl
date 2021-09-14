@@ -103,7 +103,7 @@ function finite_diff(ps::AbstractVector, i::Integer, δ::Real=min(ps[i]-sqrt(eps
     (forward - backward) / h
 end
 
-function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDrivenSimulator; ∇s=zeros(length(ps)), ls=zeros(length(ps)), contribs=zeros(length(ps)), θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction::Real, time_limit::Real=1.0, simulation_niterations::Integer=100, simulation_nsamples::Integer=10)
+function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDrivenSimulator; ∇s=zeros(length(ps)), ls=zeros(length(ps)), contribs=zeros(length(ps)), θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction::Real, time_limit::Real=1.0, simulation_niterations::Integer=100, simulation_nsamples::Integer=10, aggressive::Bool=false, min_latency::Float64=0.0)
     0 < min_processed_fraction <= 1 || throw(ArgumentError("min_processed_fraction is $min_processed_fraction"))
     nworkers = length(ps)
     length(ps_prev) == nworkers || throw(DimensionMismatch("ps_prev has dimension $(length(ps_prev)), but nworkers is $nworkers"))    
@@ -111,7 +111,15 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
     length(comp_mcs) == nworkers || throw(DimensionMismatch("comp_mcs has dimension $(length(comp_mcs)), but nworkers is $nworkers"))
     length(comp_vcs) == nworkers || throw(DimensionMismatch("comp_vcs has dimension $(length(comp_vcs)), but nworkers is $nworkers"))
     length(comm_mcs) == nworkers || throw(DimensionMismatch("comm_mcs has dimension $(length(comm_mcs)), but nworkers is $nworkers"))
-    length(comm_vcs) == nworkers || throw(DimensionMismatch("comm_vcs has dimension $(length(comm_vcs)), but nworkers is $nworkers"))   
+    length(comm_vcs) == nworkers || throw(DimensionMismatch("comm_vcs has dimension $(length(comm_vcs)), but nworkers is $nworkers"))
+
+    # negative min_latency indicates that it should be set to the minimum latency over all workers
+    if min_latency < 0
+        min_latency = comp_mcs[1] * θs[1] / ps[1] + comm_mcs[1]
+        for i in 2:nworkers            
+            min_latency = min(min_latency, comp_mcs[i] * θs[i] / ps[i] + comm_mcs[i])
+        end
+    end
 
     # setup communication latency distributions
     for i in 1:nworkers
@@ -132,8 +140,10 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
 
     # initialization
     # scale the workload uniformly to meet the min_processed_fraction requirement
-    contribs .= θs ./ ps
-    ps ./= (sim.nworkers / sim.nwait) * min_processed_fraction / sum(contribs)
+    if !aggressive
+        contribs .= θs ./ ps
+        ps ./= (sim.nworkers / sim.nwait) * min_processed_fraction / sum(contribs)
+    end
 
     # compute per-worker contributions
     ls = simulate!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
@@ -147,20 +157,31 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
         # increase contribution of worker with smallest contribution
         i = argmin(contribs)
         ∇ = finite_diff(ps, i; ls, sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
-        if isapprox(∇, 0)
+        if isapprox(∇, 0)            
             ps[i] *= 1+α
+            if comm_mcs[i] <= min_latency
+                ps[i] = min(ps[i], comp_mcs[i] * θs[i] / (min_latency - comm_mcs[i]))
+            end
             j = argmax(contribs)
             ps[j] *= 1-α
+            if comm_mcs[j] <= min_latency
+                ps[j] = min(ps[j], comp_mcs[j] * θs[j] / (min_latency - comm_mcs[j]))
+            end
         else            
             x = (μ - exp(contribs[i])) / ∇ * β + ps[i]
             x = min(x, (1+α)*ps[i])
             x = max(x, (1-α)*ps[i])
             ps[i] = x
+            if comm_mcs[i] <= min_latency
+                ps[i] = min(ps[i], comp_mcs[i] * θs[i] / (min_latency - comm_mcs[i]))
+            end            
         end
 
         # scale the workload uniformly to meet the min_processed_fraction requirement
-        contribs .= θs ./ ps
-        ps ./= (sim.nworkers / sim.nwait) * min_processed_fraction / sum(contribs)
+        if !aggressive
+            contribs .= θs ./ ps
+            ps ./= (sim.nworkers / sim.nwait) * min_processed_fraction / sum(contribs)
+        end
 
         # compute per-worker contributions
         ls = simulate!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)

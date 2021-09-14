@@ -44,6 +44,7 @@ end
     sim = EventDrivenSimulator(;nwait=sim_nwait, nworkers, comm_distributions, comp_distributions)
     min_processed_fraction = sim_nwait / nworkers / nsubpartitions
 
+    # balanced mode
     ps, loss, loss0 = CodedComputing.optimize!(ps, ps, sim; θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit=2)
     @test loss < Inf    
 
@@ -63,11 +64,28 @@ end
     end
 
     # check that the avg. latency is uniform (within some margin)
-    ms = comp_mcs ./ ps .+ comm_mcs
+    ms = comp_mcs .* θs ./ ps .+ comm_mcs
     μ = mean(ms)
     for i in 1:nworkers
         @test ms[i] ≈ μ rtol=0.1
     end
+
+    # aggressive mode
+    ps .= nsubpartitions
+    ps, loss, loss0 = CodedComputing.optimize!(ps, ps, sim; θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit=2, aggressive=true, min_latency=-1.0)
+    correct = zeros(nworkers)
+    correct[1:nslow] .= 320.0
+    correct[nslow+1:end] .= 160.0
+    for i in 1:nworkers
+        @test ps[i] ≈ correct[i] rtol=0.1
+    end
+
+    # check that the avg. latency is uniform (within some margin)
+    ms = comp_mcs .* θs ./ ps .+ comm_mcs
+    μ = mean(ms)
+    for i in 1:nworkers
+        @test ms[i] ≈ μ rtol=0.1
+    end    
 end
 
 @testset "optimizer (comp. much higher than comm.)" begin
@@ -89,11 +107,22 @@ end
     sim = EventDrivenSimulator(;nwait=sim_nwait, nworkers, comm_distributions, comp_distributions)
     min_processed_fraction = sim_nwait / nworkers / nsubpartitions
 
+    # balanced mode
     ps, loss, loss0 = CodedComputing.optimize!(ps, ps, sim; θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit=2)
     @test loss < Inf
 
     # check that the avg. latency is uniform (within some margin)    
-    ms = comp_mcs ./ ps .+ comm_mcs
+    ms = comp_mcs .* θs ./ ps .+ comm_mcs
+    μ = mean(ms)
+    for i in 1:nworkers
+        @test ms[i] ≈ μ rtol=0.1
+    end
+
+    # aggressive mode
+    ps .= nsubpartitions
+    ps, loss, loss0 = CodedComputing.optimize!(ps, ps, sim; θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit=2, aggressive=true, min_latency=-1.0)
+    @test minimum(ps) ≈ 160.0
+    ms = comp_mcs .* θs ./ ps .+ comm_mcs
     μ = mean(ms)
     for i in 1:nworkers
         @test ms[i] ≈ μ rtol=0.1
@@ -119,6 +148,7 @@ end
     sim = EventDrivenSimulator(;nwait=sim_nwait, nworkers, comm_distributions, comp_distributions)
     min_processed_fraction = sim_nwait / nworkers / nsubpartitions
 
+    # balanced mode
     ps, loss, loss0 = CodedComputing.optimize!(ps, ps, sim; θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit=2)
     @test loss < Inf
 
@@ -128,6 +158,8 @@ end
     for i in 1:nworkers
         @test ms[i] ≈ μ rtol=0.5
     end
+
+    # aggressive mode doesn't work in this scenario
 end
 
 @testset "smoke-test" begin
