@@ -448,10 +448,10 @@ function coordinator_main()
             vout = take!(loadbalancer_chout)
             0 < vout.worker <= nworkers || throw(ArgumentError("incorrect $vout"))
             0 < vout.p || throw(ArgumentError("incorrect $vout"))
-            # if nsubpartitions_all[vout.worker] != vout.p
-            @info "epoch $epoch, worker $(vout.worker) nsubpartitions $(nsubpartitions_all[vout.worker]) => $(vout.p)"
-            nsubpartitions_all[vout.worker] = vout.p
-            # end
+            if nsubpartitions_all[vout.worker] != vout.p
+                @info "epoch $epoch, worker $(vout.worker) nsubpartitions $(nsubpartitions_all[vout.worker]) => $(vout.p)"
+                nsubpartitions_all[vout.worker] = vout.p
+            end
             loadbalanced[epoch] = true
         end             
 
