@@ -530,18 +530,17 @@ function coordinator_main()
         fid["benchmark/compute_latency"] = compute_latency
         fid["benchmark/loadbalanced"] = loadbalanced
     end
-    @info "Output written to disk; exiting"
+    @info "Output written to disk; stopping tasks"
 
     # signal all workers to stop
     shutdown(pool)
 
     # stop the profiler and load-balancer
     close(profiler_chin)
-    wait(profiler_task)
     close(profiler_chout)
-    wait(loadbalancer_task)
     close(loadbalancer_chout)
 
+    @info "Tasks stopped; exiting"
     return
 end
 
