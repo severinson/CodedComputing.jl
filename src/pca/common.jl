@@ -325,9 +325,9 @@ function coordinator_main()
 
     # optionally store intermediate iterates
     if saveiterates
-        iterates = zeros(size(V)..., nsavediterates)
+        iterates = zeros(ELEMENT_TYPE, size(V)..., nsavediterates)
     else
-        iterates = zeros(size(V)..., 0)
+        iterates = zeros(ELEMENT_TYPE, size(V)..., 0)
     end
 
     # benchmark/analysis data
