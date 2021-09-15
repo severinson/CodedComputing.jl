@@ -185,7 +185,7 @@ function worker_task!(recvbuf, sendbuf, localdata; state=nothing, ncomponents::I
         nsubpartitions_prev = 0
         subpartition_index = 1
         max_samples = nlocalsamples # max number of samples processed per iteration
-        W = Matrix{ELEMENT_TYPE}(undef, max_samples, ncomponents)
+        W = zeros(ELEMENT_TYPE, max_samples, ncomponents)
     else # subsequent iterations
         nsubpartitions_prev::Int, subpartition_index::Int, W::Matrix{ELEMENT_TYPE} = state
     end
