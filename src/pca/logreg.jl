@@ -173,7 +173,7 @@ function coordinator_setup(nworkers::Integer; inputfile::String, inputdataset::S
     dimension, nsamples = problem_size(inputfile, inputdataset)
 
     # initial iterate
-    V = zeros(dimension+1)
+    V = zeros(ELEMENT_TYPE, dimension+1)
     if !isnothing(iteratedataset) # given as an argument and loaded from disk
         h5open(inputfile) do fid
             iteratedataset in keys(fid) || throw(ArgumentError("iterate dataset $iteratedataset not found"))
