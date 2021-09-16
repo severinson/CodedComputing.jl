@@ -152,13 +152,13 @@ function coordinator_setup(nworkers::Integer; inputfile::String, inputdataset::S
     dimension, nsamples = problem_size(inputfile, inputdataset)
 
     # initial iterate
+    V = randn(ELEMENT_TYPE, dimension, ncomponents)    
     if isnothing(iteratedataset) # initialized at random
-        V = randn(dimension, ncomponents)
         orthogonal!(V)
     else # given as an argument and loaded from disk
         h5open(inputfile) do fid
             iteratedataset in keys(fid) || throw(ArgumentError("iterate dataset $iteratedataset not found"))
-            V = fid[iteratedataset][:, :]
+            V .= fid[iteratedataset][:, :]
         end
         ncomponents == size(V, 2) || throw(DimensionMismatch("V has dimensions $(size(V)), but ncomponents is $ncomponents"))
     end
