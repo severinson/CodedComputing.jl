@@ -45,7 +45,7 @@ fastest_lower_bound(dzs, dys) = fastest_lower_bound!(fill(-Inf, length(dzs)), dz
 """
 
 For each worker, return a lower bound on the probability of this worker being the slowest of all
-workers, i.e., when `nwait < nworkers`, `rv[i]` is an upper bound on `log(ls[i])`.
+workers.
 """
 function slowest_lower_bound!(rv, dzs, dys)
     length(rv) == length(dzs) || throw(DimensionMismatch("rv has dimension $(length(rv)), but dzs has dimension $(length(dzs))"))
