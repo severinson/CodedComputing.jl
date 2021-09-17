@@ -10,23 +10,23 @@ end
 
 """
 
-For each random variable, return a lower bound on the log of the probability of a sample drawn 
-from this variable being smaller than all other variables.
+For each worker, return a lower bound on the probability of this worker being the fastest of all
+workers, i.e., when `nwait < nworkers`, `rv[i]` is a lower bound on `log(ls[i])`.
 """
-function less_than_lower_bound!(rv, dzs, dys)
+function fastest_lower_bound!(rv, dzs, dys)
     length(rv) == length(dzs) || throw(DimensionMismatch("rv has dimension $(length(rv)), but dzs has dimension $(length(dzs))"))
     length(rv) == length(dys) || throw(DimensionMismatch("rv has dimension $(length(rv)), but dys has dimension $(length(dys))"))
     n = length(rv)
     
     # compute the midpoint of the means
     cz = mean(mean, dzs)
-    cy = mean(mean, dys)    
+    cy = mean(mean, dys)
 
-    # for each i, prob. of (zi <= cz and all others >= cz) and (yi <= cy and all others >= cy)
+    # for each i, prob. of (zi <= cz and all others > cz) and (yi <= cy and all others > cy)
     pz, py = 0.0, 0.0
     for i in 1:n
         pz += logccdf(dzs[i], cz)
-        py += logccdf(dys[i], cy)        
+        py += logccdf(dys[i], cy)
     end
     for i in 1:n
         vz = logccdf(dzs[i], cz)
@@ -40,7 +40,41 @@ function less_than_lower_bound!(rv, dzs, dys)
     rv
 end
 
-less_than_lower_bound(dzs, dys) = less_than_lower_bound!(fill(-Inf, length(dzs)), dzs, dys)
+fastest_lower_bound(dzs, dys) = fastest_lower_bound!(fill(-Inf, length(dzs)), dzs, dys)
+
+"""
+
+For each worker, return a lower bound on the probability of this worker being the slowest of all
+workers, i.e., when `nwait < nworkers`, `rv[i]` is an upper bound on `log(ls[i])`.
+"""
+function slowest_lower_bound!(rv, dzs, dys)
+    length(rv) == length(dzs) || throw(DimensionMismatch("rv has dimension $(length(rv)), but dzs has dimension $(length(dzs))"))
+    length(rv) == length(dys) || throw(DimensionMismatch("rv has dimension $(length(rv)), but dys has dimension $(length(dys))"))
+    n = length(rv)
+
+    # compute the midpoint of the means
+    cz = mean(mean, dzs)
+    cy = mean(mean, dys)    
+
+    # for each i, prob. of (zi > cz and all others <= cz) and (yi > cy and all others <= cy)
+    pz, py = 0.0, 0.0
+    for i in 1:n
+        pz += logcdf(dzs[i], cz)
+        py += logcdf(dys[i], cy)
+    end
+    for i in 1:n
+        vz = logcdf(dzs[i], cz)
+        vy = logcdf(dys[i], cy)        
+        pz -= vz
+        py -= vy
+        rv[i] = min(rv[i], pz + logccdf(dzs[i], cz) + py + logccdf(dys[i], cy))
+        pz += vz
+        py += vy
+    end
+    rv
+end
+
+slowest_lower_bound(dzs, dys) = slowest_lower_bound!(fill(Inf, length(dzs)), dzs, dys)
 
 """
 
@@ -65,7 +99,7 @@ function simulate!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, si
     end
     ls ./= simulation_nsamples
     ls .= log.(ls)
-    less_than_lower_bound!(ls, sim.comp_distributions, sim.comm_distributions)
+    fastest_lower_bound!(ls, sim.comp_distributions, sim.comm_distributions)
     ls
 end
 

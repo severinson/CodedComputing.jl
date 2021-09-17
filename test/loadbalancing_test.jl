@@ -16,7 +16,7 @@ using Distributions
     dys = CodedComputing.distribution_from_mean_variance.(Gamma, comm_mcs, comm_vcs)
 
     correct = [-6787.780734619605, -5997.6993965555075, -7030.083983125667, -4542.376367667996, -4266.766708613465, -4204.885092182273, -4709.103013914913, -4746.332511515265, -4315.852500222745]
-    @test CodedComputing.less_than_lower_bound(dzs, dys) ≈ correct
+    @test CodedComputing.fastest_lower_bound(dzs, dys) ≈ correct
 end
 
 @testset "optimizer (comp. higher than comm.)" begin
