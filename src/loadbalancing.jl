@@ -192,7 +192,7 @@ function finite_diff(ps::AbstractVector, i::Integer, δ::Real=min(ps[i]-sqrt(eps
     (forward - backward) / h
 end
 
-function optimize2!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDrivenSimulator; ls=zeros(length(ps)), contribs=zeros(length(ps)), is=collect(1:length(ps)), θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, time_limit::Real=1.0, simulation_niterations::Integer=100, simulation_nsamples::Integer=10, min_contribution::Float64=NaN, max_latency::Float64=NaN)
+function optimize2!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDrivenSimulator; ls=zeros(length(ps)), contribs=zeros(length(ps)), θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, simulation_niterations::Integer=100, simulation_nsamples::Integer=10, min_contribution::Float64=NaN, max_latency::Float64=NaN)
     0 < min_contribution <= 1 || throw(ArgumentError("min_contribution is $min_contribution"))
     nworkers = length(ps)
     length(ps_prev) == nworkers || throw(DimensionMismatch("ps_prev has dimension $(length(ps_prev)), but nworkers is $nworkers"))    
@@ -209,17 +209,11 @@ function optimize2!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDrive
         sim.comm_distributions[i] = CodedComputing.distribution_from_mean_variance(Gamma, m, v)
     end
 
-    # compute the minimum latency across all workers
-    # (used later to check if it's possible to optimize a worker)
-    min_latency = Inf
-    for i in 1:nworkers
-        min_latency = min(min_latency, comm_mcs[i] + comp_mcs[i] * θs[i] / ps[i])
-    end
-
     # loss for previous solution for reference
     latency0, ls = simulate2!(ls, ps_prev; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
     contribs .= ls .+ log.(θs) .- log.(ps_prev)
     contrib0 = sum(exp, contribs)
+    loss0 = maximum(ls) - minimum(ls)
 
     # max_latency = NaN indicates it should be set to that of the initial solution
     if isnan(max_latency)
@@ -231,181 +225,65 @@ function optimize2!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDrive
         min_contribution = contrib0
     end
 
-    # baseline latency and contribution for comparison with when evaluating new solutions    
+    # baseline latency and contribution for comparison
     latency, ls = simulate2!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
     contribs .= ls .+ log.(θs) .- log.(ps)
     contrib = sum(exp, contribs)
 
-    # run-to-convergence algorithm
-    # # δ = 0
-    # # while within the latency constraint, slow down the fastest workers
-    # i = 0
-    # while isapprox(latency, max_latency, rtol=1e-2) || latency < max_latency
-    #     i = argmax(ls)
-    #     # δ = -1
-    #     ps[i] -= 1
+    # while within the latency constraint, slow down the fastest workers
+    i = 0
+    while isapprox(latency, max_latency, rtol=1e-2) || latency < max_latency
 
-    #     latency, ls = simulate2!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
-    #     contribs .= ls .+ log.(θs) .- log.(ps)
-    #     contrib = sum(exp, contribs)
-    # end
-    # if !iszero(i)
-    #     @info "backing out -1"
-    #     ps[i] += 1
-    # end
-
-    # latency, ls = simulate2!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
-    # contribs .= ls .+ log.(θs) .- log.(ps)
-    # contrib = sum(exp, contribs)        
-
-    # # while within the contribution constraint, speed up the slowest workers
-    # # δ = 0
-    # i = 0
-    # while isapprox(contrib, min_contribution, rtol=1e-2) || min_contribution < contrib        
-    #     i = argmin(ls)
-    #     # δ = 1
-    #     ps[i] += 1
-
-    #     latency, ls = simulate2!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
-    #     contribs .= ls .+ log.(θs) .- log.(ps)
-    #     contrib = sum(exp, contribs)
-    # end
-    # if !iszero(i)
-    #     @info "backing out +1"
-    #     ps[i] -= 1
-    # end
-
-    latency, ls = simulate2!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
-    contribs .= ls .+ log.(θs) .- log.(ps)
-    contrib = sum(exp, contribs)    
-
-   
-
-    return ps, latency0, contrib0, latency, contrib
-
-
-    # rtol = 1e-2 / nworkers
-    rtol = 1e-2
-
-    # run for up to time_limit seconds
-    t0 = time_ns()
-    t = t0
-    while (t - t0) / 1e9 < time_limit && t0 <= t
-
-        # @info "min_contribution: $min_contribution, baseline_contrib: $baseline_contrib"
-
-        δ = 0        
-        if isapprox(contrib, min_contribution, rtol=1e-2) || min_contribution < contrib
-            # reduce workload of the slowest worker
-            i = argmin(ls)
-            δ = 1
-            # ps[i] += 1
-        else
-            # add work to the fastest worker
-            i = argmax(ls)
-            δ = -1
-            # ps[i] -= 1            
+        # find the fastest worker with at least 2 sub-partitions
+        i = 0
+        v = -Inf
+        for j in 1:nworkers
+            if ps[j] >= 2 && ls[j] > v
+                i = j
+                v = ls[j]
+            end
         end
-        ps[i] += δ
-
+        @assert i != 0
+        ps[i] -= 1
         latency, ls = simulate2!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
         contribs .= ls .+ log.(θs) .- log.(ps)
-        contrib = sum(exp, contribs)               
-        if !isapprox(latency, max_latency, rtol=1e-2) && latency > max_latency # never increase latency by more than 1%
-            ps[i] -= δ
-            @info "backing out due to exceeding max_latency"
-            break
-        elseif !isapprox(contrib, min_contribution, rtol=1e-2) && contrib < min_contribution
-            ps[i] -= δ
-            @info "backing out due to exceeding min_contribution"
-            break            
-        end
-
-        t = time_ns()
-        continue
-
-        # shuffle!(is)
-        # for i in 1:nworkers
-
-        #     println()
-
-        #     # skip worker with very high communication latency
-        #     # (even at zero workload the prob. of these workers participating is negligible)
-        #     if comm_mcs[i] > min_latency
-        #         @info "comm_mcs[$i] = $(comm_mcs[i]), min_latency = $min_latency; continuing"
-        #         continue
-        #     end
-
-        #     # baseline number of partitions
-        #     pi0 = ps[i]
-
-        #     # try increasing the number of partitions
-        #     δ = ps[i] / 100
-        #     ps[i] = ceil(pi0 + δ)
-        #     latency, ls = simulate2!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
-        #     ls .= exp.(ls)
-        #     contribs .= ls .* θs ./ ps
-        #     contrib = sum(contribs)
-        #     @info "Increased ps[$i] to $(ps[i]), contrib: $(contrib / baseline_contrib) ($(contrib / min_contribution)), latency: $(latency / baseline_latency)"
-
-        #     # always accept the new solution if the prob. of participation is 0, since the only 
-        #     # way to increase participation is to reduce latency
-        #     if isapprox(contribs[i], 0, atol=eps(Float64))
-        #         baseline_latency = latency
-        #         baseline_contrib = contrib
-        #         @info "Zero participation prob; increasing ps[$i]"
-        #         continue
-        #     end
-
-        #     # accept the solution if the contribution is still high enough and latency went down
-        #     # if (isapprox(contrib, min_contribution; rtol) || min_contribution < contrib) && (!isapprox(latency, baseline_latency; rtol) && latency < baseline_latency)
-        #     if (isapprox(contrib, min_contribution; rtol=1e-2) || min_contribution < contrib) && (latency < baseline_latency)
-        #         baseline_latency = latency
-        #         baseline_contrib = contrib
-        #         @info "Sufficient contrib. and reduced latency; increasing ps[$i]"
-        #         continue
-        #     end
-            
-        #     # try decreasing the number of partitions
-        #     δ = min(ps[i] - 1, ps[i] / 100)
-        #     ps[i] = floor(pi0 - δ)
-        #     latency, ls = simulate2!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
-        #     ls .= exp.(ls)
-        #     contribs .= ls .* θs ./ ps
-        #     contrib = sum(contribs)
-        #     @info "Decreased ps[$i] to $(ps[i]), contrib: $(contrib / baseline_contrib) ($(contrib / min_contribution)), latency: $(latency / baseline_latency)"
-
-        #     # accept if the contrib. increased, and is 1% or more below target, even if latency increases
-        #     # if (!isapprox(contrib, baseline_contrib; rtol=1e-2) && baseline_contrib < contrib) && (!isapprox(contrib, min_contribution; rtol) && contrib < min_contribution)
-        #     # if (!isapprox(contrib, baseline_contrib; rtol=1e-2) && baseline_contrib < contrib) && (contrib < min_contribution)
-        #     if (baseline_contrib < contrib) && (!isapprox(contrib, min_contribution; rtol=1e-2) || contrib < min_contribution)
-        #         baseline_latency = latency
-        #         baseline_contrib = contrib
-        #         @info "Too low contrib; decreasing ps[$i]"
-        #         continue
-        #     end
-
-        #     # accept if contrib. increased
-        #     println((!isapprox(contrib, baseline_contrib; rtol), baseline_contrib < contrib, isapprox(latency, baseline_latency; rtol), latency < baseline_latency))
-        #     # if (!isapprox(contrib, baseline_contrib; rtol=1e-2) && baseline_contrib < contrib) && (isapprox(latency, baseline_latency; rtol) || latency < baseline_latency)
-        #     # if (baseline_contrib < contrib) && (isapprox(latency, baseline_latency; rtol) || latency < baseline_latency)
-        #     if (baseline_contrib < contrib)
-        #         baseline_latency = latency
-        #         baseline_contrib = contrib
-        #         @info "Contrib increased; decreasing ps[$i]"
-        #         continue
-        #     end
-            
-        #     # if we haven't accepted any solution, reset and try to optimize another worker
-        #     ps[i] = pi0
-        #     @info "No solution accepted for worker $i; resetting"
-        # end
-        # t = time_ns()
+        contrib = sum(exp, contribs)
+    end
+    if !iszero(i)
+        ps[i] += 1
+        latency, ls = simulate2!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
+        contribs .= ls .+ log.(θs) .- log.(ps)
+        contrib = sum(exp, contribs)        
     end
 
-    @info "ls: $(exp.(ls))"
+    # while within the contribution constraint, speed up the slowest workers
+    i = 0
+    while isapprox(contrib, min_contribution, rtol=1e-2) || min_contribution < contrib        
 
-    ps, latency0, contrib0, baseline_latency, baseline_contrib
+        # find the slowest worker with a comm. latency less than the maximum latency
+        # (since other workers can't be load-balanced)
+        i = 0
+        v = Inf
+        for j in 1:nworkers
+            if comm_mcs[j] < max_latency * 0.9 && ls[j] < v
+                i = j
+                v = ls[j]
+            end
+        end
+        @assert i != 0
+        ps[i] += 1
+        latency, ls = simulate2!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
+        contribs .= ls .+ log.(θs) .- log.(ps)
+        contrib = sum(exp, contribs)        
+    end
+    if !iszero(i)
+        ps[i] -= 1
+        latency, ls = simulate2!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
+        contribs .= ls .+ log.(θs) .- log.(ps)
+        contrib = sum(exp, contribs)        
+    end
+    loss = maximum(ls) - minimum(ls)
+    ps, latency0, contrib0, loss0, latency, contrib, loss
 end
 
 
