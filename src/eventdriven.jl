@@ -100,6 +100,7 @@ function step!(sim)
 
     # start a new simulation epoch
     sim.epoch += 1
+    time0 = sim.time
 
     # enqueue all idle workers
     for i in 1:sim.nworkers
@@ -122,6 +123,24 @@ function step!(sim)
             enqueue!(sim, i) # late workers are assigned a new task
         end
     end
+
+    # wait for 1% longer to pickup workers arriving at roughly the same time
+    latency = sim.time - time0
+    while length(sim.pq) > 0
+        t, i = first(sim.pq)
+        if (t - time0) > latency*1.01
+            break
+        end
+        pop!(sim.pq)
+        sim.time = t
+        sim.isidle[i] = true            
+        if sim.sepoch[i] == sim.epoch # result is fresh
+            sim.nfresh[i] += 1
+        else
+            sim.nstale[i] += 1
+        end
+    end
+
     sim
 end
 
