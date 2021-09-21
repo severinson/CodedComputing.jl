@@ -88,7 +88,7 @@ function parse_commandline(isroot::Bool)
             range_tester = (x) -> 0 < x
         "--lbminimprovement"
             help = "Minimum improvement required for the load-balancer to accept a new solution"
-            default = 10.0
+            default = 0.9
             arg_type = Float64
             range_tester = (x) -> 1 <= x
         "--lbaggressive"
