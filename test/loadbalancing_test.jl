@@ -45,9 +45,9 @@ end
     min_processed_fraction = sim_nwait / nworkers / nsubpartitions
 
     # balanced mode
-    ps, loss, loss0 = CodedComputing.optimize!(ps, ps, sim; θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit=2.0)
+    ps, latency0, contrib0, loss0, latency, contrib, loss = CodedComputing.optimize!(ps, ps, sim; θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs)
     println("ps: $ps")
-    @test loss < Inf    
+    @test loss < Inf
 
     # check that the slow workers have about twice as many partitions
     slows = ps[1:nslow]
@@ -72,14 +72,14 @@ end
         @test ms[i] ≈ μ rtol=0.1
     end
 
-    ps .= nsubpartitions
-    min_contribution = sum(log.((nwait / nworkers) .* θs ./ ps))
-    ps, latency0, contrib0, latency, contrib = CodedComputing.optimize2!(ps, ps, sim; θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit=2.0, min_contribution)
-    println("latency0: $latency0, latency: $latency, contrib0: $contrib0, contrib: $contrib")
-    println("ps: $ps")    
+    # ps .= nsubpartitions
+    # min_contribution = sum(log.((nwait / nworkers) .* θs ./ ps))
+    # ps, latency0, contrib0, latency, contrib = CodedComputing.optimize2!(ps, ps, sim; θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_processed_fraction, time_limit=2.0, min_contribution)
+    # println("latency0: $latency0, latency: $latency, contrib0: $contrib0, contrib: $contrib")
+    # println("ps: $ps")    
 
-    @test contrib0 < contrib
-    @test latency < latency0
+    # @test contrib0 < contrib
+    # @test latency < latency0
 
     # # aggressive mode
     # ps .= nsubpartitions
@@ -392,66 +392,66 @@ end
 #     # end
 # end
 
-# @testset "smoke-test" begin
-#     chin, chout = CodedComputing.setup_loadbalancer_channels()
+@testset "smoke-test" begin
+    chin, chout = CodedComputing.setup_loadbalancer_channels()
 
-#     nworkers = 2
-#     nwait = 1
-#     min_processed_fraction = 0.1
-#     time_limit = 1.0 # must be floating-point
-#     θs = [0.3, 0.7]
-#     qs = 1 ./ [2, 3]
-#     ps = round.(Int, 1 ./ qs)
+    nworkers = 2
+    nwait = 1
+    min_processed_fraction = 0.1
+    time_limit = 1.0 # must be floating-point
+    θs = [0.3, 0.7]
+    qs = 1 ./ [2, 3]
+    ps = round.(Int, 1 ./ qs)
 
-#     # put some random values into the load-balancer input
-#     Random.seed!(123)
-#     worker = 1
-#     v1 = CodedComputing.ProfilerOutput(worker, θs[worker], qs[worker], 2.0, 2.0, 0.1, 0.1)
-#     push!(chin, v1)
+    # put some random values into the load-balancer input
+    Random.seed!(123)
+    worker = 1
+    v1 = CodedComputing.ProfilerOutput(worker, θs[worker], qs[worker], 2.0, 2.0, 0.1, 0.1)
+    push!(chin, v1)
 
-#     worker = 2
-#     v2 = CodedComputing.ProfilerOutput(worker, θs[worker], qs[worker], 1.0, 1.0, 0.1, 0.1)
-#     push!(chin, v2)
+    worker = 2
+    v2 = CodedComputing.ProfilerOutput(worker, θs[worker], qs[worker], 1.0, 1.0, 0.1, 0.1)
+    push!(chin, v2)
 
-#     # start the load-balancer
-#     task = Threads.@spawn CodedComputing.load_balancer(chin, chout; min_processed_fraction, nwait, nsubpartitions=ps, nworkers, time_limit, min_improvement=1)
+    # start the load-balancer
+    task = Threads.@spawn CodedComputing.load_balancer(chin, chout; min_processed_fraction, nwait, nsubpartitions=ps, nworkers, time_limit, min_improvement=1)
 
-#     # wait for up to 10 seconds for the input to be consumed
-#     t0 = time_ns()
-#     while (time_ns() - t0)/1e9 < 10 && isready(chin)
-#         sleep(0.1)
-#     end
-#     if istaskfailed(task)
-#         wait(task)
-#     end
-#     @test !isready(chin)
+    # wait for up to 10 seconds for the input to be consumed
+    t0 = time_ns()
+    while (time_ns() - t0)/1e9 < 10 && isready(chin)
+        sleep(0.1)
+    end
+    if istaskfailed(task)
+        wait(task)
+    end
+    @test !isready(chin)
 
-#     # wait for up to 10 seconds for the subsystem to produce output
-#     t0 = time_ns()
-#     while (time_ns() - t0)/1e9 < 10 && !isready(chout)
-#         sleep(0.1)
-#     end
-#     if istaskfailed(task)
-#         wait(task)
-#     end
+    # wait for up to 10 seconds for the subsystem to produce output
+    t0 = time_ns()
+    while (time_ns() - t0)/1e9 < 10 && !isready(chout)
+        sleep(0.1)
+    end
+    if istaskfailed(task)
+        wait(task)
+    end
 
-#     correct1 = (1, 1)
-#     correct2 = (2, 7)
+    correct1 = (1, 1)
+    correct2 = (2, 7)
 
-#     @test isready(chout)
-#     vout = take!(chout)
-#     correct = vout.worker == 1 ? correct1 : correct2
-#     # @test vout == correct
-#     println(vout)
+    @test isready(chout)
+    vout = take!(chout)
+    correct = vout.worker == 1 ? correct1 : correct2
+    # @test vout == correct
+    println(vout)
 
-#     @test isready(chout)
-#     vout = take!(chout)
-#     correct = vout.worker == 1 ? correct1 : correct2
-#     # @test vout == correct
-#     println(vout)
+    @test isready(chout)
+    vout = take!(chout)
+    correct = vout.worker == 1 ? correct1 : correct2
+    # @test vout == correct
+    println(vout)
 
-#     # stop the profiler
-#     close(chin)
-#     close(chout)
-#     wait(task)
-# end
+    # stop the profiler
+    close(chin)
+    close(chout)
+    wait(task)
+end
