@@ -233,13 +233,13 @@ function worker_task!(recvbuf, sendbuf, localdata; state=nothing, ncolumns::Inte
 
     # gradient computation
     tcolsmul!(w, features, view(v, 2:length(v)), cols)
-    @views w[cols] .+= v[1] / dimension # implicit intercept
+    @views w[cols] .+= v[1] # implicit intercept
     @views w[cols] .*= labels[cols]
     @views w[cols] .= exp.(w[cols])
     @views w[cols] .+= 1
     @views w[cols] .= labels[cols] ./ w[cols]
     @views w[cols] .*= -1
-    @views v[1] = sum(w[cols]) / dimension # intercept derivative
+    @views v[1] = sum(w[cols]) # intercept derivative
     colsmul!(view(v, 2:length(v)), features, w, cols)
     v ./= ncolumns # normalize by the total number of samples
 
