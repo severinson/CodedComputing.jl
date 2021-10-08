@@ -1,4 +1,12 @@
-kernel = "../src/pca/logreg.jl"    
+kernel = "../src/pca/logreg.jl" 
+
+function logreg_loss(v, X, b, λ)
+    rv = 0.0
+    for i in 1:length(b)
+        rv += log(1 + exp(-b[i]*(v[1]+dot(X[:, i], view(v, 2:length(v))))))
+    end
+    rv / length(b) + λ/2 * norm(v)^2
+end
 
 # input data set with known optimal solution
 X = [1.444786643000158 0.49236792885913283 -0.53258473265429 0.05476455630673194 -1.3473893605265843; 0.48932299731783646 2.0708445447107926 1.2414596020757043 0.9131934117095984 -0.15692043560721075; 0.7774625331093794 0.7234405608945721 -0.037446104354257874 -1.1104987697394342 1.354975413199728]
@@ -9,7 +17,7 @@ m, n = size(X)
 opt = logreg_loss(v_opt, X, b, λ)
 
 # write test problem to disk
-inputfile = tempname()    
+inputfile = tempname()
 inputdataset = "X"
 outputdataset = "V"
 labeldataset = "b"
@@ -20,7 +28,7 @@ end
 
 # GD
 nworkers = 2
-niterations = 100
+niterations = 200
 stepsize = 0.1
 outputfile = tempname()
 mpiexec(cmd -> run(```
@@ -34,7 +42,47 @@ mpiexec(cmd -> run(```
 vs = load_logreg_iterates(outputfile, outputdataset)
 v = vs[end]
 f = logreg_loss(v, X, b, λ)
-@test f < opt || isapprox(f, opt, rtol=1e-2)
+@test f < opt * (1+1e-2)
+
+# same as previous, but with nslow > 0
+nworkers = 2
+nslow = 1
+niterations = 100
+stepsize = 0.1
+outputfile = tempname()
+mpiexec(cmd -> run(```
+    $cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile        
+    --inputdataset $inputdataset
+    --outputdataset $outputdataset
+    --niterations $niterations
+    --saveiterates
+    --lambda $λ
+    --nslow $nslow
+    ```))
+vs = load_logreg_iterates(outputfile, outputdataset)
+v = vs[end]
+f = logreg_loss(v, X, b, λ)
+@test f < opt * (1+1e-2)
+
+# same as previous, but with slowprob. > 0
+nworkers = 2
+slowprob = 0.5
+niterations = 100
+stepsize = 0.1
+outputfile = tempname()
+mpiexec(cmd -> run(```
+    $cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile        
+    --inputdataset $inputdataset
+    --outputdataset $outputdataset
+    --niterations $niterations
+    --saveiterates
+    --lambda $λ
+    --slowprob $slowprob
+    ```))
+vs = load_logreg_iterates(outputfile, outputdataset)
+v = vs[end]
+f = logreg_loss(v, X, b, λ)
+@test f < opt * (1+1e-2)
 
 # DSAG
 vralgo = "tree"
@@ -59,7 +107,7 @@ mpiexec(cmd -> run(```
 vs = load_logreg_iterates(outputfile, outputdataset)
 v = vs[end]
 f = logreg_loss(v, X, b, λ)    
-@test f < opt || isapprox(f, opt, rtol=1e-2)
+@test f < opt * (1+1e-2)
 
 # DSAG w. nwaitschedule < 1.0
 nworkers = 2
@@ -85,7 +133,7 @@ mpiexec(cmd -> run(```
 vs = load_logreg_iterates(outputfile, outputdataset)
 v = vs[end]
 f = logreg_loss(v, X, b, λ)    
-@test f < opt || isapprox(f, opt, rtol=1e-2)    
+@test f < opt * (1+1e-2)
 
 # DSAG w. sparse input data
 inputfile = tempname()
@@ -115,4 +163,4 @@ mpiexec(cmd -> run(```
 vs = load_logreg_iterates(outputfile, outputdataset)
 v = vs[end]
 f = logreg_loss(v, X, b, λ)
-@test f < opt || isapprox(f, opt, rtol=1e-2)
+@test f < opt * (1+1e-2)

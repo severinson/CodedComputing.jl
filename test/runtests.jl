@@ -46,14 +46,6 @@ function test_pca_iterates(;X::AbstractMatrix, niterations::Integer, ncomponents
     return Vs, fs
 end
 
-function logreg_loss(v, X, b, λ)
-    rv = 0.0
-    for i in 1:length(b)
-        rv += log(1 + exp(-b[i]*(v[1]+dot(X[:, i], view(v, 2:length(v))))))
-    end
-    rv / length(b) + λ/2 * norm(v)^2
-end
-
 # @testset "latency.jl" begin
 #     kernel = "../src/latency/kernel.jl"
 #     nwait = 1
