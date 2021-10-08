@@ -88,9 +88,9 @@ function parse_commandline(isroot::Bool)
             range_tester = (x) -> 0 < x
         "--lbminimprovement"
             help = "Minimum improvement required for the load-balancer to accept a new solution"
-            default = 0.9
+            default = 0.99
             arg_type = Float64
-            range_tester = (x) -> 1 <= x
+            range_tester = (x) -> x <= 1
         "--lbaggressive"
             help = "Set the load-balancer in aggressive mode, in which it doesn't make workers slower"
             action = :store_true
@@ -162,6 +162,7 @@ function worker_loop(localdata, recvbuf, sendbuf; nslow::Integer, slowprob::Real
     MPI.Isend(sendbuf, root, data_tag, comm)
 
     # remaining iterations
+    i = 1
     while true
         rreq = MPI.Irecv!(recvbuf, root, data_tag, comm)
         index, _ = MPI.Waitany!([crreq, rreq])
@@ -177,17 +178,29 @@ function worker_loop(localdata, recvbuf, sendbuf; nslow::Integer, slowprob::Real
             if rank <= nslow
                 sleep(t0)
             end
+
+            # # workers 1-3 are slow for the first 100 iterations
+            # # the remaining workers are always slow
+            # if i < 100 || rank > 3
+            #     sleep(t0)
+            # end
+
+            # # workers 4-6 become even slower after 50 iterations
+            # if i >= 50 && 3 < rank <= 6
+            #     sleep(t0)
+            # end
         end
 
         # workers are artificially slowed down with prob. slowprob.
         # (counted as comm. delay)
         if !iszero(slowprob) && rand() < slowprob
             sleep(t0)
-        end        
+        end
 
         # send response to coordinator
         reinterpret(Float64, view(sendbuf, 1:COMMON_BYTES))[1] = t # send the recorded compute latency to the coordinator
         MPI.Isend(sendbuf, root, data_tag, comm)
+        i += 1
     end
     return
 end
@@ -355,16 +368,12 @@ function coordinator_main()
         )
 
     # setup the load-balancer
-    loadbalancer_nwait = ceil(Int, nworkers/2)
-    min_processed_fraction = loadbalancer_nwait / nworkers / parsed_args[:nsubpartitions]
     _, loadbalancer_chout = CodedComputing.setup_loadbalancer_channels()
     loadbalancer_task = Threads.@spawn CodedComputing.load_balancer(
-        profiler_chout, loadbalancer_chout; 
-        min_processed_fraction, 
-        nsubpartitions=parsed_args[:nsubpartitions], 
-        nwait=loadbalancer_nwait, nworkers,
-        time_limit=parsed_args[:lbtimelimit], min_improvement=parsed_args[:lbminimprovement],
-        aggressive=parsed_args[:lbaggressive],
+        profiler_chout, loadbalancer_chout;
+        nsubpartitions=parsed_args[:nsubpartitions],
+        nwait, nworkers,
+        min_improvement=parsed_args[:lbminimprovement],
         )
 
     # ensure all workers have finished compiling before starting the computation
