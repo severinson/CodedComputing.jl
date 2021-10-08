@@ -106,6 +106,23 @@ function simulate!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, si
     latency, ls
 end
 
+"""
+
+Return the expected latency of the `i`-th worker.
+"""
+expected_worker_latency(i; θs, ps, comp_mcs, comm_mcs) = comp_mcs[i] * θs[i] / ps[i] + comm_mcs[i]
+
+function min_max_expected_worker_latency(;θs, ps, comp_mcs, comm_mcs)
+    nworkers = length(ps)
+    vmin, vmax = Inf, -Inf
+    for i in 1:nworkers
+        v = expected_worker_latency(i; θs, ps, comp_mcs, comm_mcs)
+        vmin = min(vmin, v)
+        vmax = max(vmax, v)
+    end
+    vmin, vmax
+end
+
 function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDrivenSimulator; ps_baseline=ps_prev, ls=zeros(length(ps)), contribs=zeros(length(ps)), θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, simulation_niterations::Integer=100, simulation_nsamples::Integer=10)
     nworkers = length(ps)
     length(ps_prev) == nworkers || throw(DimensionMismatch("ps_prev has dimension $(length(ps_prev)), but nworkers is $nworkers"))    
@@ -127,7 +144,10 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
     latency0, ls = simulate!(ls, ps_prev; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
     contribs .= ls .+ log.(θs) .- log.(ps_prev)
     contrib0 = sum(exp, contribs)
-    loss0 = maximum(ls) - minimum(ls)
+    # loss0 = maximum(ls) - minimum(ls)
+
+    vmin, vmax = min_max_expected_worker_latency(;θs, ps=ps_prev, comp_mcs, comm_mcs)
+    loss0 = vmax / vmin
 
     # check if the baseline and prev vectors are the same
     baseline_is_prev = true
@@ -158,11 +178,11 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
 
         # find the fastest worker with at least 2 sub-partitions
         i = 0
-        v = -Inf
+        v = Inf
         for j in 1:nworkers
-            if ps[j] >= 2 && ls[j] > v
+            if ps[j] >= 2 && (comp_mcs[j] * θs[j] / ps[j] + comm_mcs[j]) < v
                 i = j
-                v = ls[j]
+                v = comp_mcs[i] * θs[i] / ps[i] + comm_mcs[i]
             end
         end
         @assert i != 0
@@ -175,21 +195,21 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
         ps[i] += 1
         latency, ls = simulate!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
         contribs .= ls .+ log.(θs) .- log.(ps)
-        contrib = sum(exp, contribs)        
+        contrib = sum(exp, contribs)
     end
 
     # while within the contribution constraint, speed up the slowest workers
     i = 0
-    while isapprox(contrib, min_contribution, rtol=1e-2) || min_contribution < contrib        
+    while isapprox(contrib, min_contribution, rtol=1e-2) || min_contribution < contrib
 
         # find the slowest worker with a comm. latency less than the maximum latency
         # (since other workers can't be load-balanced)
         i = 0
-        v = Inf
+        v = -Inf
         for j in 1:nworkers
-            if comm_mcs[j] < max_latency * 0.9 && ls[j] < v
+            if comm_mcs[j] < max_latency * 0.9 && (comp_mcs[j] * θs[j] / ps[j] + comm_mcs[j]) > v
                 i = j
-                v = ls[j]
+                v = comp_mcs[i] * θs[i] / ps[i] + comm_mcs[i]
             end
         end
         @assert i != 0
@@ -204,12 +224,16 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
         contribs .= ls .+ log.(θs) .- log.(ps)
         contrib = sum(exp, contribs)        
     end
-    loss = maximum(ls) - minimum(ls)
+    # @info "ls: $(exp.(ls))"
+    # loss = maximum(ls) - minimum(ls)
+
+    vmin, vmax = min_max_expected_worker_latency(;θs, ps, comp_mcs, comm_mcs)
+    loss = vmax / vmin
+
     ps, latency0, contrib0, loss0, latency, contrib, loss
 end
 
-function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Real, nwait::Integer, nworkers::Integer, nsubpartitions::Union{Integer,<:AbstractVector}, time_limit::Real=1.0, min_improvement::Real=0.9, aggressive::Bool=false)
-    0 < min_processed_fraction <= 1 || throw(ArgumentError("min_processed_fraction is $min_processed_fraction"))
+function load_balancer(chin::Channel, chout::Channel; nwait::Integer, nworkers::Integer, nsubpartitions::Union{Integer,<:AbstractVector}, min_improvement::Real=0.9)
     0 < nworkers || throw(ArgumentError("nworkers is $nworkers"))
     0 < nwait <= nworkers || throw(ArgumentError("nwait is $nwait, but nworkers is $nworkers"))
     if typeof(nsubpartitions) <: Integer
@@ -301,23 +325,30 @@ function load_balancer(chin::Channel, chout::Channel; min_processed_fraction::Re
         # verify that we have complete latency information for all workers
         if !all_populated
             all_populated = check_populated()
+            if all_populated
+                @info "load_balancer has latency information for all workers; starting to optimize"
+            end
         end
         if !all_populated
             continue
         end
 
         try
-            # @info "running load-balancer w. ps: $ps, θs: $θs, comp_mcs: $comp_mcs, comp_vcs: $comp_vcs"
+            # @info "load_balancer optimization started with ps: $ps, θs: $θs, comp_mcs: $comp_mcs, comp_vcs: $comp_vcs, comm_mcs: $comm_mcs, comm_vcs: $comm_vcs"
+            # @info "ps_prev: $ps_prev, ps_baseline: $ps_baseline"
+            # @info "load_balancer optimization started"
             t = @timed begin
                 ps, latency0, contrib0, loss0, latency, contrib, loss = optimize!(ps, ps_prev, sim; ps_baseline, ls, contribs, θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs)
             end
 
             # compare the initial and new solutions, and continue if the change isn't large enough
-            if isnan(loss) || isinf(loss) || exp(loss - loss0) < min_improvement
+            if isnan(loss) || isinf(loss) || (loss / loss0) > min_improvement
                 @info "load-balancer allocated $(t.bytes / 1e6) MB, and finished in $(t.time) seconds with loss $loss and loss0 $loss0; continuing"
+                # @info "ps: $ps"
                 continue
             end
-            @info "load-balancer allocated $(t.bytes / 1e6) MB, and finished in $(t.time) seconds with loss $loss and loss0 $loss0, a $(loss0/loss) fraction improvement"
+            @info "load-balancer allocated $(t.bytes / 1e6) MB, and finished in $(t.time) seconds with loss $loss and loss0 $loss0; accepting it"
+            # @info "ps: $ps"
             ps_prev .= ps
 
             # push any changes into the output channel
