@@ -167,6 +167,8 @@ function worker_loop(localdata, recvbuf, sendbuf; nslow::Integer, slowprob::Real
         rreq = MPI.Irecv!(recvbuf, root, data_tag, comm)
         index, _ = MPI.Waitany!([crreq, rreq])
         if index == 1 # exit message on control channel
+            MPI.Cancel!(rreq) # mark the rreq for cancellation
+            MPI.Test!(rreq) # cleanup the data receive request            
             break
         end
         t0 = 0.0
@@ -199,7 +201,7 @@ function worker_loop(localdata, recvbuf, sendbuf; nslow::Integer, slowprob::Real
 
         # send response to coordinator
         reinterpret(Float64, view(sendbuf, 1:COMMON_BYTES))[1] = t # send the recorded compute latency to the coordinator
-        MPI.Isend(sendbuf, root, data_tag, comm)
+        MPI.Send(sendbuf, root, data_tag, comm)
         i += 1
     end
     return
@@ -230,7 +232,7 @@ Send a stop signal to each worker.
 """
 function shutdown(pool::MPIAsyncPool)
     for i in pool.ranks
-        MPI.Isend(zeros(1), i, control_tag, comm)
+        MPI.Send(zeros(1), i, control_tag, comm)
     end
 end
 
@@ -542,6 +544,7 @@ function coordinator_main()
     @info "Output written to disk; stopping tasks"
 
     # signal all workers to stop
+    waitall!(pool, recvbuf, irecvbuf)
     shutdown(pool)
 
     # stop the profiler and load-balancer
