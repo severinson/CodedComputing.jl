@@ -106,4 +106,27 @@ end
     @test issorted(rv2)
     @test length(intersect(Set(rv1), Set(rv2))) == 0
     @info "consumer1 throughput: $(1 / (sum(ts1) / n)), consumer2 throughput: $(1 / (sum(ts2) / n))"
+
+    # create many threads and make sure all exit cleanly
+    ch = ConcurrentCircularBuffer{Int}(n)
+    ntasks = 100
+    tasks = Vector{Task}(undef, ntasks)
+    for i in 1:ntasks
+        tasks[i] = Threads.@spawn begin
+            try
+                sleep(0)
+                popfirst!(ch)
+            catch e
+                if e isa InvalidStateException
+                else
+                    rethrow()
+                end
+            end
+        end
+    end
+    sleep(0)
+    close(ch)
+    for i in 1:ntasks
+        wait(tasks[i])
+    end
 end
