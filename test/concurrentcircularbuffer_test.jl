@@ -42,13 +42,25 @@ end
     # one producer and one consumer
     ch = ConcurrentCircularBuffer{Int}(n)    
     rv = zeros(Int, n)
-    consumer = Threads.@spawn for i in 1:n
-        rv[i] = popfirst!(ch)
+    consumer = Threads.@spawn begin
+        try
+            i = 1
+            while true
+                rv[i] = popfirst!(ch)
+                i += 1
+            end
+        catch e
+            if e isa InvalidStateException
+            else
+                rethrow()
+            end
+        end
     end
     producer = Threads.@spawn for i in 1:n
         push!(ch, i)
     end
     wait(producer)
+    close(ch)
     wait(consumer)
     @test rv == 1:n
 
@@ -56,19 +68,38 @@ end
     ch = ConcurrentCircularBuffer{Int}(n)    
     rv1 = zeros(Int, n)
     ts1 = zeros(n)
-    consumer1 = Threads.@spawn for i in 1:n
-        ts1[i] = @elapsed rv1[i] = popfirst!(ch)        
+    consumer1 = Threads.@spawn begin
+        try
+            for i in 1:n
+                ts1[i] = @elapsed rv1[i] = popfirst!(ch)
+            end
+        catch e
+            if e isa InvalidStateException
+            else
+                rethrow()
+            end
+        end
     end
     rv2 = zeros(Int, n)
     ts2 = zeros(n)
-    consumer2 = Threads.@spawn for i in 1:n
-        ts2[i] = @elapsed rv2[i] = popfirst!(ch)
+    consumer2 = Threads.@spawn begin
+        try
+            for i in 1:n
+                ts2[i] = @elapsed rv2[i] = popfirst!(ch)
+            end
+        catch e
+            if e isa InvalidStateException
+            else
+                rethrow()
+            end
+        end
     end
     tsc = zeros(4n)
     producer = Threads.@spawn for i in 1:4n
         tsc[i] = @elapsed push!(ch, i)
     end
     wait(producer)
+    close(ch)
     wait(consumer1)
     wait(consumer2)
     @test issorted(rv1)
@@ -76,7 +107,3 @@ end
     @test length(intersect(Set(rv1), Set(rv2))) == 0
     @info "consumer1 throughput: $(1 / (sum(ts1) / n)), consumer2 throughput: $(1 / (sum(ts2) / n))"
 end
-
-# I'm interested in performance and correctness
-# Let's have a producer put in increasing integers
-# Two consumers take from it and check that

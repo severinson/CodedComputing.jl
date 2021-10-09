@@ -10,14 +10,36 @@ struct ConcurrentCircularBuffer{T}
     cb::CircularBuffer{T}           # underlying circular buffer for storage
     lk::Threads.SpinLock            # for protecting access to the buffer
     c::Threads.Condition            # used to notify threads waiting to pop from the buffer when elements are added
+    open::Threads.Atomic{Bool}      # set to false when calling close(ch) on the ConcurrentCircularBuffer
 end
 
-ConcurrentCircularBuffer{T}(n::Integer) where T = ConcurrentCircularBuffer{T}(CircularBuffer{T}(n), Threads.SpinLock(), Threads.Condition())
+ConcurrentCircularBuffer{T}(n::Integer) where T = ConcurrentCircularBuffer{T}(CircularBuffer{T}(n), Threads.SpinLock(), Threads.Condition(), Threads.Atomic{Bool}(true))
 
 function DataStructures.isfull(ch::ConcurrentCircularBuffer)
     lock(ch.lk) do
         return isfull(ch.cb)
     end
+end
+
+function Base.isopen(ch::ConcurrentCircularBuffer)
+    lock(ch.lk) do
+        return ch.open[]
+    end
+end
+
+"""
+
+Close the `ConcurrentCircularBuffer`. An `InvalidStateException` is thrown by `put!` on a closed
+`ConcurrentCircularBuffer` and `pop!` or `popfirst!` on an empty closed `ConcurrentCircularBuffer`.
+"""
+function Base.close(ch::ConcurrentCircularBuffer)
+    lock(ch.lk) do        
+        ch.open[] = false
+    end
+    lock(ch.c) do
+        notify(ch.c)
+    end
+    return
 end
 
 function DataStructures.isempty(ch::ConcurrentCircularBuffer)
@@ -54,6 +76,9 @@ Add an element to the back and overwrite front if full.
 """
 function Base.push!(ch::ConcurrentCircularBuffer, v)
     lock(ch.lk) do
+        if !ch.open[]
+            throw(InvalidStateException("ConcurrentCircularBuffer is closed.", :closed))
+        end
         push!(ch.cb, v)
     end
     lock(ch.c) do
@@ -68,6 +93,9 @@ Add an element to the front and overwrite back if full.
 """
 function DataStructures.pushfirst!(ch::ConcurrentCircularBuffer, v)
     lock(ch.lk) do
+        if !ch.open
+            throw(InvalidStateException("ConcurrentCircularBuffer is closed.", :closed))
+        end        
         pushfirst!(ch.cb, v)        
     end
     lock(ch.c) do
@@ -82,6 +110,9 @@ Add all elements in `vs` to the back and overwrite front if full.
 """
 function Base.append!(ch::ConcurrentCircularBuffer, vs::AbstractVector)
     lock(ch.lk) do
+        if !ch.open[]
+            throw(InvalidStateException("ConcurrentCircularBuffer is closed.", :closed))
+        end        
         append!(ch.cb, vs)
     end
     lock(ch.c) do
@@ -103,6 +134,8 @@ function DataStructures.pop!(ch::ConcurrentCircularBuffer{T})::T where T
                 if length(ch.cb) > 0
                     success = true
                     rv = pop!(ch.cb)
+                elseif !ch.open[]
+                    throw(InvalidStateException("ConcurrentCircularBuffer is closed.", :closed))
                 end
             end
             if !success
@@ -126,6 +159,8 @@ function DataStructures.popfirst!(ch::ConcurrentCircularBuffer{T})::T where T
                 if length(ch.cb) > 0
                     success = true
                     rv = popfirst!(ch.cb)
+                elseif !ch.open[]
+                    throw(InvalidStateException("ConcurrentCircularBuffer is closed.", :closed))                    
                 end
             end
             if !success
@@ -180,6 +215,8 @@ function DataStructures.pop!(vs::AbstractVector, ch::ConcurrentCircularBuffer)
                 if length(ch.cb) > 0
                     success = true
                     rv = _pop!(vs, ch)
+                elseif !ch.open[]
+                    throw(InvalidStateException("ConcurrentCircularBuffer is closed.", :closed))                    
                 end
             end
             if !success
@@ -204,6 +241,8 @@ function DataStructures.popfirst!(vs::AbstractVector, ch::ConcurrentCircularBuff
                 if length(ch.cb) > 0
                     success = true
                     rv = _popfirst!(vs, ch)
+                elseif !ch.open[]
+                    throw(InvalidStateException("ConcurrentCircularBuffer is closed.", :closed))                    
                 end
             end
             if !success
