@@ -83,9 +83,9 @@ function comp_mean_var(w::CircularBuffer{ProfilerInput}; buffer::Vector{Profiler
     vs = comp_quantile_view(w, buffer, qlower, qupper)
     if length(vs) < minsamples
         return NaN, NaN
-    end    
+    end
     m = mean((x)->getfield(x, :comp_delay) / (getfield(x, :θ) * getfield(x, :q)), vs)
-    v = var((x)->getfield(x, :comp_delay) / sqrt(getfield(x, :θ) * getfield(x, :q)), vs)    
+    v = var((x)->getfield(x, :comp_delay) / sqrt(getfield(x, :θ) * getfield(x, :q)), vs)
     m, v
 end
 
