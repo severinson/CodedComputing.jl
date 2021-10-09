@@ -123,7 +123,7 @@ function min_max_expected_worker_latency(;θs, ps, comp_mcs, comm_mcs)
     vmin, vmax
 end
 
-function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDrivenSimulator; ps_baseline=ps_prev, ls=zeros(length(ps)), contribs=zeros(length(ps)), θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, simulation_niterations::Integer=100, simulation_nsamples::Integer=10)
+function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDrivenSimulator; ps_baseline=ps_prev, ls=zeros(length(ps)), contribs=zeros(length(ps)), θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_comp_fraction::Real=0.1, simulation_niterations::Integer=100, simulation_nsamples::Integer=10)
     nworkers = length(ps)
     length(ps_prev) == nworkers || throw(DimensionMismatch("ps_prev has dimension $(length(ps_prev)), but nworkers is $nworkers"))    
     length(ps_baseline) == nworkers || throw(DimensionMismatch("ps_baseline has dimension $(length(ps_baseline)), but nworkers is $nworkers"))    
@@ -132,6 +132,7 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
     length(comp_vcs) == nworkers || throw(DimensionMismatch("comp_vcs has dimension $(length(comp_vcs)), but nworkers is $nworkers"))
     length(comm_mcs) == nworkers || throw(DimensionMismatch("comm_mcs has dimension $(length(comm_mcs)), but nworkers is $nworkers"))
     length(comm_vcs) == nworkers || throw(DimensionMismatch("comm_vcs has dimension $(length(comm_vcs)), but nworkers is $nworkers"))
+    0 < min_comp_fraction < 1 || throw(ArgumentError("min_comp_fraction is $min_comp_fraction"))
 
     # setup communication latency distributions
     for i in 1:nworkers
@@ -180,9 +181,10 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
         i = 0
         v = Inf
         for j in 1:nworkers
-            if ps[j] >= 2 && (comp_mcs[j] * θs[j] / ps[j] + comm_mcs[j]) < v
+            comp_latency = comp_mcs[j] * θs[j] / ps[j]
+            if ps[j] >= 2 && (comp_latency + comm_mcs[j]) < v
                 i = j
-                v = comp_mcs[i] * θs[i] / ps[i] + comm_mcs[i]
+                v = comp_latency + comm_mcs[j]
             end
         end
         @assert i != 0
@@ -202,21 +204,23 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
     i = 0
     while isapprox(contrib, min_contribution, rtol=1e-2) || min_contribution < contrib
 
-        # find the slowest worker with a comm. latency less than the maximum latency
-        # (since other workers can't be load-balanced)
+        # find the slowest worker with a comp. latency that accounts for at least 
+        # min_comp_fraction of the overall latency of the worker
+        # (to ensure that the load-balancer doesn't push comp. latency to zero)
         i = 0
         v = -Inf
         for j in 1:nworkers
-            if comm_mcs[j] < max_latency * 0.9 && (comp_mcs[j] * θs[j] / ps[j] + comm_mcs[j]) > v
+            comp_latency = comp_mcs[j] * θs[j] / ps[j]
+            if comp_latency / (comp_latency + comm_mcs[j]) >= min_comp_fraction && (comp_latency + comm_mcs[j]) > v
                 i = j
-                v = comp_mcs[i] * θs[i] / ps[i] + comm_mcs[i]
+                v = comp_latency + comm_mcs[j]
             end
         end
         @assert i != 0
         ps[i] += 1
         latency, ls = simulate!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
         contribs .= ls .+ log.(θs) .- log.(ps)
-        contrib = sum(exp, contribs)        
+        contrib = sum(exp, contribs)
     end
     if !iszero(i)
         ps[i] -= 1
@@ -224,8 +228,6 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
         contribs .= ls .+ log.(θs) .- log.(ps)
         contrib = sum(exp, contribs)        
     end
-    # @info "ls: $(exp.(ls))"
-    # loss = maximum(ls) - minimum(ls)
 
     vmin, vmax = min_max_expected_worker_latency(;θs, ps, comp_mcs, comm_mcs)
     loss = vmax / vmin
