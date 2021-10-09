@@ -2,9 +2,9 @@
 
 using Random, Distributions
 
-function setup_loadbalancer_channels(;chin_size=Inf, chout_size=Inf)
-    chin = Channel{ProfilerOutput}(chin_size)
-    chout = Channel{@NamedTuple{worker::Int,p::Int}}(chout_size)
+function setup_loadbalancer_channels(;chin_size=200, chout_size=200)
+    chin = ConcurrentCircularBuffer{ProfilerOutput}(chin_size)
+    chout = ConcurrentCircularBuffer{@NamedTuple{worker::Int,p::Int}}(chout_size)
     chin, chout
 end
 
@@ -233,7 +233,7 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
     ps, latency0, contrib0, loss0, latency, contrib, loss
 end
 
-function load_balancer(chin::Channel, chout::Channel; nwait::Integer, nworkers::Integer, nsubpartitions::Union{Integer,<:AbstractVector}, min_improvement::Real=0.9)
+function load_balancer(chin::ConcurrentCircularBuffer, chout::ConcurrentCircularBuffer; nwait::Integer, nworkers::Integer, nsubpartitions::Union{Integer,<:AbstractVector}, min_improvement::Real=0.9)
     0 < nworkers || throw(ArgumentError("nworkers is $nworkers"))
     0 < nwait <= nworkers || throw(ArgumentError("nwait is $nwait, but nworkers is $nworkers"))
     if typeof(nsubpartitions) <: Integer

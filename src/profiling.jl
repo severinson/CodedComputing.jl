@@ -22,9 +22,9 @@ end
 
 Base.isless(p::Pair{Time, CodedComputing.ProfilerInput}, q::Pair{Time, CodedComputing.ProfilerInput}) = isless(first(p), first(q))
 
-function setup_profiler_channels(;chin_size=Inf, chout_size=Inf)
-    chin = Channel{ProfilerInput}(chin_size)
-    chout = Channel{ProfilerOutput}(chout_size)
+function setup_profiler_channels(;chin_size=200, chout_size=200)
+    chin = ConcurrentCircularBuffer{ProfilerInput}(chin_size)
+    chout = ConcurrentCircularBuffer{ProfilerOutput}(chout_size)
     chin, chout
 end
 
@@ -113,7 +113,7 @@ end
 Latency profiling sub-system. Receives latency observations on `chin`, computes the mean and 
 variance over a moving time window of length `windowsize`, and sends the results on `chout`.
 """
-function latency_profiler(chin::Channel{ProfilerInput}, chout::Channel{ProfilerOutput}; nworkers::Integer, qlower::Real=0.1, qupper::Real=0.9, buffersize::Integer=1000, minsamples::Integer=10, windowsize::Dates.AbstractTime=Second(60))
+function latency_profiler(chin::ConcurrentCircularBuffer{ProfilerInput}, chout::ConcurrentCircularBuffer{ProfilerOutput}; nworkers::Integer, qlower::Real=0.1, qupper::Real=0.9, buffersize::Integer=1000, minsamples::Integer=10, windowsize::Dates.AbstractTime=Second(60))
     0 < nworkers || throw(ArgumentError("nworkers is $nworkers"))
     0 <= qlower <= qupper <= 1.0 || throw(ArgumentError("qlower is $qlower and qupper is $qupper"))
     @info "latency_profiler task started with windowsize $windowsize and minsamples $minsamples on thread $(Threads.threadid())"
@@ -160,11 +160,6 @@ function latency_profiler(chin::Channel{ProfilerInput}, chout::Channel{ProfilerO
             filter!(ws[i]; windowsize)
         end
         
-        # remove any values already in the output channel before putting new ones in
-        while isready(chout)
-            take!(chout)
-        end
-
         # compute updated statistics for all workers
         for i in 1:nworkers
             if length(ws[i]) == 0
