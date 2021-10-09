@@ -5,6 +5,7 @@ using Distributions
 using DataStructures
 
 include("Linalg.jl")
+include("concurrentcircularbuffer.jl")
 include("mul.jl")
 include("partitioning.jl")
 include("Datasets.jl")
