@@ -44,6 +44,12 @@ Base.size(ch::ConcurrentCircularBuffer) = length(ch)
 
 """
 
+Return `true` if there is at least one element in the buffer.
+"""
+Base.isready(ch::ConcurrentCircularBuffer) = length(ch) > 0
+
+"""
+
 Add an element to the back and overwrite front if full.
 """
 function Base.push!(ch::ConcurrentCircularBuffer, v)
@@ -129,6 +135,12 @@ function DataStructures.popfirst!(ch::ConcurrentCircularBuffer{T})::T where T
     end
     rv    
 end
+
+"""
+
+Same as `popfirst!`.
+"""
+Base.take!(ch::ConcurrentCircularBuffer) = popfirst!(ch)
 
 function _pop!(vs::AbstractVector, ch::ConcurrentCircularBuffer)
     rv = 0
