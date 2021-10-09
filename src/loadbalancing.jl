@@ -187,7 +187,9 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
                 v = comp_latency + comm_mcs[j]
             end
         end
-        @assert i != 0
+        if iszero(i)
+            break
+        end
         ps[i] -= 1
         latency, ls = simulate!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
         contribs .= ls .+ log.(θs) .- log.(ps)
@@ -216,7 +218,9 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
                 v = comp_latency + comm_mcs[j]
             end
         end
-        @assert i != 0
+        if iszero(i)
+            break
+        end
         ps[i] += 1
         latency, ls = simulate!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
         contribs .= ls .+ log.(θs) .- log.(ps)
