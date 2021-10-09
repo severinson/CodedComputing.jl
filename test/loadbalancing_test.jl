@@ -397,7 +397,6 @@ end
 
     nworkers = 2
     nwait = 1
-    min_processed_fraction = 0.1
     time_limit = 1.0 # must be floating-point
     θs = [0.3, 0.7]
     qs = 1 ./ [2, 3]
@@ -414,7 +413,7 @@ end
     push!(chin, v2)
 
     # start the load-balancer
-    task = Threads.@spawn CodedComputing.load_balancer(chin, chout; min_processed_fraction, nwait, nsubpartitions=ps, nworkers, time_limit, min_improvement=1)
+    task = Threads.@spawn CodedComputing.load_balancer(chin, chout; nwait, nsubpartitions=ps, nworkers, min_improvement=1)
 
     # wait for up to 10 seconds for the input to be consumed
     t0 = time_ns()
