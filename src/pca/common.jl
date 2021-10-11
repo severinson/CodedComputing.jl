@@ -322,7 +322,7 @@ function coordinator_main()
 
     # worker pool and communication buffers
     pool = MPIAsyncPool(nworkers)
-    V, recvbuf, sendbuf, state = coordinator_setup(nworkers; parsed_args...)
+    V, recvbuf, sendbuf, state, gradient_recvf = coordinator_setup(nworkers; parsed_args...)
     mod(length(recvbuf), nworkers) == 0 || error("the length of recvbuf must be divisible by the number of workers")
     ∇ = similar(V)
     ∇ .= 0
@@ -355,6 +355,9 @@ function coordinator_main()
 
     # 2-argument fwait needed for asyncmap!
     f = (epoch, repochs) -> fwait(epoch, repochs; parsed_args...)
+
+    # 4-argument recvf needed for asyncmap!
+    recvf = isnothing(gradient_recvf) ? nothing : (args...) -> gradient_recvf(args...; state, parsed_args...)
 
     # manually call the GC now, and optionally turn off GC, to avoid pauses later during execution
     GC.gc()
@@ -389,7 +392,7 @@ function coordinator_main()
         # gradient_state, iterate_state = state
         # ∇i, tg = gradient_state
         # @info "epoch $epoch, tg.ninit / tg.n: $(tg.ninit / tg.n)"
-        @info "epoch $epoch"
+        # @info "epoch $epoch"
 
         ## force an error if the profiler or load-balancer task has failed
         if istaskfailed(profiler_task)
@@ -417,7 +420,7 @@ function coordinator_main()
 
         ## worker task
         ts_compute[epoch] = @elapsed begin
-            repochs = asyncmap!(pool, sendbuf, recvbuf, isendbuf, irecvbuf, comm, nwait=f, epoch=epoch, tag=data_tag)
+            repochs = asyncmap!(pool, sendbuf, recvbuf, isendbuf, irecvbuf, comm; nwait=f, epoch=epoch, tag=data_tag, recvf)
         end
         responded[:, epoch] .= repochs
 

@@ -168,7 +168,7 @@ function worker_setup(rank::Integer, nworkers::Integer; kwargs...)
     localdata, recvbuf, sendbuf
 end
 
-function coordinator_setup(nworkers::Integer; inputfile::String, inputdataset::String, iteratedataset, parsed_args...)    
+function coordinator_setup(nworkers::Integer; inputfile::String, inputdataset::String, iteratedataset, kwargs...)
     0 < nworkers || throw(DomainError(nworkers, "nworkers must be positive"))
     dimension, nsamples = problem_size(inputfile, inputdataset)
 
@@ -188,7 +188,12 @@ function coordinator_setup(nworkers::Integer; inputfile::String, inputdataset::S
     recvbuf = Vector{UInt8}(undef, (sizeof(ELEMENT_TYPE)*(dimension+1) + COMMON_BYTES + METADATA_BYTES) * nworkers)
     reinterpret(ELEMENT_TYPE, view(sendbuf, (to_worker_metadata_bytes+1):length(sendbuf))) .= view(V, :)
 
-    V, recvbuf, sendbuf, nothing
+    # setup state for the gradient tracking method
+    gradient_state, gradient_recvf = setup_gradient(V; kwargs...)
+    iterate_state = nothing
+    state = (gradient_state, iterate_state)    
+
+    V, recvbuf, sendbuf, state, gradient_recvf
 end
 
 metadata_view(buffer) = view(buffer, COMMON_BYTES+1:(COMMON_BYTES + METADATA_BYTES))
@@ -251,6 +256,20 @@ function worker_task!(recvbuf, sendbuf, localdata; state=nothing, ncolumns::Inte
     metadata[4] = subpartition_index
     data_view(sendbuf) .= v
     nsubpartitions_prev, subpartition_index, w
+end
+
+function setup_gradient(args...; variancereduced::Bool, vralgo::String, kwargs...)
+    if variancereduced
+        if vralgo == "table"
+            return nothing, nothing
+        elseif vralgo == "tree"
+            return setup_gradient_vrt(args...; kwargs...), recvf_vrt
+        else
+            throw(ArgumentError("unexpected vralgo $vralgo"))
+        end
+    else
+        return nothing, nothing
+    end
 end
 
 function update_gradient!(args...; variancereduced::Bool, vralgo::String, kwargs...)
