@@ -392,7 +392,7 @@ function coordinator_main()
         # gradient_state, iterate_state = state
         # ∇i, tg = gradient_state
         # @info "epoch $epoch, tg.ninit / tg.n: $(tg.ninit / tg.n)"
-        # @info "epoch $epoch"
+        @info "epoch $epoch"
 
         ## force an error if the profiler or load-balancer task has failed
         if istaskfailed(profiler_task)
