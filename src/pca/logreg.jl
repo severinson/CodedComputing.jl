@@ -188,7 +188,7 @@ function coordinator_setup(nworkers::Integer; inputfile::String, inputdataset::S
     recvbuf = Vector{UInt8}(undef, (sizeof(ELEMENT_TYPE)*(dimension+1) + COMMON_BYTES + METADATA_BYTES) * nworkers)
     reinterpret(ELEMENT_TYPE, view(sendbuf, (to_worker_metadata_bytes+1):length(sendbuf))) .= view(V, :)
 
-    V, recvbuf, sendbuf
+    V, recvbuf, sendbuf, nothing
 end
 
 metadata_view(buffer) = view(buffer, COMMON_BYTES+1:(COMMON_BYTES + METADATA_BYTES))

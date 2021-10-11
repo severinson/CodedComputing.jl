@@ -322,7 +322,7 @@ function coordinator_main()
 
     # worker pool and communication buffers
     pool = MPIAsyncPool(nworkers)
-    V, recvbuf, sendbuf = coordinator_setup(nworkers; parsed_args...)
+    V, recvbuf, sendbuf, state = coordinator_setup(nworkers; parsed_args...)
     mod(length(recvbuf), nworkers) == 0 || error("the length of recvbuf must be divisible by the number of workers")
     ∇ = similar(V)
     ∇ .= 0
@@ -383,63 +383,8 @@ function coordinator_main()
     MPI.Barrier(comm)
     @info "Optimization starting"
 
-    # first iteration (initializes state)
-    epoch = 1
-
-    ## force an error if the profiler or load-balancer task has failed
-    if istaskfailed(profiler_task)
-        wait(profiler_task)
-    end
-    if istaskfailed(loadbalancer_task)
-        wait(loadbalancer_task)
-    end
-
-    ## write number of sub-partitions and which sub-partition to process into the buffer sent to the workers
-    select_partitions!(partition_indices, nsubpartitions_all)    
-    write_partitions!(sendbuf; partition_indices, nsubpartitions_all)
-
-    ## worker task
-    ts_compute[epoch] = @elapsed begin
-        repochs = asyncmap!(pool, sendbuf, recvbuf, isendbuf, irecvbuf, comm, nwait=f, epoch=epoch, tag=data_tag)
-    end
-    responded[:, epoch] .= repochs
-
-    ## record latency
-    latency[:, epoch] .= pool.latency
-    for i in 1:nworkers
-        t = repochs[i] == epoch ? comp_delay_from_recvbuf(recvbufs[i]) : NaN
-        compute_latency[i, epoch] = t
-    end
-
-    ## send any new latency information to the profiling sub-system
-    if loadbalance
-        timestamp = Time(now())
-        for i in 1:nworkers
-            if repochs[i] != prev_repochs[i]
-                _, nsubpartitions, subpartition_index = metadata_from_recvbuf(recvbufs[i])            
-                comp_delay = comp_delay_from_recvbuf(recvbufs[i])
-                comm_delay = pool.latency[i] - comp_delay
-                v = CodedComputing.ProfilerInput(i, 1/nworkers, 1/nsubpartitions, timestamp, comp_delay, comm_delay)
-                push!(profiler_chin, v)
-            end
-            prev_repochs[i] = repochs[i]
-        end
-    end
-
-    ## coordinator task
-    ts_update[epoch] = @elapsed begin
-        state = coordinator_task!(V, ∇, recvbufs, sendbuf, epoch, repochs; parsed_args...)    
-    end
-
-    ## optinally record the iterate
-    if saveiterates && epoch == savediterateindices[savediterateindex]
-        ndims = length(size(V))
-        selectdim(iterates, ndims+1, savediterateindex) .= V
-        savediterateindex += 1
-    end
-
     # remaining iterations
-    for epoch in 2:niterations
+    for epoch in 1:niterations
 
         # gradient_state, iterate_state = state
         # ∇i, tg = gradient_state
