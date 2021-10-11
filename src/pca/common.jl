@@ -147,6 +147,22 @@ Main loop run by each worker.
 function worker_loop(localdata, recvbuf, sendbuf; nslow::Integer, slowprob::Real, kwargs...)
 
     @info "Worker $rank is running on $(gethostname())"
+
+    # Markov model artificial latency
+    ## timestamp of the most recent Markov model state transition
+    transition_time = time_ns()
+
+    ## model
+    burst_latency_increase = 1.103
+    transition_interval = 10 # seconds
+    P = [0.989 0.011; 0.286 0.714]
+
+    ## current state
+    ## (initialized according to the steady state distribution)
+    burst_state = 1
+    if rand() < 0.037037
+        burst_state = 2
+    end    
     
     # control channel, to tell the workers when to exit
     crreq = MPI.Irecv!(zeros(1), root, control_tag, comm)
@@ -164,6 +180,25 @@ function worker_loop(localdata, recvbuf, sendbuf; nslow::Integer, slowprob::Real
     # remaining iterations
     i = 1
     while true
+
+        # make a state transition every transition_interval seconds
+        current_time = time_ns()
+        if (current_time - transition_time) / 1e9 >= transition_interval
+            transition_time = current_time
+            if rand() < P[burst_state, 1]
+                if burst_state == 2
+                    @info "worker $rank transitioning 2 => 1"
+                end
+                burst_state = 1
+            else
+                if burst_state == 1
+                    @info "worker $rank transitioning 1 => 2"
+                end                
+                burst_state = 2
+            end
+        end
+
+        # worker task
         rreq = MPI.Irecv!(recvbuf, root, data_tag, comm)
         index, _ = MPI.Waitany!([crreq, rreq])
         if index == 1 # exit message on control channel
@@ -175,11 +210,17 @@ function worker_loop(localdata, recvbuf, sendbuf; nslow::Integer, slowprob::Real
         t = @elapsed begin
             t0 = @elapsed state = worker_task!(recvbuf, sendbuf, localdata; state=state, kwargs...)
 
-            # the nslow first workers are artificially slowed down
-            # (counted as comp. delay)
-            if rank <= nslow
-                sleep(t0)
+            # if in the latency burst state, sleep to make up the latency difference
+            if burst_state == 2
+                @info "worker $rank bursting"
+                sleep(t0 * (burst_latency_increase - 1))
             end
+
+            # # the nslow first workers are artificially slowed down
+            # # (counted as comp. delay)
+            # if rank <= nslow
+            #     sleep(t0)
+            # end
 
             # # workers 1-3 are slow for the first 100 iterations
             # # the remaining workers are always slow
