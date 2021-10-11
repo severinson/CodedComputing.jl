@@ -152,7 +152,7 @@ function coordinator_setup(nworkers::Integer; inputfile::String, inputdataset::S
     dimension, nsamples = problem_size(inputfile, inputdataset)
 
     # initial iterate
-    V = randn(ELEMENT_TYPE, dimension, ncomponents)    
+    V = randn(Float64, dimension, ncomponents)
     if isnothing(iteratedataset) # initialized at random
         orthogonal!(V)
     else # given as an argument and loaded from disk
@@ -190,9 +190,9 @@ function worker_task!(recvbuf, sendbuf, localdata; state=nothing, ncomponents::I
         nsubpartitions_prev = 0
         subpartition_index = 1
         max_samples = nlocalsamples # max number of samples processed per iteration
-        W = zeros(ELEMENT_TYPE, max_samples, ncomponents)
+        W = zeros(Float64, max_samples, ncomponents)
     else # subsequent iterations
-        nsubpartitions_prev::Int, subpartition_index::Int, W::Matrix{ELEMENT_TYPE} = state
+        nsubpartitions_prev::Int, subpartition_index::Int, W::Matrix{Float64} = state
     end
 
     # get the number of sub-partitions from the coordinator
