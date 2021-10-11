@@ -287,7 +287,7 @@ end
     test_pca_iterates(;X, niterations, ncomponents, ev, outputfile, outputdataset)
 
     ### same as previous, but for a sparse input matrix
-    outputfile = tempname()    
+    outputfile = tempname()
     mpiexec(cmd -> run(```
         $cmd -n $(nworkers+1) julia --project $kernel $inputfile $outputfile
         --inputdataset $inputdataset_sparse
