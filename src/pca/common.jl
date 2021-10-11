@@ -92,7 +92,7 @@ function parse_commandline(isroot::Bool)
             arg_type = Float64
             range_tester = (x) -> x <= 1
         "--lbaggressive"
-            help = "Set the load-balancer in aggressive mode, in which it doesn't make workers slower"
+            help = "[DEPRECATED] Set the load-balancer in aggressive mode, in which it doesn't make workers slower"
             action = :store_true
         "--profilerwindowsize"
             help = "Number of seconds that latency statistics are computed over"
