@@ -86,7 +86,7 @@ function simulate!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, si
     # setup compute latency distributions
     for i in 1:nworkers
         m = comp_mcs[i] * θs[i] / ps[i]
-        v = comp_vcs[i] * θs[i] / ps[i]
+        v = comp_vcs[i] * (θs[i] / ps[i])^2
         sim.comp_distributions[i] = CodedComputing.distribution_from_mean_variance(Gamma, m, v)
     end
 

@@ -18,8 +18,7 @@ for i in 1:length(timestamps)
     push!(chin, v)
 end
 comp_mean = mean(comps) / (θs[1] * qs[1])
-# comp_var = var(comps, corrected=false) / (θs[1] * qs[1]) # correct variance
-comp_var = var(comps ./ sqrt(θs[1] * qs[1]), corrected=false) # almost correct; good enough for now
+comp_var = var(comps ./ (θs[1] * qs[1]), corrected=false)
 comm_mean, comm_var = mean(comms), var(comms, corrected=false)
 correct1 = CodedComputing.ProfilerOutput(1, θs[1], qs[1], comp_mean, comp_var, comm_mean, comm_var)
 
@@ -34,8 +33,7 @@ end
 comps = comps[end-10:end]
 comms = comms[end-10:end]
 comp_mean = mean(comps) / (θs[2] * qs[2])
-# comp_var = var(comps, corrected=false) / (θs[1] * qs[1]) # correct variance
-comp_var = var(comps ./ sqrt(θs[2] * qs[2]), corrected=false) # almost correct; good enough for now
+comp_var = var(comps ./ (θs[2] * qs[2]), corrected=false)
 comm_mean, comm_var = mean(comms), var(comms, corrected=false)
 correct2 = CodedComputing.ProfilerOutput(2, θs[2], qs[2], comp_mean, comp_var, comm_mean, comm_var)
 

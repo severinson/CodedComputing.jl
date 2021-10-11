@@ -85,7 +85,7 @@ function comp_mean_var(w::CircularBuffer{ProfilerInput}; buffer::Vector{Profiler
         return NaN, NaN
     end
     m = mean((x)->getfield(x, :comp_delay) / (getfield(x, :θ) * getfield(x, :q)), vs)
-    v = var((x)->getfield(x, :comp_delay) / sqrt(getfield(x, :θ) * getfield(x, :q)), vs)
+    v = var((x)->getfield(x, :comp_delay) / (getfield(x, :θ) * getfield(x, :q)), vs)
     m, v
 end
 
