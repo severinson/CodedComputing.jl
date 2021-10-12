@@ -123,7 +123,7 @@ function min_max_expected_worker_latency(;θs, ps, comp_mcs, comm_mcs)
     vmin, vmax
 end
 
-function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDrivenSimulator; ps_baseline=ps_prev, ls=zeros(length(ps)), contribs=zeros(length(ps)), θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_comp_fraction::Real=0.1, simulation_niterations::Integer=100, simulation_nsamples::Integer=10)
+function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDrivenSimulator; ps_baseline=ps_prev, ls=zeros(length(ps)), contribs=zeros(length(ps)), θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_comp_fraction::Real=0.1, simulation_niterations::Integer=50, simulation_nsamples::Integer=3)
     nworkers = length(ps)
     length(ps_prev) == nworkers || throw(DimensionMismatch("ps_prev has dimension $(length(ps_prev)), but nworkers is $nworkers"))    
     length(ps_baseline) == nworkers || throw(DimensionMismatch("ps_baseline has dimension $(length(ps_baseline)), but nworkers is $nworkers"))    
@@ -356,18 +356,18 @@ function load_balancer(chin::ConcurrentCircularBuffer, chout::ConcurrentCircular
             # @info "load_balancer optimization started with ps: $ps, θs: $θs, comp_mcs: $comp_mcs, comp_vcs: $comp_vcs, comm_mcs: $comm_mcs, comm_vcs: $comm_vcs"
             # @info "ps_prev: $ps_prev, ps_baseline: $ps_baseline"
             # @info "load_balancer optimization started"
-            t = @timed begin
+            t = @elapsed begin
                 ps, latency0, contrib0, loss0, latency, contrib, loss = optimize!(ps, ps_prev, sim; ps_baseline, ls, contribs, θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs)
             end
 
             # compare the initial and new solutions, and continue if the change isn't large enough
             if isnan(loss) || isinf(loss) || (loss / loss0) > min_improvement
-                @info "load-balancer allocated $(t.bytes / 1e6) MB, and finished in $(t.time) seconds with loss $loss and loss0 $loss0; continuing"
+                @info "load-balancer finished in $(t) seconds with loss $loss and loss0 $loss0; continuing"
                 # @info "ps: $ps"
                 continue
             end
-            @info "load-balancer allocated $(t.bytes / 1e6) MB, and finished in $(t.time) seconds with loss $loss and loss0 $loss0; accepting it"
-            # @info "ps: $ps"
+            @info "load-balancer finished in $(t) seconds with loss $loss and loss0 $loss0; accepting it"
+            @info "ps: $ps"
             ps_prev .= ps
 
             # push any changes into the output channel
