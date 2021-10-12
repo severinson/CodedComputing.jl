@@ -252,9 +252,9 @@ end
 Main function run by each worker.
 """
 function worker_main()
-    Random.seed!(parsed_args[:randomseed] + rank)
     nworkers = MPI.Comm_size(comm) - 1
     parsed_args = parse_commandline(isroot)
+    Random.seed!(parsed_args[:randomseed] + rank)    
     try
         localdata, recvbuf, sendbuf = worker_setup(rank, nworkers; parsed_args...)
         GC.gc()
