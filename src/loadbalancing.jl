@@ -256,10 +256,11 @@ function load_balancer(chin::ConcurrentCircularBuffer, chout::ConcurrentCircular
     ps_baseline = copy(ps)
 
     # mean and variance coefficients for each worker
-    comp_mcs = fill(NaN, nworkers)
-    comp_vcs = fill(NaN, nworkers)
-    comm_mcs = fill(NaN, nworkers)
-    comm_vcs = fill(NaN, nworkers)
+    # (dummy values used to force pre-compilation of the optimizer)
+    comp_mcs = ones(nworkers)
+    comp_vcs = ones(nworkers)
+    comm_mcs = ones(nworkers)
+    comm_vcs = ones(nworkers)
 
     # buffers used by the optimizer
     ls = zeros(nworkers)
@@ -269,6 +270,18 @@ function load_balancer(chin::ConcurrentCircularBuffer, chout::ConcurrentCircular
     comp_distributions = [Gamma() for _ in 1:nworkers]
     comm_distributions = [Gamma() for _ in 1:nworkers]
     sim = EventDrivenSimulator(;nwait, nworkers, comp_distributions, comm_distributions)
+
+    # run the optimizer once to force pre-compilation
+    optimize!(ps, ps_prev, sim; ps_baseline, ls, contribs, θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs)
+
+    # reset changes made by the optimizer
+    ps .= nsubpartitions
+    ps_prev .= nsubpartitions
+    ps_baseline .= nsubpartitions
+    comp_mcs .= NaN
+    comp_vcs .= NaN
+    comm_mcs .= NaN
+    comm_vcs .= NaN
 
     # helper to check if there is any missing latency data
     # (in which case we shouldn't run the load-balancer)
