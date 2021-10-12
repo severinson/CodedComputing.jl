@@ -105,7 +105,7 @@ function parse_commandline(isroot::Bool)
             arg_type = Int
             range_tester = (x) -> 1 < x
         "--randomseed"
-            help = "Random seed used by the coordinator"
+            help = "Used to compute a deterministic random seed that is unique to the coordinator and each worker"
             arg_type = UInt
             default = rand(UInt)
         "--nslow"
@@ -252,6 +252,7 @@ end
 Main function run by each worker.
 """
 function worker_main()
+    Random.seed!(parsed_args[:randomseed] + rank)
     nworkers = MPI.Comm_size(comm) - 1
     parsed_args = parse_commandline(isroot)
     try
