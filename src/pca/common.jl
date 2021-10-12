@@ -212,7 +212,6 @@ function worker_loop(localdata, recvbuf, sendbuf; nslow::Integer, slowprob::Real
 
             # if in the latency burst state, sleep to make up the latency difference
             if burst_state == 2
-                @info "worker $rank bursting"
                 sleep(t0 * (burst_latency_increase - 1))
             end
 
@@ -259,6 +258,7 @@ function worker_main()
         localdata, recvbuf, sendbuf = worker_setup(rank, nworkers; parsed_args...)
         GC.gc()
         GC.enable(parsed_args[:enablegc])
+        @info "(rank $rank) ready"
         MPI.Barrier(comm)        
         worker_loop(localdata, recvbuf, sendbuf; parsed_args...)
     catch e
@@ -424,6 +424,7 @@ function coordinator_main()
 
     # ensure all workers have finished compiling before starting the computation
     # (this is only necessary when benchmarking)
+    @info "Waiting for workers to get ready..."
     MPI.Barrier(comm)
     @info "Optimization starting"
 
