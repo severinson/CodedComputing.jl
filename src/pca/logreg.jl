@@ -173,7 +173,7 @@ function coordinator_setup(nworkers::Integer; inputfile::String, inputdataset::S
     dimension, nsamples = problem_size(inputfile, inputdataset)
 
     # initial iterate
-    V = zeros(ELEMENT_TYPE, dimension+1)
+    V = zeros(Float64, dimension+1)
     if !isnothing(iteratedataset) # given as an argument and loaded from disk
         h5open(inputfile) do fid
             iteratedataset in keys(fid) || throw(ArgumentError("iterate dataset $iteratedataset not found"))
@@ -209,9 +209,9 @@ function worker_task!(recvbuf, sendbuf, localdata; state=nothing, ncolumns::Inte
     if isnothing(state) # first iteration
         nsubpartitions_prev = 0
         subpartition_index = 1
-        w = zeros(ELEMENT_TYPE, nlocalsamples) # temp. storage
+        w = zeros(Float64, nlocalsamples) # temp. storage
     else # subsequent iterations
-        nsubpartitions_prev::Int, subpartition_index::Int, w::Vector{ELEMENT_TYPE} = state
+        nsubpartitions_prev::Int, subpartition_index::Int, w::Vector{Float64} = state
     end
 
     # get the number of sub-partitions from the coordinator
