@@ -1,6 +1,6 @@
 #!/bin/sh -l
 # Run 
-#SBATCH --job-name=pca_balanced.jl
+#SBATCH --job-name=pca.jl
 #SBATCH --output=pca.out
 #SBATCH --nodes=8
 #SBATCH --ntasks-per-node=10
@@ -54,6 +54,14 @@ do
             input_file=/home/albin/traces/1000genomes-matrix/1000genomes-matrix.h5
             echo "[1000 genomes] nsubpartitions: ${nsubpartitions}, nwait: ${nwait}, niterations: $niterations"
 
+            # DSAG
+            ## load-balanced
+            date
+            srun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --randomseed ${i} --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --saveiterates --loadbalance --profilerwindowsize ${profilerwindowsize} --nslow ${nslow} --variancereduced
+
+            ## unbalanced
+            srun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --randomseed ${i} --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --saveiterates --nslow ${nslow} --variancereduced
+
             # SAG
             if ((nwait < nworkers))
             then
@@ -63,15 +71,7 @@ do
 
                 ## unbalanced
                 srun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --randomseed ${i} --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --saveiterates --nslow ${nslow} --variancereduced --nostale        
-            fi
-
-            # DSAG
-            ## load-balanced
-            date
-            srun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --randomseed ${i} --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --saveiterates --loadbalance --profilerwindowsize ${profilerwindowsize} --nslow ${nslow} --variancereduced
-
-            ## unbalanced
-            srun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --randomseed ${i} --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --saveiterates --nslow ${nslow} --variancereduced
+            fi            
 
             # SGD
             ## load-balanced
@@ -84,14 +84,13 @@ do
     done
 done
 
-# # GD
-# stepsize=1.0
-# nsubpartitions=1
-# nwait=79
-# # niterations=$(($npasses * $nsubpartitions))
-# niterations=20
-# echo "[GD] nsubpartitions: ${nsubpartitions}, nwait: ${nwait}, niterations: $niterations"
-# srun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nworkers} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --saveiterates
+# GD
+stepsize=1.0
+nsubpartitions=1
+nwait=79
+niterations=$(($npasses * $nsubpartitions))
+echo "[GD] nsubpartitions: ${nsubpartitions}, nwait: ${nwait}, niterations: $niterations"
+srun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nworkers} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --saveiterates
 
 date
 echo "Done"
