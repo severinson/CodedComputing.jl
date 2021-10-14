@@ -195,12 +195,6 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
         contribs .= ls .+ log.(θs) .- log.(ps)
         contrib = sum(exp, contribs)
     end
-    if !iszero(i)
-        ps[i] += 1
-        latency, ls = simulate!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
-        contribs .= ls .+ log.(θs) .- log.(ps)
-        contrib = sum(exp, contribs)
-    end
 
     # while within the contribution constraint, speed up the slowest workers
     i = 0
@@ -225,12 +219,6 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
         latency, ls = simulate!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
         contribs .= ls .+ log.(θs) .- log.(ps)
         contrib = sum(exp, contribs)
-    end
-    if !iszero(i)
-        ps[i] -= 1
-        latency, ls = simulate!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
-        contribs .= ls .+ log.(θs) .- log.(ps)
-        contrib = sum(exp, contribs)        
     end
 
     vmin, vmax = min_max_expected_worker_latency(;θs, ps, comp_mcs, comm_mcs)
