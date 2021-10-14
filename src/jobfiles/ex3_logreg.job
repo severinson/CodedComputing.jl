@@ -75,55 +75,6 @@ do
 
             ## unbalanced
             srun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --randomseed ${i} --inputdataset ${inputdataset} --stepsize ${stepsize} --lambda ${lambda} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --saveiterates --nslow ${nslow}
-
-
-
-            # old values        
-            # 1000 genomes (entire dataset, fully shuffled)
-            # input_file=/home/albin/traces/1000genomes-matrix/1000genomes-matrix.h5
-            # echo "[DSAG, 1000 genomes] nsubpartitions: ${nsubpartitions}, nwait: ${nwait}, niterations: $niterations"
-
-            # with nslow
-            ## load-balanced
-            # date
-            # srun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --saveiterates --loadbalance --lbaggressive --nslow ${nslow} --variancereduced
-
-            ## unbalanced
-            # date
-            # srun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --saveiterates --nslow ${nslow} --variancereduced
-
-            # default
-            ## load-balanced
-            # date
-            # srun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --saveiterates --loadbalance --lbaggressive --variancereduced
-            
-            # ## unbalanced
-            # date
-            # srun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --saveiterates --variancereduced
-
-            # with slowprob.
-            ## load-balanced
-            # date
-            # srun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --saveiterates --loadbalance --lbaggressive --slowprob ${slowprob}
-
-            # ## unbalanced
-            # date
-            # srun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --saveiterates --slowprob ${slowprob}
-
-            # with nslow and slowprob.
-            ## load-balanced
-            # date
-            # srun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --saveiterates --loadbalance --lbaggressive --nslow ${nslow} --slowprob ${slowprob}
-
-            # ## unbalanced
-            # date
-            # srun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --saveiterates --nslow ${nslow} --slowprob ${slowprob}
-
-            # # 1000 genomes dense-equivalent matrix
-            # input_file=/home/albin/traces/1000genomes-dense-equiv-matrix/1000genomes-dense-equiv-matrix.h5
-            # echo "[DSAG, 1000 genomes dense equiv.] nsubpartitions: ${nsubpartitions}, nwait: ${nwait}, niterations: $niterations"        
-            # # --saveiterates
-            # srun ${execname} --project "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --variancereduced
         done
     done
 done
