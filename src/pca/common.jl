@@ -88,7 +88,7 @@ function parse_commandline(isroot::Bool)
             range_tester = (x) -> 0 < x
         "--lbminimprovement"
             help = "Minimum improvement required for the load-balancer to accept a new solution"
-            default = 0.95
+            default = 0.98
             arg_type = Float64
             range_tester = (x) -> x <= 1
         "--lbaggressive"
@@ -344,7 +344,7 @@ Main loop run by the coordinator.
 function coordinator_main()
 
     # setup
-    latency_tol = 0.05
+    latency_tol = 0.02
     parsed_args = parse_commandline(isroot)
     niterations::Int = parsed_args[:niterations]
     saveiterates::Bool = parsed_args[:saveiterates]
