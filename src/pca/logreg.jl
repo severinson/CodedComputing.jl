@@ -1,7 +1,7 @@
 using ArgParse, Random, SparseArrays, HDF5, H5Sparse, SAG
 
 const METADATA_BYTES = 8
-const ELEMENT_TYPE = Float32
+const ELEMENT_TYPE = Float64
 const CANARY_VALUE = UInt16(2^16 - 1)
 
 include("gradients.jl")
