@@ -1,4 +1,4 @@
-jobfile=./src/pca/pca.job
+jobfile=./src/jobfiles/aws_pca.job
 while true
 do
     

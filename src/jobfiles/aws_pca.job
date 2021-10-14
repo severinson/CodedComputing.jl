@@ -2,67 +2,88 @@
 # Run 
 #SBATCH --job-name=pca.jl
 #SBATCH --output=pca.out
-#SBATCH --nodes=73
+#SBATCH --nodes=37
+#SBATCH --ntasks-per-node=1
 #SBATCH --time=600:00
-#SBATCH --tasks-per-node=1
-# #SBATCH --partition=hpc
+#SBATCH --cpus-per-task=3
 
 export JULIA_DEPOT_PATH="/shared/.julia/"
 date
-filename=/shared/CodedComputing/src/pca/pca.jl
+filename=/shared/.julia/dev/CodedComputing/src/pca/pca.jl
+execname=/shared/julia/julia-1.7.0-beta4/bin/julia
+
+# 1000 genomes (entire dataset, fully shuffled)
+input_file=/shared/traces/1000genomes-matrix/1000genomes-matrix.h5
+output_directory=/shared/traces/1000genomes-matrix/211014_4/
+
+# 1000 genomes dense-equivalent matrix
+# input_file=/home/albin/traces/1000genomes-dense-equiv-matrix/1000genomes-dense-equiv-matrix.h5
+# output_directory=/home/albin/traces/1000genomes-dense-equiv-matrix/rome16q/210429/
 
 inputdataset=X
 iteratedataset=V0
 ncomponents=3
-npasses=5
+npasses=10
+nthreads=3
+let nworkers=$SLURM_NTASKS-1
 
-nwait_all=( $(($SLURM_NTASKS - 1)))
-# nsubpartitions_all=( 10 40 80 120 160 240 320)
-nsubpartitions_all=( 320 80 2)
+# nwait_all=( 10 50 90 100)
+nwait_all=( 10 36)
+nsubpartitions_all=( 50)
+profilerwindowsize=10
+
+nslow=0
+slowprob=0
 
 stepsize=0.9
-for nsubpartitions in "${nsubpartitions_all[@]}"
+for i in {1..1}
 do
-    # niterations=$(($npasses * $nsubpartitions))
-    niterations=100
-
-    # nwait=$(($SLURM_NTASKS - 1))
-    # echo "[SAG (--nostale)] nsubpartitions: ${nsubpartitions}, nwait: ${nwait}, niterations: $niterations, stepsize: $stepsize"
-    # /opt/amazon/openmpi/bin/mpirun -n "$SLURM_NTASKS" julia --project "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --saveiterates --variancereduced --nostale
-    # echo "[SGD] nsubpartitions: ${nsubpartitions}, nwait: ${nwait}, niterations: $niterations"
-    # /opt/amazon/openmpi/bin/mpirun -n "$SLURM_NTASKS" julia --project "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --saveiterates
-
-    for nwait in "${nwait_all[@]}"
+    for nsubpartitions in ${nsubpartitions_all[@]}
     do
+        niterations=$(($npasses * $nsubpartitions))
 
-        # 1000 genomes (entire dataset, fully shuffled)
-        input_file=/shared/traces/1000genomes-matrix/1000genomes-matrix.h5
-        output_directory=/shared/traces/1000genomes-matrix/010621/
+        for nwait in ${nwait_all[@]}
+        do
+            # 1000 genomes (entire dataset, fully shuffled)
+            # input_file=/home/albin/traces/1000genomes-matrix/1000genomes-matrix.h5
+            echo "[1000 genomes] nsubpartitions: ${nsubpartitions}, nwait: ${nwait}, niterations: $niterations"
 
-        echo "[DSAG, 1000genomes] nsubpartitions: ${nsubpartitions}, nwait: ${nwait}, niterations: $niterations"        
-        # --saveiterates 
-        #  -mca coll ^hcoll 
-        mpirun julia --project "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --variancereduced        
+            # DSAG
+            ## load-balanced
+            date
+            mpirun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --randomseed ${i} --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --saveiterates --loadbalance --profilerwindowsize ${profilerwindowsize} --nslow ${nslow} --variancereduced
 
-        # 1000 genomes dense equivalent matrix
-        input_file=/shared/traces/1000genomes-dense-equiv-matrix/1000genomes-dense-equiv-matrix.h5
-        output_directory=/shared/traces/1000genomes-dense-equiv-matrix/010621/    
+            ## unbalanced
+            mpirun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --randomseed ${i} --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --saveiterates --nslow ${nslow} --variancereduced
 
-        echo "[DSAG, dense equiv.] nsubpartitions: ${nsubpartitions}, nwait: ${nwait}, niterations: $niterations"
-        # --saveiterates
-        mpirun julia --project "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --variancereduced
+            # # SAG
+            # if ((nwait < nworkers))
+            # then
+            #     ## load-balanced
+            #     date
+            #     mpirun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --randomseed ${i} --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --saveiterates --loadbalance --profilerwindowsize ${profilerwindowsize} --nslow ${nslow} --variancereduced --nostale
 
-        # echo "[SGD] nsubpartitions: ${nsubpartitions}, nwait: ${nwait}, niterations: $niterations"
-        # /opt/amazon/openmpi/bin/mpirun -n "$SLURM_NTASKS" julia --project "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --iteratedataset ${iteratedataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --ncomponents ${ncomponents} --saveiterates
+            #     ## unbalanced
+            #     mpirun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --randomseed ${i} --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --saveiterates --nslow ${nslow} --variancereduced --nostale        
+            # fi            
+
+            # # SGD
+            # ## load-balanced
+            # date
+            # mpirun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --randomseed ${i} --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --saveiterates --loadbalance --profilerwindowsize ${profilerwindowsize} --nslow ${nslow}
+
+            # ## unbalanced
+            # mpirun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --randomseed ${i} --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --saveiterates --nslow ${nslow}
+        done
     done
 done
 
 # # GD
 # stepsize=1.0
 # nsubpartitions=1
-# nwait=$(($SLURM_NTASKS - 1))
 # niterations=$(($npasses * $nsubpartitions))
-# echo "[GD] nsubpartitions: ${nsubpartitions}, nwait: ${nwait}, niterations: $niterations"
-# mpirun -n "$SLURM_NTASKS" julia --project "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --saveiterates
+# echo "[GD] nsubpartitions: ${nsubpartitions}, niterations: $niterations"
+# mpirun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nworkers} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --saveiterates
 
+date
 echo "Done"
