@@ -344,6 +344,7 @@ Main loop run by the coordinator.
 function coordinator_main()
 
     # setup
+    latency_tol = 0.05
     parsed_args = parse_commandline(isroot)
     niterations::Int = parsed_args[:niterations]
     saveiterates::Bool = parsed_args[:saveiterates]
@@ -463,7 +464,7 @@ function coordinator_main()
 
         ## worker task
         ts_compute[epoch] = @elapsed begin
-            repochs = asyncmap!(pool, sendbuf, recvbuf, isendbuf, irecvbuf, comm; nwait=f, epoch=epoch, tag=data_tag, recvf)
+            repochs = asyncmap!(pool, sendbuf, recvbuf, isendbuf, irecvbuf, comm; nwait=f, epoch=epoch, tag=data_tag, recvf, latency_tol)
         end
         responded[:, epoch] .= repochs
 
