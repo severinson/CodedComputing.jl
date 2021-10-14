@@ -181,22 +181,22 @@ function worker_loop(localdata, recvbuf, sendbuf; nslow::Integer, slowprob::Real
     i = 1
     while true
 
-        # make a state transition every transition_interval seconds
-        current_time = time_ns()
-        if (current_time - transition_time) / 1e9 >= transition_interval
-            transition_time = current_time
-            if rand() < P[burst_state, 1]
-                if burst_state == 2
-                    @info "worker $rank transitioning 2 => 1"
-                end
-                burst_state = 1
-            else
-                if burst_state == 1
-                    @info "worker $rank transitioning 1 => 2"
-                end                
-                burst_state = 2
-            end
-        end
+        # # make a state transition every transition_interval seconds
+        # current_time = time_ns()
+        # if (current_time - transition_time) / 1e9 >= transition_interval
+        #     transition_time = current_time
+        #     if rand() < P[burst_state, 1]
+        #         if burst_state == 2
+        #             @info "worker $rank transitioning 2 => 1"
+        #         end
+        #         burst_state = 1
+        #     else
+        #         if burst_state == 1
+        #             @info "worker $rank transitioning 1 => 2"
+        #         end                
+        #         burst_state = 2
+        #     end
+        # end
 
         # worker task
         rreq = MPI.Irecv!(recvbuf, root, data_tag, comm)
@@ -206,38 +206,38 @@ function worker_loop(localdata, recvbuf, sendbuf; nslow::Integer, slowprob::Real
             MPI.Test!(rreq) # cleanup the data receive request            
             break
         end
-        t0 = 0.0
-        t = @elapsed begin
-            t0 = @elapsed state = worker_task!(recvbuf, sendbuf, localdata; state=state, kwargs...)
+        t = @elapsed state = worker_task!(recvbuf, sendbuf, localdata; state=state, kwargs...)
+        # t = @elapsed begin
+        #     t0 = @elapsed state = worker_task!(recvbuf, sendbuf, localdata; state=state, kwargs...)
 
-            # if in the latency burst state, sleep to make up the latency difference
-            if burst_state == 2
-                sleep(t0 * (burst_latency_increase - 1))
-            end
+        #     # # if in the latency burst state, sleep to make up the latency difference
+        #     # if burst_state == 2
+        #     #     sleep(t0 * (burst_latency_increase - 1))
+        #     # end
 
-            # # the nslow first workers are artificially slowed down
-            # # (counted as comp. delay)
-            # if rank <= nslow
-            #     sleep(t0)
-            # end
+        #     # # the nslow first workers are artificially slowed down
+        #     # # (counted as comp. delay)
+        #     # if rank <= nslow
+        #     #     sleep(t0)
+        #     # end
 
-            # # workers 1-3 are slow for the first 100 iterations
-            # # the remaining workers are always slow
-            # if i < 100 || rank > 3
-            #     sleep(t0)
-            # end
+        #     # # workers 1-3 are slow for the first 100 iterations
+        #     # # the remaining workers are always slow
+        #     # if i < 100 || rank > 3
+        #     #     sleep(t0)
+        #     # end
 
-            # # workers 4-6 become even slower after 50 iterations
-            # if i >= 50 && 3 < rank <= 6
-            #     sleep(t0)
-            # end
-        end
+        #     # # workers 4-6 become even slower after 50 iterations
+        #     # if i >= 50 && 3 < rank <= 6
+        #     #     sleep(t0)
+        #     # end
+        # end
 
-        # workers are artificially slowed down with prob. slowprob.
-        # (counted as comm. delay)
-        if !iszero(slowprob) && rand() < slowprob
-            sleep(t0)
-        end
+        # # workers are artificially slowed down with prob. slowprob.
+        # # (counted as comm. delay)
+        # if !iszero(slowprob) && rand() < slowprob
+        #     sleep(t0)
+        # end
 
         # send response to coordinator
         reinterpret(Float64, view(sendbuf, 1:COMMON_BYTES))[1] = t # send the recorded compute latency to the coordinator
