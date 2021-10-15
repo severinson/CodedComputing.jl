@@ -142,6 +142,17 @@ end
 
 """
 
+Spin on `time_ns()` for the specified number of seconds before returning.
+"""
+function highres_sleep(seconds)
+    t0 = time_ns()
+    while (time_ns() - t0) / 1e9 < seconds
+    end
+    return
+end
+
+"""
+
 Main loop run by each worker.
 """
 function worker_loop(localdata, recvbuf, sendbuf; nslow::Integer, slowprob::Real, nworkers::Integer, kwargs...)
@@ -179,6 +190,7 @@ function worker_loop(localdata, recvbuf, sendbuf; nslow::Integer, slowprob::Real
 
     # remaining iterations
     i = 1
+    start_time = time_ns()
     while true
 
         # # make a state transition every transition_interval seconds
@@ -210,43 +222,43 @@ function worker_loop(localdata, recvbuf, sendbuf; nslow::Integer, slowprob::Real
             t0 = @elapsed state = worker_task!(recvbuf, sendbuf, localdata; state, nworkers, kwargs...)
 
             # introduce artificial latency variation between workers
-            if i <= 25 || rank < 40
-                sleep(t0 * 0.4 * rank / nworkers)
+            if (time_ns() - start_time) / 1e9 < 1 || rank < 40
+                highres_sleep(t0 * 0.4 * rank / nworkers)
             end
 
             # # during the first 25 iterations (corresponding to one pass over the data), slow down 
             # # the first 9 workers by 25% more to simulate a latency burst
             # if i < 25 && rank < 10
-            #     sleep((t0 + t0 * 0.4 * rank / nworkers) * 0.25)
+            #     highres_sleep((t0 + t0 * 0.4 * rank / nworkers) * 0.25)
             # end
 
             # # if in the latency burst state, sleep to make up the latency difference
             # if burst_state == 2
-            #     sleep(t0 * (burst_latency_increase - 1))
+            #     highres_sleep(t0 * (burst_latency_increase - 1))
             # end
 
             # # the nslow first workers are artificially slowed down
             # # (counted as comp. delay)
             # if rank <= nslow
-            #     sleep(t0)
+            #     highres_sleep(t0)
             # end
 
             # # workers 1-3 are slow for the first 100 iterations
             # # the remaining workers are always slow
             # if i < 100 || rank > 3
-            #     sleep(t0)
+            #     highres_sleep(t0)
             # end
 
             # # workers 4-6 become even slower after 50 iterations
             # if i >= 50 && 3 < rank <= 6
-            #     sleep(t0)
+            #     highres_sleep(t0)
             # end
         end
 
         # # workers are artificially slowed down with prob. slowprob.
         # # (counted as comm. delay)
         # if !iszero(slowprob) && rand() < slowprob
-        #     sleep(t0)
+        #     highres_sleep(t0)
         # end
 
         # send response to coordinator
