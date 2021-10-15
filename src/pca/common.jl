@@ -144,7 +144,7 @@ end
 
 Main loop run by each worker.
 """
-function worker_loop(localdata, recvbuf, sendbuf; nslow::Integer, slowprob::Real, kwargs...)
+function worker_loop(localdata, recvbuf, sendbuf; nslow::Integer, slowprob::Real, nworkers::Integer, kwargs...)
 
     @info "Worker $rank is running on $(gethostname())"
 
@@ -173,7 +173,7 @@ function worker_loop(localdata, recvbuf, sendbuf; nslow::Integer, slowprob::Real
     if index == 1 # exit message on control channel
         return
     end
-    t = @elapsed state = worker_task!(recvbuf, sendbuf, localdata; kwargs...)
+    t = @elapsed state = worker_task!(recvbuf, sendbuf, localdata; nworkers, kwargs...)
     reinterpret(Float64, view(sendbuf, 1:COMMON_BYTES))[1] = t # send the recorded compute latency to the coordinator    
     MPI.Isend(sendbuf, root, data_tag, comm)
 
@@ -206,32 +206,42 @@ function worker_loop(localdata, recvbuf, sendbuf; nslow::Integer, slowprob::Real
             MPI.Test!(rreq) # cleanup the data receive request            
             break
         end
-        t = @elapsed state = worker_task!(recvbuf, sendbuf, localdata; state=state, kwargs...)
-        # t = @elapsed begin
-        #     t0 = @elapsed state = worker_task!(recvbuf, sendbuf, localdata; state=state, kwargs...)
+        t = @elapsed begin
+            t0 = @elapsed state = worker_task!(recvbuf, sendbuf, localdata; state, nworkers, kwargs...)
 
-        #     # # if in the latency burst state, sleep to make up the latency difference
-        #     # if burst_state == 2
-        #     #     sleep(t0 * (burst_latency_increase - 1))
-        #     # end
+            # introduce artificial latency variation between workers
+            if i <= 25 || rank < 40
+                sleep(t0 * 0.4 * rank / nworkers)
+            end
 
-        #     # # the nslow first workers are artificially slowed down
-        #     # # (counted as comp. delay)
-        #     # if rank <= nslow
-        #     #     sleep(t0)
-        #     # end
+            # # during the first 25 iterations (corresponding to one pass over the data), slow down 
+            # # the first 9 workers by 25% more to simulate a latency burst
+            # if i < 25 && rank < 10
+            #     sleep((t0 + t0 * 0.4 * rank / nworkers) * 0.25)
+            # end
 
-        #     # # workers 1-3 are slow for the first 100 iterations
-        #     # # the remaining workers are always slow
-        #     # if i < 100 || rank > 3
-        #     #     sleep(t0)
-        #     # end
+            # # if in the latency burst state, sleep to make up the latency difference
+            # if burst_state == 2
+            #     sleep(t0 * (burst_latency_increase - 1))
+            # end
 
-        #     # # workers 4-6 become even slower after 50 iterations
-        #     # if i >= 50 && 3 < rank <= 6
-        #     #     sleep(t0)
-        #     # end
-        # end
+            # # the nslow first workers are artificially slowed down
+            # # (counted as comp. delay)
+            # if rank <= nslow
+            #     sleep(t0)
+            # end
+
+            # # workers 1-3 are slow for the first 100 iterations
+            # # the remaining workers are always slow
+            # if i < 100 || rank > 3
+            #     sleep(t0)
+            # end
+
+            # # workers 4-6 become even slower after 50 iterations
+            # if i >= 50 && 3 < rank <= 6
+            #     sleep(t0)
+            # end
+        end
 
         # # workers are artificially slowed down with prob. slowprob.
         # # (counted as comm. delay)
@@ -260,7 +270,7 @@ function worker_main()
         GC.gc()
         GC.enable(parsed_args[:enablegc])
         @info "(rank $rank) ready"
-        MPI.Barrier(comm)        
+        MPI.Barrier(comm)
         worker_loop(localdata, recvbuf, sendbuf; parsed_args...)
     catch e
         print(Base.stderr, "rank $rank exiting due to $e")
