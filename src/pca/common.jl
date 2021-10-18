@@ -220,11 +220,18 @@ function worker_loop(localdata, recvbuf, sendbuf; nslow::Integer, slowprob::Real
         end
         t = @elapsed begin
             t0 = @elapsed state = worker_task!(recvbuf, sendbuf, localdata; state, nworkers, kwargs...)
+            
+            # simulate using a slower computer
+            latency_increase_factor = 1
+            highres_sleep(t0 * (latency_increase_factor - 1))
 
             # introduce artificial latency variation between workers
             if (time_ns() - start_time) / 1e9 < 1 || rank < 40
-                highres_sleep(t0 * 0.4 * rank / nworkers)
+                seconds = t0 * latency_increase_factor * (0.4 * rank / nworkers)
+            else
+                seconds = 0.0
             end
+            highres_sleep(seconds)
 
             # # during the first 25 iterations (corresponding to one pass over the data), slow down 
             # # the first 9 workers by 25% more to simulate a latency burst
