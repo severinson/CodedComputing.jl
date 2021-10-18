@@ -2,119 +2,92 @@
 # Run 
 #SBATCH --job-name=logreg.jl
 #SBATCH --output=logreg.out
-#SBATCH --nodes=109
+#SBATCH --nodes=50
 #SBATCH --ntasks-per-node=1
 #SBATCH --time=600:00
 #SBATCH --cpus-per-task=3
-#SBATCH --partition=compute
 
-# Add to ~/.bash_profile
-# # User specific environment and startup programs
-# PATH=$PATH:/shared/julia/julia-1.6.2/bin
-# PATH=$PATH:$HOME/.local/bin:$HOME/bin
-# export JULIA_DEPOT_PATH=/shared/.julia/
-# export JULIA_MPI_BINARY=system
-# export JULIA_MPI_PATH=/opt/amazon/openmpi/
-
-# It's somewhat unclear what the LB is doing
-# It's making lots of changes now
-# But it's always making workers slower
-# Workers that are always among the nwait fastest are given less partitions, since their prob. of participation is anyways 1.0
-
-# Let's get values for mcs/vcs that I can run through the optimizer offline
-# After that, let's run some experiments with and without the LB
-# 1000 iterations seems to be plenty
-
+export JULIA_DEPOT_PATH="/shared/.julia/"
 date
-filename=/shared/.julia/dev/CodedComputing/src/pca/logreg.jl
+filename=/shared/.julia/dev/CodedComputing/src/pca/pca.jl
 execname=/shared/julia/julia-1.7.0-beta4/bin/julia
-# execname=/shared/julia/julia-1.6.2/bin/julia
 
-# rcv1
-input_file=/shared/traces/rcv1/rcv1_shuffled.h5
-output_directory=/shared/traces/rcv1/rome16q/210913_2/
+# # rcv1
+# input_file=/home/albin/traces/rcv1/rcv1_shuffled.h5
+# output_directory=/home/albin/traces/rcv1/rome16q/210911_9/
 
+# # covtype
+# input_file=/home/albin/traces/covtype/covtype.h5
+# output_directory=/home/albin/traces/covtype/rome16q/211016_1/ # latency_increase_factor = 1
+# lambda=$(python3 -c 'print(1/581012)')
+
+# higgs
+input_file=/shared/traces/higgs/higgs.h5
+output_directory=/shared/traces/higgs/211018_1/
+lambda=$(python3 -c 'print(1/11000000)')
+
+# parameters
 inputdataset=X
-npasses=1000
-
-lambda=$(python3 -c 'print(1/697641)')
+npasses=500
 nthreads=3
-# nwait_all=( 9 6 3)
-nwait_all=( 108 72 36)
-nsubpartitions_all=( 1)
-# nsubpartitions_all=( 1 2 5 10 40 80 120 160 240 320)
-# nsubpartitions_all=( 10 14 20 40 80 160 240 320 2304)
-stepsize=10.0
-lbminimprovement=1.3
-lbtimelimit=2.0
-profilerwindowsize=20
+let nworkers=$SLURM_NTASKS-1
+profilerwindowsize=10
+# nwait_all=( 35)
+nwait_all=( 10 40 49)
+nsubpartitions_all=( 10)
+stepsize=0.25
+lbminimprovement=0.95
 
-nslow=3
-slowprob=0.1
+# unused
+nslow=0
+slowprob=0
 
 for i in {1..1}
 do
     for nsubpartitions in ${nsubpartitions_all[@]}
     do
-        niterations=1000
-        # niterations=$(($npasses * $nsubpartitions))
-        # nwait=10
-        # echo "[SAG (--nostale)] nsubpartitions: ${nsubpartitions}, nwait: ${nwait}, niterations: $niterations, stepsize: $stepsize"
-        # /opt/amazon/openmpi/bin/mpirun -n "$SLURM_NTASKS" julia --project "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --saveiterates --variancereduced --nostale
-        # echo "[SGD] nsubpartitions: ${nsubpartitions}, nwait: ${nwait}, niterations: $niterations"
-        # /opt/amazon/openmpi/bin/mpirun -n "$SLURM_NTASKS" julia --project "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --saveiterates
-
+        niterations=$(($npasses * $nsubpartitions))
         for nwait in ${nwait_all[@]}
         do
-            # 1000 genomes (entire dataset, fully shuffled)
-            # input_file=/home/albin/traces/1000genomes-matrix/1000genomes-matrix.h5
-            echo "[DSAG, 1000 genomes] nsubpartitions: ${nsubpartitions}, nwait: ${nwait}, niterations: $niterations"
-            date
+            echo "[1000 genomes] nsubpartitions: ${nsubpartitions}, nwait: ${nwait}, niterations: $niterations"
 
-            # with nslow
-            # ## load-balanced
-            # mpirun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --saveiterates --loadbalance --nslow ${nslow} --variancereduced
-
-            # ## unbalanced
-            # srun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --saveiterates --nslow ${nslow} --variancereduced
-
-            # default
+            # DSAG
             ## load-balanced
-            mpirun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --saveiterates --loadbalance --lbaggressive --lbminimprovement ${lbminimprovement} --lbtimelimit ${lbtimelimit} --profilerwindowsize ${profilerwindowsize} --variancereduced
-            
+            date
+            srun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --randomseed ${i} --inputdataset ${inputdataset} --stepsize ${stepsize} --lambda ${lambda} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --saveiterates --loadbalance --lbminimprovement ${lbminimprovement} --profilerwindowsize ${profilerwindowsize} --nslow ${nslow} --variancereduced
+
             ## unbalanced
-            mpirun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --saveiterates --variancereduced
+            srun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --randomseed ${i} --inputdataset ${inputdataset} --stepsize ${stepsize} --lambda ${lambda} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --saveiterates --nslow ${nslow} --variancereduced
 
-            # # with slowprob.
-            # ## load-balanced
-            # srun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --saveiterates --loadbalance --slowprob ${slowprob} --variancereduced
+            # SAG
+            if ((nwait < nworkers))
+            then
+                ## load-balanced
+                date
+                srun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --randomseed ${i} --inputdataset ${inputdataset} --stepsize ${stepsize} --lambda ${lambda} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --saveiterates --loadbalance --lbminimprovement ${lbminimprovement} --profilerwindowsize ${profilerwindowsize} --nslow ${nslow} --variancereduced --nostale
 
-            # ## unbalanced
-            # srun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --saveiterates --slowprob ${slowprob} --variancereduced
+                ## unbalanced
+                srun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --randomseed ${i} --inputdataset ${inputdataset} --stepsize ${stepsize} --lambda ${lambda} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --saveiterates --nslow ${nslow} --variancereduced --nostale        
+            fi
 
-            # # with nslow and slowprob.
-            # ## load-balanced
-            # srun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --saveiterates --loadbalance --nslow ${nslow} --slowprob ${slowprob} --variancereduced
+            # SGD
+            ## load-balanced
+            date
+            srun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --randomseed ${i} --inputdataset ${inputdataset} --stepsize ${stepsize} --lambda ${lambda} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --saveiterates --loadbalance --lbminimprovement ${lbminimprovement} --profilerwindowsize ${profilerwindowsize} --nslow ${nslow}
 
-            # ## unbalanced
-            # srun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --saveiterates --nslow ${nslow} --slowprob ${slowprob} --variancereduced
-
-            # # 1000 genomes dense-equivalent matrix
-            # input_file=/home/albin/traces/1000genomes-dense-equiv-matrix/1000genomes-dense-equiv-matrix.h5
-            # echo "[DSAG, 1000 genomes dense equiv.] nsubpartitions: ${nsubpartitions}, nwait: ${nwait}, niterations: $niterations"        
-            # # --saveiterates
-            # srun ${execname} --project "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --variancereduced
+            ## unbalanced
+            srun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --randomseed ${i} --inputdataset ${inputdataset} --stepsize ${stepsize} --lambda ${lambda} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --saveiterates --nslow ${nslow}
         done
     done
 done
 
-# # GD
-# stepsize=10.0
-# nsubpartitions=1
-# nwait=9
-# # niterations=$(($npasses * $nsubpartitions))
-# niterations=400
-# echo "[GD] nsubpartitions: ${nsubpartitions}, nwait: ${nwait}, niterations: $niterations"
-# srun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --saveiterates
+# GD
+nsubpartitions=1
+stepsize=1.0
+nwait=${nworkers}
+niterations=$(($npasses * $nsubpartitions))
+echo "[GD] nsubpartitions: ${nsubpartitions}, nwait: ${nwait}, niterations: $niterations"
+date
+srun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --inputdataset ${inputdataset} --stepsize ${stepsize} --lambda ${lambda} --nsubpartitions ${nsubpartitions} --nwait ${nworkers} --niterations ${niterations} --saveiterates
 
 echo "Done"
