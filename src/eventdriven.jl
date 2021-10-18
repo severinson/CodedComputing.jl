@@ -124,11 +124,11 @@ function step!(sim)
         end
     end
 
-    # wait for 1% longer to pickup workers arriving at roughly the same time
+    # wait for 2% longer to pickup workers arriving at roughly the same time
     latency = sim.time - time0
     while length(sim.pq) > 0
         t, i = first(sim.pq)
-        if (t - time0) > latency*1.01
+        if (t - time0) > latency*1.02
             break
         end
         pop!(sim.pq)
