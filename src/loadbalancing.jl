@@ -169,7 +169,7 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
     end
 
     # latency and contribution of the current solution
-    latency, ls = simulate!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
+    latency, ls = simulate!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples=2*simulation_nsamples, simulation_niterations=2*simulation_niterations)
     contribs .= ls .+ log.(θs) .- log.(ps)
     contrib = sum(exp, contribs)
 
