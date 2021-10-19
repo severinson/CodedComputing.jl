@@ -142,7 +142,7 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
     end
 
     # loss for previous solution for reference
-    latency0, ls = simulate!(ls, ps_prev; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
+    latency0, ls = simulate!(ls, ps_prev; sim, θs, comp_mcs, comp_vcs, simulation_nsamples=2*simulation_nsamples, simulation_niterations=2*simulation_nsamples)
     contribs .= ls .+ log.(θs) .- log.(ps_prev)
     contrib0 = sum(exp, contribs)
     # loss0 = maximum(ls) - minimum(ls)
@@ -162,8 +162,8 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
     # compute loss and latency constraints from the baseline
     min_contribution = contrib0
     max_latency = latency0
-    if !baseline_is_prev 
-        max_latency, ls = simulate!(ls, ps_baseline; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
+    if !baseline_is_prev
+        max_latency, ls = simulate!(ls, ps_baseline; sim, θs, comp_mcs, comp_vcs, simulation_nsamples=2*simulation_nsamples, simulation_niterations=2*simulation_nsamples)
         contribs .= ls .+ log.(θs) .- log.(ps_prev)
         min_contribution = sum(exp, contribs)
     end
