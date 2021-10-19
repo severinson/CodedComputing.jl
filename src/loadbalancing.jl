@@ -173,9 +173,8 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
     contribs .= ls .+ log.(θs) .- log.(ps)
     contrib = sum(exp, contribs)
 
-    # while within the latency constraint, slow down the fastest workers
-    i = 0
-    while isapprox(latency, max_latency, rtol=1e-2) || latency < max_latency
+    # while below the contribution constraint, assign more work to the fastest workers
+    while contrib < min_contribution
 
         # find the fastest worker with at least 2 sub-partitions
         i = 0
@@ -194,11 +193,17 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
         latency, ls = simulate!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
         contribs .= ls .+ log.(θs) .- log.(ps)
         contrib = sum(exp, contribs)
+
+        # double check the exit condition
+        if contrib >= min_contribution
+            latency, ls = simulate!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples=2*simulation_nsamples, simulation_niterations=2*simulation_niterations)
+            contribs .= ls .+ log.(θs) .- log.(ps)
+            contrib = sum(exp, contribs)
+        end
     end
 
-    # while within the contribution constraint, speed up the slowest workers
-    i = 0
-    while isapprox(contrib, min_contribution, rtol=1e-2) || min_contribution < contrib
+    # while within the contribution constraint, reduce the workload of slow workers
+    while contrib >= min_contribution * 0.99
 
         # find the slowest worker with a comp. latency that accounts for at least 
         # min_comp_fraction of the overall latency of the worker
@@ -219,6 +224,13 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
         latency, ls = simulate!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
         contribs .= ls .+ log.(θs) .- log.(ps)
         contrib = sum(exp, contribs)
+
+        # double check the exit condition
+        if contrib < min_contribution * 0.99
+            latency, ls = simulate!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples=2*simulation_nsamples, simulation_niterations=2*simulation_niterations)
+            contribs .= ls .+ log.(θs) .- log.(ps)
+            contrib = sum(exp, contribs)
+        end
     end
 
     vmin, vmax = min_max_expected_worker_latency(;θs, ps, comp_mcs, comm_mcs)
