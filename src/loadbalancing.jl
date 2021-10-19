@@ -123,10 +123,10 @@ function min_max_expected_worker_latency(;θs, ps, comp_mcs, comm_mcs)
     vmin, vmax
 end
 
-function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDrivenSimulator; ps_baseline=ps_prev, ls=zeros(length(ps)), contribs=zeros(length(ps)), θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_comp_fraction::Real=0.1, simulation_niterations::Integer=50, simulation_nsamples::Integer=3)
+function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDrivenSimulator; ls=zeros(length(ps)), contribs=zeros(length(ps)), θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs, min_contribution::Real=(sim.nwait / length(ps_prev) / mean(ps_prev)), min_comp_fraction::Real=0.1, simulation_niterations::Integer=50, simulation_nsamples::Integer=3)
     nworkers = length(ps)
+    0 < min_contribution <= 1 || throw(ArgumentError("min_contribution is $min_contribution"))
     length(ps_prev) == nworkers || throw(DimensionMismatch("ps_prev has dimension $(length(ps_prev)), but nworkers is $nworkers"))    
-    length(ps_baseline) == nworkers || throw(DimensionMismatch("ps_baseline has dimension $(length(ps_baseline)), but nworkers is $nworkers"))    
     length(θs) == nworkers || throw(DimensionMismatch("θs has dimension $(length(θs)), but nworkers is $nworkers"))    
     length(comp_mcs) == nworkers || throw(DimensionMismatch("comp_mcs has dimension $(length(comp_mcs)), but nworkers is $nworkers"))
     length(comp_vcs) == nworkers || throw(DimensionMismatch("comp_vcs has dimension $(length(comp_vcs)), but nworkers is $nworkers"))
@@ -145,28 +145,8 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
     latency0, ls = simulate!(ls, ps_prev; sim, θs, comp_mcs, comp_vcs, simulation_nsamples=2*simulation_nsamples, simulation_niterations=2*simulation_nsamples)
     contribs .= ls .+ log.(θs) .- log.(ps_prev)
     contrib0 = sum(exp, contribs)
-    # loss0 = maximum(ls) - minimum(ls)
-
     vmin, vmax = min_max_expected_worker_latency(;θs, ps=ps_prev, comp_mcs, comm_mcs)
     loss0 = vmax / vmin
-
-    # check if the baseline and prev vectors are the same
-    baseline_is_prev = true
-    for i in 1:nworkers
-        if ps_prev[i] != ps_baseline[i]
-            baseline_is_prev = false
-            break
-        end
-    end
-
-    # compute loss and latency constraints from the baseline
-    min_contribution = contrib0
-    max_latency = latency0
-    if !baseline_is_prev
-        max_latency, ls = simulate!(ls, ps_baseline; sim, θs, comp_mcs, comp_vcs, simulation_nsamples=2*simulation_nsamples, simulation_niterations=2*simulation_nsamples)
-        contribs .= ls .+ log.(θs) .- log.(ps_prev)
-        min_contribution = sum(exp, contribs)
-    end
 
     # latency and contribution of the current solution
     latency, ls = simulate!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples=2*simulation_nsamples, simulation_niterations=2*simulation_niterations)
@@ -253,7 +233,9 @@ function load_balancer(chin::ConcurrentCircularBuffer, chout::ConcurrentCircular
     θs = fill(1/nworkers, nworkers)
     ps = typeof(nsubpartitions) <: Integer ? fill(float(nsubpartitions), nworkers) : float.(nsubpartitions)
     ps_prev = copy(ps)
-    ps_baseline = copy(ps)
+
+    # minimum contribution set to that of the initial solution
+    min_contribution = nwait / length(ps_prev) / mean(ps_prev)
 
     # mean and variance coefficients for each worker
     # (dummy values used to force pre-compilation of the optimizer)
@@ -272,12 +254,11 @@ function load_balancer(chin::ConcurrentCircularBuffer, chout::ConcurrentCircular
     sim = EventDrivenSimulator(;nwait, nworkers, comp_distributions, comm_distributions)
 
     # run the optimizer once to force pre-compilation
-    optimize!(ps, ps_prev, sim; ps_baseline, ls, contribs, θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs)
+    optimize!(ps, ps_prev, sim; ls, contribs, θs, min_contribution, comp_mcs, comp_vcs, comm_mcs, comm_vcs)
 
     # reset changes made by the optimizer
     ps .= nsubpartitions
     ps_prev .= nsubpartitions
-    ps_baseline .= nsubpartitions
     comp_mcs .= NaN
     comp_vcs .= NaN
     comm_mcs .= NaN
@@ -357,7 +338,7 @@ function load_balancer(chin::ConcurrentCircularBuffer, chout::ConcurrentCircular
             # @info "ps_prev: $ps_prev, ps_baseline: $ps_baseline"
             # @info "load_balancer optimization started"
             t = @elapsed begin
-                ps, latency0, contrib0, loss0, latency, contrib, loss = optimize!(ps, ps_prev, sim; ps_baseline, ls, contribs, θs, comp_mcs, comp_vcs, comm_mcs, comm_vcs)
+                ps, latency0, contrib0, loss0, latency, contrib, loss = optimize!(ps, ps_prev, sim; ls, contribs, θs, min_contribution, comp_mcs, comp_vcs, comm_mcs, comm_vcs)
             end
 
             # compare the initial and new solutions, and continue if the change isn't large enough
