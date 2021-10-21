@@ -146,7 +146,9 @@ Spin on `time_ns()` for the specified number of seconds before returning.
 """
 function highres_sleep(seconds)
     t0 = time_ns()
-    while (time_ns() - t0) / 1e9 < seconds
+    elapsed = 0.0
+    while elapsed < seconds
+        elapsed = (time_ns() - t0) / 1e9
     end
     return
 end
@@ -218,49 +220,51 @@ function worker_loop(localdata, recvbuf, sendbuf; nslow::Integer, slowprob::Real
             MPI.Test!(rreq) # cleanup the data receive request            
             break
         end
-        t = @elapsed begin
-            t0 = @elapsed state = worker_task!(recvbuf, sendbuf, localdata; state, nworkers, kwargs...)
+        t = @elapsed state = worker_task!(recvbuf, sendbuf, localdata; state, nworkers, kwargs...)
+        # t = @elapsed begin
+        #     t0 = @elapsed state = worker_task!(recvbuf, sendbuf, localdata; state, nworkers, kwargs...)
             
-            # simulate using a slower computer
-            latency_increase_factor = 1
-            highres_sleep(t0 * (latency_increase_factor - 1))
+        #     # simulate using a slower computer
+        #     latency_increase_factor = 1
+        #     if latency_increase_factor > 1
+        #         highres_sleep(t0 * (latency_increase_factor - 1))
+        #     end
 
-            # introduce artificial latency variation between workers
-            if (time_ns() - start_time) / 1e9 < 1 || rank < 40
-                seconds = t0 * latency_increase_factor * (0.4 * rank / nworkers)
-            else
-                seconds = 0.0
-            end
-            highres_sleep(seconds)
+        #     # introduce artificial latency variation between workers
+        #     seconds = 0.0
+        #     if (time_ns() - start_time) / 1e9 < 1 || rank < 40
+        #         seconds = t0 * latency_increase_factor * (0.4 * rank / nworkers)
+        #     end
+        #     highres_sleep(seconds)
 
-            # # during the first 25 iterations (corresponding to one pass over the data), slow down 
-            # # the first 9 workers by 25% more to simulate a latency burst
-            # if i < 25 && rank < 10
-            #     highres_sleep((t0 + t0 * 0.4 * rank / nworkers) * 0.25)
-            # end
+        #     # # during the first 25 iterations (corresponding to one pass over the data), slow down 
+        #     # # the first 9 workers by 25% more to simulate a latency burst
+        #     # if i < 25 && rank < 10
+        #     #     highres_sleep((t0 + t0 * 0.4 * rank / nworkers) * 0.25)
+        #     # end
 
-            # # if in the latency burst state, sleep to make up the latency difference
-            # if burst_state == 2
-            #     highres_sleep(t0 * (burst_latency_increase - 1))
-            # end
+        #     # # if in the latency burst state, sleep to make up the latency difference
+        #     # if burst_state == 2
+        #     #     highres_sleep(t0 * (burst_latency_increase - 1))
+        #     # end
 
-            # # the nslow first workers are artificially slowed down
-            # # (counted as comp. delay)
-            # if rank <= nslow
-            #     highres_sleep(t0)
-            # end
+        #     # # the nslow first workers are artificially slowed down
+        #     # # (counted as comp. delay)
+        #     # if rank <= nslow
+        #     #     highres_sleep(t0)
+        #     # end
 
-            # # workers 1-3 are slow for the first 100 iterations
-            # # the remaining workers are always slow
-            # if i < 100 || rank > 3
-            #     highres_sleep(t0)
-            # end
+        #     # # workers 1-3 are slow for the first 100 iterations
+        #     # # the remaining workers are always slow
+        #     # if i < 100 || rank > 3
+        #     #     highres_sleep(t0)
+        #     # end
 
-            # # workers 4-6 become even slower after 50 iterations
-            # if i >= 50 && 3 < rank <= 6
-            #     highres_sleep(t0)
-            # end
-        end
+        #     # # workers 4-6 become even slower after 50 iterations
+        #     # if i >= 50 && 3 < rank <= 6
+        #     #     highres_sleep(t0)
+        #     # end
+        # end
 
         # # workers are artificially slowed down with prob. slowprob.
         # # (counted as comm. delay)
@@ -462,10 +466,13 @@ function coordinator_main()
     # remaining iterations
     for epoch in 1:niterations
 
+        # set to NaN to remove old latency results
+        pool.latency .= NaN
+
         # gradient_state, iterate_state = state
         # ∇i, tg = gradient_state
         # @info "epoch $epoch, tg.ninit / tg.n: $(tg.ninit / tg.n)"
-        @info "epoch $epoch"
+        # @info "epoch $epoch"
 
         ## force an error if the profiler or load-balancer task has failed
         if istaskfailed(profiler_task)
@@ -481,11 +488,11 @@ function coordinator_main()
             0 < vout.worker <= nworkers || throw(ArgumentError("incorrect $vout"))
             0 < vout.p || throw(ArgumentError("incorrect $vout"))
             if nsubpartitions_all[vout.worker] != vout.p
-                @info "epoch $epoch, worker $(vout.worker) nsubpartitions $(nsubpartitions_all[vout.worker]) => $(vout.p)"
+                # @info "epoch $epoch, worker $(vout.worker) nsubpartitions $(nsubpartitions_all[vout.worker]) => $(vout.p)"
                 nsubpartitions_all[vout.worker] = vout.p
             end
             loadbalanced[epoch] = true
-        end             
+        end
 
         ## update partitioning        
         select_partitions!(partition_indices, nsubpartitions_all)
