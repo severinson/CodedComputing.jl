@@ -148,6 +148,26 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
     vmin, vmax = min_max_expected_worker_latency(;θs, ps=ps_prev, comp_mcs, comm_mcs)
     loss0 = vmax / vmin
 
+    # equalize latency between workers
+    ## find the slowest worker
+    i = 0
+    v = -Inf
+    for j in 1:nworkers
+        comp_latency = comp_mcs[j] * θs[j] / ps[j]
+        if comp_latency + comm_mcs[j] > v
+            i = j
+            v = comp_latency + comm_mcs[j]
+        end
+    end
+
+    ## increase the workload of all other workers, so that what was the slowest worker becomes the fastest
+    for j in 1:nworkers
+        if j == i
+            continue
+        end
+        ps[j] = max(1.0, round(comp_mcs[j] * θs[j] / (v - comm_mcs[j])))
+    end
+
     # latency and contribution of the current solution
     latency, ls = simulate!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples=2*simulation_nsamples, simulation_niterations=2*simulation_niterations)
     contribs .= ls .+ log.(θs) .- log.(ps)
