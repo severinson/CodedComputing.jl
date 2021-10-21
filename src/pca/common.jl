@@ -5,6 +5,7 @@ using HDF5, LinearAlgebra
 using ArgParse
 using Dates
 using Distributions
+using DataStructures
 
 MPI.Init()
 const comm = MPI.COMM_WORLD
@@ -448,6 +449,11 @@ function coordinator_main()
         minsamples=parsed_args[:profilerminsamples],
         )
 
+    # vector of communication latencies for each worker
+    # (to use instead of the measured value for stale results)
+    communication_latency = fill(NaN, nworkers)
+    communication_latency_samples = CircularBuffer{Float64}(nworkers)
+
     # setup the load-balancer
     _, loadbalancer_chout = CodedComputing.setup_loadbalancer_channels()
     loadbalancer_task = Threads.@spawn CodedComputing.load_balancer(
@@ -511,15 +517,23 @@ function coordinator_main()
             compute_latency[i, epoch] = t
         end
 
+        # record new communication latency values
+        for i in 1:nworkers
+            if repochs[i] == epoch # fresh result
+                communication_latency[i] = latency[i, epoch] - compute_latency[i, epoch]
+                push!(communication_latency_samples, communication_latency[i])
+            end
+        end
+
         ## send any new latency information to the profiling sub-system
         if loadbalance
             timestamp = Time(now())
             for i in 1:nworkers
                 if repochs[i] != prev_repochs[i]
                     _, nsubpartitions, subpartition_index = metadata_from_recvbuf(recvbufs[i])            
-                    comp_delay = comp_delay_from_recvbuf(recvbufs[i])
-                    comm_delay = pool.latency[i] - comp_delay
-                    v = CodedComputing.ProfilerInput(i, 1/nworkers, 1/nsubpartitions, timestamp, comp_delay, comm_delay)
+                    comp_latency = comp_delay_from_recvbuf(recvbufs[i])
+                    comm_latency = isnan(communication_latency[i]) ? mean(communication_latency_samples) : communication_latency[i]
+                    v = CodedComputing.ProfilerInput(i, 1/nworkers, 1/nsubpartitions, timestamp, comp_latency, comm_latency)
                     push!(profiler_chin, v)
                 end
                 prev_repochs[i] = repochs[i]
