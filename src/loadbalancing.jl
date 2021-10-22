@@ -189,7 +189,9 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
         if iszero(i)
             break
         end
-        ps[i] -= 1
+        δ = max(1, round(ps[i] * 0.05))
+        ps[i] -= δ
+
         latency, ls = simulate!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
         contribs .= ls .+ log.(θs) .- log.(ps)
         contrib = sum(exp, contribs)
@@ -220,7 +222,8 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
         if iszero(i)
             break
         end
-        ps[i] += 1
+        δ = max(1, round(ps[i] * 0.05))
+        ps[i] += δ
         latency, ls = simulate!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
         contribs .= ls .+ log.(θs) .- log.(ps)
         contrib = sum(exp, contribs)
