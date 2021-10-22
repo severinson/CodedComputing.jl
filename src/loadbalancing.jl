@@ -355,6 +355,7 @@ function load_balancer(chin::ConcurrentCircularBuffer, chout::ConcurrentCircular
 
         try
             # @info "load_balancer optimization started with ps: $ps, θs: $θs, comp_mcs: $comp_mcs, comp_vcs: $comp_vcs, comm_mcs: $comm_mcs, comm_vcs: $comm_vcs"
+            # @info "load_balancer optimization started with ps = $ps, θs = $θs, comp_mcs = $comp_mcs, comp_vcs = $comp_vcs, comm_mcs = $comm_mcs, comm_vcs = $comm_vcs"
             # @info "ps_prev: $ps_prev, ps_baseline: $ps_baseline"
             # @info "load_balancer optimization started"
             t = @elapsed begin
@@ -363,12 +364,10 @@ function load_balancer(chin::ConcurrentCircularBuffer, chout::ConcurrentCircular
 
             # compare the initial and new solutions, and continue if the change isn't large enough
             if isnan(loss) || isinf(loss) || (loss / loss0) > min_improvement
-                # @info "load-balancer finished in $(t) seconds with loss $loss and loss0 $loss0; continuing"
-                # @info "ps: $ps"
+                @info "load-balancer finished in $(t) seconds with loss $loss and loss0 $loss0; continuing. ps: $ps"
                 continue
             end
-            # @info "load-balancer finished in $(t) seconds with loss $loss and loss0 $loss0; accepting it"
-            # @info "ps: $ps"
+            @info "load-balancer finished in $(t) seconds with loss $loss and loss0 $loss0; accepting it. ps: $ps"
             ps_prev .= ps
 
             # push any changes into the output channel
