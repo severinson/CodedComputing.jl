@@ -189,7 +189,7 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
         if iszero(i)
             break
         end
-        δ = max(1, round(ps[i] * 0.05))
+        δ = max(1, round(ps[i] * 0.01))
         ps[i] -= δ
 
         latency, ls = simulate!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
@@ -222,7 +222,7 @@ function optimize!(ps::AbstractVector, ps_prev::AbstractVector, sim::EventDriven
         if iszero(i)
             break
         end
-        δ = max(1, round(ps[i] * 0.05))
+        δ = max(1, round(ps[i] * 0.01))
         ps[i] += δ
         latency, ls = simulate!(ls, ps; sim, θs, comp_mcs, comp_vcs, simulation_nsamples, simulation_niterations)
         contribs .= ls .+ log.(θs) .- log.(ps)
@@ -367,10 +367,10 @@ function load_balancer(chin::ConcurrentCircularBuffer, chout::ConcurrentCircular
 
             # compare the initial and new solutions, and continue if the change isn't large enough
             if isnan(loss) || isinf(loss) || (loss / loss0) > min_improvement
-                @info "load-balancer finished in $(t) seconds with loss $loss and loss0 $loss0; continuing. ps: $ps"
+                # @info "load-balancer finished in $(t) seconds with loss $loss and loss0 $loss0; continuing. ps: $ps"
                 continue
             end
-            @info "load-balancer finished in $(t) seconds with loss $loss and loss0 $loss0; accepting it. ps: $ps"
+            # @info "load-balancer finished in $(t) seconds with loss $loss and loss0 $loss0; accepting it. ps: $ps"
             ps_prev .= ps
 
             # push any changes into the output channel
