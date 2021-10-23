@@ -21,8 +21,12 @@ execname=/home/albin/julia/julia-1.7.0-beta4/bin/julia
 
 # 1000 genomes (entire dataset, fully shuffled)
 input_file=/home/albin/traces/1000genomes-matrix/1000genomes-matrix.h5
-output_directory=/home/albin/traces/1000genomes-matrix/rome16q/211015_4/ # latency_increase_factor = 1
+# output_directory=/home/albin/traces/1000genomes-matrix/rome16q/211015_4/ # latency_increase_factor = 1
 # output_directory=/home/albin/traces/1000genomes-matrix/rome16q/211015_5/ # latency_increase_factor = 10
+# output_directory=/home/albin/traces/1000genomes-matrix/rome16q/211019_1/ # latency_increase_factor = 1
+# output_directory=/home/albin/traces/1000genomes-matrix/rome16q/211022_1/ # latency_increase_factor = 1
+# output_directory=/home/albin/traces/1000genomes-matrix/rome16q/211022_2/ # latency_increase_factor = 1
+output_directory=/home/albin/traces/1000genomes-matrix/rome16q/211022_3/ # latency_increase_factor = 1
 
 # 1000 genomes dense-equivalent matrix
 # input_file=/home/albin/traces/1000genomes-dense-equiv-matrix/1000genomes-dense-equiv-matrix.h5
@@ -35,16 +39,18 @@ npasses=10
 nthreads=3
 let nworkers=$SLURM_NTASKS-1
 
-nwait_all=( 10 40 49)
+nwait_all=( 10 20 49)
+# nwait_all=( 10)
 nsubpartitions_all=( 100)
 profilerwindowsize=10
 lbminimprovement=0.9
+profilerminsamples=20
 
 nslow=0
 slowprob=0
 
 stepsize=0.9
-for i in {1..10}
+for i in {1..5}
 do
     for nsubpartitions in ${nsubpartitions_all[@]}
     do
@@ -59,7 +65,7 @@ do
             # DSAG
             ## load-balanced
             date
-            srun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --randomseed ${i} --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --saveiterates --loadbalance --lbminimprovement ${lbminimprovement} --profilerwindowsize ${profilerwindowsize} --nslow ${nslow} --variancereduced
+            srun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --randomseed ${i} --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --saveiterates --loadbalance --lbminimprovement ${lbminimprovement} --profilerwindowsize ${profilerwindowsize} --profilerminsamples ${profilerminsamples} --nslow ${nslow} --variancereduced
 
             ## unbalanced
             srun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --randomseed ${i} --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --saveiterates --nslow ${nslow} --variancereduced
@@ -69,7 +75,7 @@ do
             then
                 ## load-balanced
                 date
-                srun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --randomseed ${i} --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --saveiterates --loadbalance --lbminimprovement ${lbminimprovement} --profilerwindowsize ${profilerwindowsize} --nslow ${nslow} --variancereduced --nostale
+                srun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --randomseed ${i} --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --saveiterates --loadbalance --lbminimprovement ${lbminimprovement} --profilerwindowsize ${profilerwindowsize} --profilerminsamples ${profilerminsamples} --nslow ${nslow} --variancereduced --nostale
 
                 ## unbalanced
                 srun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --randomseed ${i} --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --saveiterates --nslow ${nslow} --variancereduced --nostale        
@@ -78,7 +84,7 @@ do
             # SGD
             ## load-balanced
             date
-            srun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --randomseed ${i} --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --saveiterates --loadbalance --lbminimprovement ${lbminimprovement} --profilerwindowsize ${profilerwindowsize} --nslow ${nslow}
+            srun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --randomseed ${i} --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --saveiterates --loadbalance --lbminimprovement ${lbminimprovement} --profilerwindowsize ${profilerwindowsize} --profilerminsamples ${profilerminsamples} --nslow ${nslow}
 
             ## unbalanced
             srun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --randomseed ${i} --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nwait} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --saveiterates --nslow ${nslow}
@@ -90,8 +96,10 @@ done
 stepsize=1.0
 nsubpartitions=1
 niterations=$(($npasses * $nsubpartitions))
-echo "[GD] nsubpartitions: ${nsubpartitions}, niterations: $niterations"
-srun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nworkers} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --saveiterates
-
+for i in {1..5}
+do
+    echo "[GD] nsubpartitions: ${nsubpartitions}, niterations: $niterations"
+    srun -x UCX_ERROR_SIGNALS="SIGILL,SIGBUS,SIGFPE" ${execname} --project --threads ${nthreads} "${filename}" "${input_file}" "${output_directory}/output $(date).h5" --inputdataset ${inputdataset} --stepsize ${stepsize} --nsubpartitions ${nsubpartitions} --nwait ${nworkers} --niterations ${niterations} --ncomponents ${ncomponents} --iteratedataset ${iteratedataset} --saveiterates
+done
 date
 echo "Done"
